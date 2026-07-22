@@ -13,7 +13,6 @@ window.DEFAULT_CONFIG = {
   baseSalary: 165000,
   bonusPercent: 0.10,
   rsuAnnualGross: 31667,
-  rsuTaxRate: 0.35,
   esppAnnualGain: 4368,
   spouseIncome: 0,
   rentalIncome: 0,
@@ -899,6 +898,13 @@ class LifetimeModel {
       if (state.additionalAnnualExpenses > 0) {
         state.additionalAnnualExpenses *= (1 + state.inflation);
       }
+      // Contribution limits (401k, mega-backdoor, HSA, Roth IRA) rise with
+      // inflation, like the tax brackets. Otherwise a fixed nominal contribution
+      // shrinks in real terms over a multi-decade run.
+      state.pretax401k *= (1 + state.inflation);
+      state.megaBackdoor *= (1 + state.inflation);
+      state.hsaContrib *= (1 + state.inflation);
+      state.rothIRA *= (1 + state.inflation);
       inflationFactor *= (1 + state.inflation);
     }
 
