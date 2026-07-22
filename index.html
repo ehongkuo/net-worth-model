@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lifetime Net Worth Projection</title>
+  <meta name="description" content="Interactive lifetime net worth projection model with customizable life events">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header -->
+  <header id="app-header">
+    <h1>Lifetime Net Worth Projection</h1>
+    <p class="subtitle">Interactive financial trajectory model · Age 25 → 100</p>
+  </header>
+
+  <!-- Summary Cards -->
+  <div id="summary-cards" class="summary-grid">
+    <div class="summary-card" id="card-start">
+      <span class="card-label">Starting Net Worth</span>
+      <span class="card-value" id="val-start-nw">$0</span>
+      <span class="card-sub" id="val-start-age">Age 25</span>
+    </div>
+    <div class="summary-card" id="card-35">
+      <span class="card-label">Net Worth at 35</span>
+      <span class="card-value" id="val-nw-35">$0</span>
+      <span class="card-sub" id="val-35-income">—</span>
+    </div>
+    <div class="summary-card" id="card-50">
+      <span class="card-label">Net Worth at 50</span>
+      <span class="card-value" id="val-nw-50">$0</span>
+      <span class="card-sub" id="val-50-income">—</span>
+    </div>
+    <div class="summary-card" id="card-65">
+      <span class="card-label">Net Worth at 65</span>
+      <span class="card-value" id="val-nw-65">$0</span>
+      <span class="card-sub" id="val-65-income">—</span>
+    </div>
+    <div class="summary-card highlight" id="card-peak">
+      <span class="card-label">Peak Net Worth</span>
+      <span class="card-value" id="val-peak-nw">$0</span>
+      <span class="card-sub" id="val-peak-age">—</span>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main-grid">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <!-- Assumptions Panel -->
+      <div class="glass-card panel" id="assumptions-panel">
+        <div class="panel-header" data-panel="assumptions-content">
+          <h2>⚙️ Assumptions</h2>
+          <span class="toggle-icon">▾</span>
+        </div>
+        <div class="panel-content" id="assumptions-content">
+          <div class="slider-group">
+            <div class="slider-header"><label>Inflation Rate</label><span class="slider-value" id="val-inflation">3.0%</span></div>
+            <input type="range" id="slider-inflation" min="0" max="8" step="0.1" value="3">
+          </div>
+          <div class="slider-group">
+            <div class="slider-header"><label>Market Return</label><span class="slider-value" id="val-market-return">7.0%</span></div>
+            <input type="range" id="slider-market-return" min="-5" max="15" step="0.1" value="7">
+          </div>
+          <div class="slider-group">
+            <div class="slider-header"><label>Salary Growth</label><span class="slider-value" id="val-salary-growth">3.0%</span></div>
+            <input type="range" id="slider-salary-growth" min="0" max="10" step="0.1" value="3">
+          </div>
+          <div class="slider-group">
+            <div class="slider-header"><label>Real Estate Growth</label><span class="slider-value" id="val-real-estate">3.0%</span></div>
+            <input type="range" id="slider-real-estate" min="0" max="8" step="0.1" value="3">
+          </div>
+        </div>
+      </div>
+
+      <!-- Events Panel -->
+      <div class="glass-card panel" id="events-panel">
+        <div class="panel-header" data-panel="events-content">
+          <h2>📅 Life Events</h2>
+          <span class="toggle-icon">▾</span>
+        </div>
+        <div class="panel-content" id="events-content">
+          <div id="events-list" class="events-list">
+            <p class="empty-state">No events added yet. Add life events to see how they shape your trajectory.</p>
+          </div>
+          <button class="btn-primary" id="btn-add-event">+ Add Life Event</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="content">
+      <!-- Chart -->
+      <div class="glass-card">
+        <div class="chart-header">
+          <h2>📈 Net Worth Projection</h2>
+          <div class="tab-buttons" id="chart-tabs">
+            <button class="tab-btn active" data-view="total">Total</button>
+            <button class="tab-btn" data-view="breakdown">Breakdown</button>
+            <button class="tab-btn" data-view="income">Income vs Expenses</button>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="nw-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Data Table -->
+      <div class="glass-card">
+        <div class="panel-header" id="data-table-toggle" data-panel="data-table-container">
+          <h2>📊 Year-by-Year Data</h2>
+          <span class="toggle-icon">▸</span>
+        </div>
+        <div class="panel-content collapsed" id="data-table-container">
+          <div class="table-controls">
+            <label><input type="checkbox" id="show-all-years"> Show all years</label>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Age</th>
+                  <th>Year</th>
+                  <th>Gross Income</th>
+                  <th>Taxes</th>
+                  <th>Expenses</th>
+                  <th>Savings</th>
+                  <th>Net Worth</th>
+                  <th>Events</th>
+                </tr>
+              </thead>
+              <tbody id="data-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Event Modal -->
+  <div class="modal-overlay" id="event-modal" style="display:none;">
+    <div class="modal glass-card">
+      <h2 id="modal-title">Add Life Event</h2>
+      <form id="event-form">
+        <input type="hidden" id="event-id">
+        <div class="form-group">
+          <label for="event-template">Start from Template</label>
+          <select id="event-template"><option value="">— Custom Event —</option></select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="event-name">Event Name</label>
+            <input type="text" id="event-name" placeholder="e.g. Promoted to Senior" required>
+          </div>
+          <div class="form-group">
+            <label for="event-year">At Age</label>
+            <input type="number" id="event-year" min="25" max="100" value="27" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="event-type">Category</label>
+            <select id="event-type" required></select>
+          </div>
+          <div class="form-group">
+            <label for="event-duration">Duration (years, 0=permanent)</label>
+            <input type="number" id="event-duration" min="0" max="50" value="0">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="event-description">Description</label>
+          <textarea id="event-description" rows="2" placeholder="Optional description..."></textarea>
+        </div>
+        <hr>
+        <h3>Effects</h3>
+        <div id="effects-container"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-danger" id="btn-delete-event" style="display:none;">Delete</button>
+          <div class="modal-actions-right">
+            <button type="button" class="btn-secondary" id="btn-cancel-event">Cancel</button>
+            <button type="submit" class="btn-primary" id="btn-save-event">Save Event</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="model.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
