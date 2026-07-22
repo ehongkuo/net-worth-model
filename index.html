@@ -96,6 +96,23 @@
           <button class="btn-primary" id="btn-add-event">+ Add Life Event</button>
         </div>
       </div>
+
+      <!-- Scenario Panel -->
+      <div class="glass-card panel" id="scenario-panel">
+        <div class="panel-header" data-panel="scenario-content">
+          <h2>💾 Scenario</h2>
+          <span class="toggle-icon">▾</span>
+        </div>
+        <div class="panel-content" id="scenario-content">
+          <p class="scenario-hint">Your assumptions and events save automatically in this browser.</p>
+          <div class="scenario-actions">
+            <button class="btn-secondary" id="btn-export">Export</button>
+            <label class="btn-secondary" for="import-file">Import</label>
+            <input type="file" id="import-file" accept="application/json,.json" hidden>
+            <button class="btn-danger" id="btn-reset">Reset</button>
+          </div>
+        </div>
+      </div>
     </aside>
 
     <!-- Main Content Area -->

@@ -3,6 +3,21 @@ let displayMode = 'nominal'; // 'nominal' or 'real' (today's dollars)
 let currentTemplateReversal = null;
 let currentTemplateEffects = null;
 
+const STORAGE_KEY = 'netWorthModel:v1';
+
+// Assumption sliders. Percentage sliders store value/100; raw sliders store the
+// value as-is. Defined at module scope so both the input wiring and the
+// restore-from-storage sync can use them.
+const pct = (v) => v.toFixed(1) + '%';
+const ASSUMPTION_SLIDERS = [
+  { id: 'slider-inflation', displayId: 'val-inflation', key: 'inflation', format: pct },
+  { id: 'slider-market-return', displayId: 'val-market-return', key: 'marketReturn', format: pct },
+  { id: 'slider-salary-growth', displayId: 'val-salary-growth', key: 'salaryGrowth', format: pct },
+  { id: 'slider-real-estate', displayId: 'val-real-estate', key: 'realEstateAppreciation', format: pct },
+  { id: 'slider-retirement-age', displayId: 'val-retirement-age', key: 'retirementAge', raw: true, format: (v) => String(v) },
+  { id: 'slider-social-security', displayId: 'val-social-security', key: 'socialSecurityAnnual', raw: true, format: (v) => formatCurrencyFull(v) }
+];
+
 /**
  * Converts a nominal figure to today's dollars when the real-dollars toggle is
  * on, using the year's cumulative inflation factor.
@@ -29,11 +44,101 @@ document.addEventListener('DOMContentLoaded', () => {
   setupEventListeners();
   populateTemplateDropdown();
   populateTypeDropdown();
+  loadState();            // restore a saved scenario, if any, into model + controls
+  syncControlsFromConfig();
   runSimulation();
 });
 
 function getStartAge() {
   return model.getConfig ? model.getConfig().age : 25;
+}
+
+// ─── Persistence (localStorage + export/import) ────────────────
+
+/** Serializes the current scenario (assumptions + events) to localStorage. */
+function saveState() {
+  if (!model.getConfig) return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      config: model.getConfig(),
+      events: model.getEvents ? model.getEvents() : []
+    }));
+  } catch (e) {
+    // Storage can be unavailable (private mode, quota); persistence is a
+    // convenience, so fail quietly.
+  }
+}
+
+/** Restores a saved scenario from localStorage into the model, if present. */
+function loadState() {
+  let saved;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    saved = JSON.parse(raw);
+  } catch (e) {
+    return;
+  }
+  applyScenario(saved);
+}
+
+/** Applies a {config, events} scenario object to the model. */
+function applyScenario(scenario) {
+  if (!scenario || !model.updateConfig) return;
+  if (scenario.config) model.updateConfig(scenario.config);
+  if (model.clearEvents) model.clearEvents();
+  if (Array.isArray(scenario.events) && model.addEvent) {
+    scenario.events.forEach(e => model.addEvent(e));
+  }
+}
+
+/** Pushes the model's config values back into the slider controls. */
+function syncControlsFromConfig() {
+  if (!model.getConfig) return;
+  const cfg = model.getConfig();
+  ASSUMPTION_SLIDERS.forEach(s => {
+    const el = document.getElementById(s.id);
+    const disp = document.getElementById(s.displayId);
+    if (!el || cfg[s.key] === undefined || cfg[s.key] === null) return;
+    const raw = s.raw ? cfg[s.key] : cfg[s.key] * 100;
+    el.value = raw;
+    if (disp) disp.innerText = s.format(raw);
+  });
+}
+
+/** Downloads the current scenario as a JSON file. */
+function exportScenario() {
+  const data = JSON.stringify({ config: model.getConfig(), events: model.getEvents() }, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'net-worth-scenario.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Loads a scenario from a user-selected JSON file. */
+function importScenario(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      applyScenario(JSON.parse(reader.result));
+      syncControlsFromConfig();
+      runSimulation();
+    } catch (e) {
+      alert('Could not read that scenario file - it is not valid JSON.');
+    }
+  };
+  reader.readAsText(file);
+}
+
+/** Clears the saved scenario and resets the model to defaults. */
+function resetScenario() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+  if (window.LifetimeModel) model = new window.LifetimeModel();
+  syncControlsFromConfig();
+  runSimulation();
 }
 
 function setupChart() {
@@ -87,6 +192,7 @@ function runSimulation() {
     updateSummaryCards();
     updateDataTable();
     renderEventsList();
+    saveState();
   }
 }
 
@@ -315,19 +421,8 @@ function setupEventListeners() {
     });
   });
 
-  // Assumption sliders. Percentage sliders store value/100; raw sliders store
-  // the value as-is and use a custom formatter for the readout.
-  const pct = (v) => v.toFixed(1) + '%';
-  const sliders = [
-    { id: 'slider-inflation', displayId: 'val-inflation', key: 'inflation', format: pct },
-    { id: 'slider-market-return', displayId: 'val-market-return', key: 'marketReturn', format: pct },
-    { id: 'slider-salary-growth', displayId: 'val-salary-growth', key: 'salaryGrowth', format: pct },
-    { id: 'slider-real-estate', displayId: 'val-real-estate', key: 'realEstateAppreciation', format: pct },
-    { id: 'slider-retirement-age', displayId: 'val-retirement-age', key: 'retirementAge', raw: true, format: (v) => String(v) },
-    { id: 'slider-social-security', displayId: 'val-social-security', key: 'socialSecurityAnnual', raw: true, format: formatCurrencyFull }
-  ];
-
-  sliders.forEach(s => {
+  // Assumption sliders (defined at module scope in ASSUMPTION_SLIDERS).
+  ASSUMPTION_SLIDERS.forEach(s => {
     const el = document.getElementById(s.id);
     const disp = document.getElementById(s.displayId);
     if (el) {
@@ -391,6 +486,16 @@ function setupEventListeners() {
 
   document.getElementById('event-type').addEventListener('change', (e) => {
     renderEffectFields(e.target.value);
+  });
+
+  // Scenario export / import / reset
+  document.getElementById('btn-export').addEventListener('click', exportScenario);
+  document.getElementById('import-file').addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) importScenario(e.target.files[0]);
+    e.target.value = ''; // allow re-importing the same file
+  });
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    if (confirm('Reset all assumptions and events to defaults?')) resetScenario();
   });
 }
 
