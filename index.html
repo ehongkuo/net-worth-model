@@ -71,6 +71,15 @@
             <div class="slider-header"><label>Real Estate Growth</label><span class="slider-value" id="val-real-estate">3.0%</span></div>
             <input type="range" id="slider-real-estate" min="0" max="8" step="0.1" value="3">
           </div>
+          <hr class="slider-divider">
+          <div class="slider-group">
+            <div class="slider-header"><label>Retirement Age</label><span class="slider-value" id="val-retirement-age">65</span></div>
+            <input type="range" id="slider-retirement-age" min="40" max="90" step="1" value="65">
+          </div>
+          <div class="slider-group">
+            <div class="slider-header"><label>Social Security (annual, today's $)</label><span class="slider-value" id="val-social-security">$40,000</span></div>
+            <input type="range" id="slider-social-security" min="0" max="80000" step="1000" value="40000">
+          </div>
         </div>
       </div>
 
@@ -87,6 +96,23 @@
           <button class="btn-primary" id="btn-add-event">+ Add Life Event</button>
         </div>
       </div>
+
+      <!-- Scenario Panel -->
+      <div class="glass-card panel" id="scenario-panel">
+        <div class="panel-header" data-panel="scenario-content">
+          <h2>💾 Scenario</h2>
+          <span class="toggle-icon">▾</span>
+        </div>
+        <div class="panel-content" id="scenario-content">
+          <p class="scenario-hint">Your assumptions and events save automatically in this browser.</p>
+          <div class="scenario-actions">
+            <button class="btn-secondary" id="btn-export">Export</button>
+            <label class="btn-secondary" for="import-file">Import</label>
+            <input type="file" id="import-file" accept="application/json,.json" hidden>
+            <button class="btn-danger" id="btn-reset">Reset</button>
+          </div>
+        </div>
+      </div>
     </aside>
 
     <!-- Main Content Area -->
@@ -95,10 +121,16 @@
       <div class="glass-card">
         <div class="chart-header">
           <h2>📈 Net Worth Projection</h2>
-          <div class="tab-buttons" id="chart-tabs">
-            <button class="tab-btn active" data-view="total">Total</button>
-            <button class="tab-btn" data-view="breakdown">Breakdown</button>
-            <button class="tab-btn" data-view="income">Income vs Expenses</button>
+          <div class="chart-controls">
+            <div class="tab-buttons" id="dollar-toggle" title="Nominal shows future dollars; Today's discounts them back to age-25 purchasing power">
+              <button class="tab-btn active" data-mode="nominal">Nominal $</button>
+              <button class="tab-btn" data-mode="real">Today's $</button>
+            </div>
+            <div class="tab-buttons" id="chart-tabs">
+              <button class="tab-btn active" data-view="total">Total</button>
+              <button class="tab-btn" data-view="breakdown">Breakdown</button>
+              <button class="tab-btn" data-view="income">Income vs Expenses</button>
+            </div>
           </div>
         </div>
         <div class="chart-container">
