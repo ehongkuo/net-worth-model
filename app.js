@@ -301,12 +301,16 @@ function setupEventListeners() {
     });
   });
 
-  // Assumption sliders
+  // Assumption sliders. Percentage sliders store value/100; raw sliders store
+  // the value as-is and use a custom formatter for the readout.
+  const pct = (v) => v.toFixed(1) + '%';
   const sliders = [
-    { id: 'slider-inflation', displayId: 'val-inflation', key: 'inflation' },
-    { id: 'slider-market-return', displayId: 'val-market-return', key: 'marketReturn' },
-    { id: 'slider-salary-growth', displayId: 'val-salary-growth', key: 'salaryGrowth' },
-    { id: 'slider-real-estate', displayId: 'val-real-estate', key: 'realEstateAppreciation' }
+    { id: 'slider-inflation', displayId: 'val-inflation', key: 'inflation', format: pct },
+    { id: 'slider-market-return', displayId: 'val-market-return', key: 'marketReturn', format: pct },
+    { id: 'slider-salary-growth', displayId: 'val-salary-growth', key: 'salaryGrowth', format: pct },
+    { id: 'slider-real-estate', displayId: 'val-real-estate', key: 'realEstateAppreciation', format: pct },
+    { id: 'slider-retirement-age', displayId: 'val-retirement-age', key: 'retirementAge', raw: true, format: (v) => String(v) },
+    { id: 'slider-social-security', displayId: 'val-social-security', key: 'socialSecurityAnnual', raw: true, format: formatCurrencyFull }
   ];
 
   sliders.forEach(s => {
@@ -315,9 +319,9 @@ function setupEventListeners() {
     if (el) {
       el.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
-        disp.innerText = val.toFixed(1) + '%';
+        disp.innerText = s.format(val);
         if (model && model.updateConfig) {
-          model.updateConfig({ [s.key]: val / 100 });
+          model.updateConfig({ [s.key]: s.raw ? val : val / 100 });
           runSimulation();
         }
       });

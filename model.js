@@ -40,7 +40,13 @@ window.DEFAULT_CONFIG = {
   inflation: 0.03,
   salaryGrowth: 0.03,
   marketReturn: 0.07,
-  realEstateAppreciation: 0.03
+  realEstateAppreciation: 0.03,
+  // Retirement: at retirementAge employment income and contributions stop and
+  // spending is funded by drawing down accounts. Social Security (in today's
+  // dollars, inflated to nominal) begins at socialSecurityStartAge.
+  retirementAge: 65,
+  socialSecurityAnnual: 40000,
+  socialSecurityStartAge: 67
 };
 
 window.EVENT_TYPES = ['career', 'housing', 'family', 'health', 'purchase', 'market', 'windfall'];
@@ -375,15 +381,18 @@ class LifetimeModel {
    *
    * @returns {{federal:number, state:number, fica:number, total:number}}
    */
-  taxBreakdown({ wages = 0, spouseWages = 0, otherOrdinaryIncome = 0, preTaxDeductions = 0, married = false, yearOffset = 0, inflationRate = 0 }) {
+  taxBreakdown({ wages = 0, spouseWages = 0, otherOrdinaryIncome = 0, federalOnlyOrdinaryIncome = 0, preTaxDeductions = 0, married = false, yearOffset = 0, inflationRate = 0 }) {
     const T = window.TAX_TABLES;
     const mult = Math.pow(1 + inflationRate, yearOffset);
     const status = married ? 'married' : 'single';
 
     // Ordinary income for income-tax purposes (wages are also ordinary income).
     const ordinaryIncome = Math.max(0, wages + spouseWages + otherOrdinaryIncome - preTaxDeductions);
+    // federalOnlyOrdinaryIncome (e.g. the taxable portion of Social Security)
+    // is taxed federally but not by California.
+    const fedOrdinary = ordinaryIncome + Math.max(0, federalOnlyOrdinaryIncome);
 
-    const fedTaxable = Math.max(0, ordinaryIncome - T.federal.stdDeduction[status] * mult);
+    const fedTaxable = Math.max(0, fedOrdinary - T.federal.stdDeduction[status] * mult);
     const federal = this.applyBrackets(T.federal[status], fedTaxable, mult);
 
     const caTaxable = Math.max(0, ordinaryIncome - T.california.stdDeduction[status] * mult);
@@ -520,6 +529,48 @@ class LifetimeModel {
   }
 
   /**
+   * How much of a spending shortfall would come from pre-tax accounts, given a
+   * tax-efficient withdrawal order (taxable brokerage first, then pre-tax).
+   * Pure - does not mutate. Used to solve the withdrawal/tax fixed point.
+   */
+  pretaxPortionOfWithdrawal(state, need) {
+    if (need <= 0) return 0;
+    const afterBrokerage = need - Math.max(0, state.balances.brokerage);
+    if (afterBrokerage <= 0) return 0;
+    const pretaxAvailable = Math.max(0, state.balances.pretax401k) + Math.max(0, state.balances.traditionalIRA);
+    return Math.min(afterBrokerage, pretaxAvailable);
+  }
+
+  /**
+   * Draws `need` of spendable cash from investment accounts in tax-efficient
+   * order: taxable brokerage, then pre-tax (401k, traditional IRA), then Roth,
+   * then HSA. Mutates state.balances. If accounts are exhausted the remainder
+   * is left as a shortfall (portfolio depleted).
+   * @returns {{drawn:number, shortfall:number, taxableWithdrawal:number}}
+   */
+  drawDown(state, need) {
+    let remaining = need;
+    let taxableWithdrawal = 0;
+    const order = [
+      { key: 'brokerage', taxable: false },
+      { key: 'pretax401k', taxable: true },
+      { key: 'traditionalIRA', taxable: true },
+      { key: 'rothAccounts', taxable: false },
+      { key: 'hsa', taxable: false }
+    ];
+    for (const acct of order) {
+      if (remaining <= 0) break;
+      const bal = state.balances[acct.key];
+      if (bal <= 0) continue;
+      const take = Math.min(bal, remaining);
+      state.balances[acct.key] -= take;
+      remaining -= take;
+      if (acct.taxable) taxableWithdrawal += take;
+    }
+    return { drawn: need - remaining, shortfall: remaining, taxableWithdrawal };
+  }
+
+  /**
    * Runs the simulation.
    * @returns {Array} Array of YearResult objects.
    */
@@ -611,6 +662,20 @@ class LifetimeModel {
         }
       }
       
+      // 2b. Retirement: once retired, employment income and contributions stop.
+      // Age-based and one-directional (it overrides employment set by events).
+      const retired = this.config.retirementAge != null && currentAge >= this.config.retirementAge;
+      if (retired) state.employed = false;
+
+      // Social Security: config is in today's dollars, inflated to nominal.
+      // Not subject to FICA; up to 85% is federally taxable and none by CA.
+      const ssIncome = (this.config.socialSecurityStartAge != null &&
+                        currentAge >= this.config.socialSecurityStartAge &&
+                        this.config.socialSecurityAnnual > 0)
+        ? this.config.socialSecurityAnnual * Math.pow(1 + state.inflation, yearOffset)
+        : 0;
+      const ssTaxable = 0.85 * ssIncome;
+
       // 3. Calculate Income
       let salary = 0, bonus = 0, rsuGross = 0, esppGain = 0;
       if (state.employed) {
@@ -619,13 +684,13 @@ class LifetimeModel {
         rsuGross = state.rsuAnnualGross;
         esppGain = state.esppAnnualGain;
       }
-      
+
       // Income grouped by tax treatment (see taxBreakdown).
       const wages = salary + bonus + rsuGross + esppGain + yearWageIncome; // FICA + income tax
       const spouseWages = state.spouseIncome;                              // FICA + income tax (own SS cap)
       const otherOrdinary = state.rentalIncome + yearOrdinaryIncome;       // income tax only
       const yearOneTimeIncome = yearWageIncome + yearOrdinaryIncome + yearTaxFreeIncome;
-      const totalGross = wages + spouseWages + otherOrdinary + yearTaxFreeIncome;
+      const totalGross = wages + spouseWages + otherOrdinary + yearTaxFreeIncome + ssIncome;
       
       // 4. Calculate savings contributions
       let p401k = 0, mBackdoor = 0, hsaC = 0, rIRA = 0;
@@ -636,26 +701,13 @@ class LifetimeModel {
         rIRA = state.rothIRA;
       }
       
-      // 5. Calculate taxes. 401k + HSA are pre-tax for income tax (not FICA).
-      const preTaxDeductions = p401k + hsaC;
-      const taxBreakdown = this.taxBreakdown({
-        wages,
-        spouseWages,
-        otherOrdinaryIncome: otherOrdinary,
-        preTaxDeductions,
-        married: state.married,
-        yearOffset,
-        inflationRate: state.inflation
-      });
-      const taxes = taxBreakdown.total;
-      
-      // 6. Calculate expenses
+      // 5. Expenses
       let baseMonthlyExpenseTotal = 0;
       for (const val of Object.values(state.monthlyExpenses)) {
         baseMonthlyExpenseTotal += val;
       }
-      
-      // If has home, recalculate housing expense just in case property taxes inflate
+      // With a home, housing = mortgage + HOA + property tax (recomputed as the
+      // home appreciates); it replaces the rent line.
       if (state.hasHome) {
          state.monthlyExpenses.housing = state.mortgagePayment + state.homeHoa + ((state.homeValue * state.homePropTaxRate) / 12);
          baseMonthlyExpenseTotal = 0;
@@ -663,42 +715,67 @@ class LifetimeModel {
             baseMonthlyExpenseTotal += val;
          }
       }
-
       const annualExpenses = (baseMonthlyExpenseTotal * 12) + state.additionalAnnualExpenses + yearOneTimeCost;
-      
-      // 7. Net Cash Flow. Cash not diverted to pre-tax accounts, less taxes and
-      // post-tax savings, less spending. Tax-free income flows through here in
-      // full (it is part of totalGross but incurs no tax).
+
+      // 6. Contributions (already zero when not employed) and spendable cash.
+      // 401k + HSA are pre-tax for income tax (not FICA). Contributions are
+      // diverted to accounts, so they are not available to spend.
+      const preTaxDeductions = p401k + hsaC;
       const postTaxSavings = mBackdoor + rIRA;
-      const netCashForSpending = totalGross - preTaxDeductions - taxes - postTaxSavings;
-      const netCashFlow = netCashForSpending - annualExpenses;
-      
-      // 8. Grow balances and add contributions
+      const cashInflow = totalGross - preTaxDeductions - postTaxSavings;
+
+      // 7. Grow balances and add contributions. Growth happens before any
+      // drawdown so withdrawals come out of post-growth balances.
       const mr = state.marketReturn;
-      
       state.balances.pretax401k = state.balances.pretax401k * (1 + mr) + p401k;
       state.balances.rothAccounts = state.balances.rothAccounts * (1 + mr) + postTaxSavings;
       state.balances.traditionalIRA = state.balances.traditionalIRA * (1 + mr);
       state.balances.hsa = state.balances.hsa * (1 + mr) + hsaC;
-      
       state.balances.brokerage = state.balances.brokerage * (1 + mr);
-      // Net cash flow goes to cash first; overflow to brokerage if cash > 50k
-      state.balances.cash += netCashFlow;
-      
-      if (state.balances.cash > 50000) {
-        const overflow = state.balances.cash - 50000;
-        state.balances.brokerage += overflow;
-        state.balances.cash = 50000;
-      } else if (state.balances.cash < 0) {
-        const deficit = -state.balances.cash;
-        state.balances.brokerage -= deficit;
-        state.balances.cash = 0;
-        if (state.balances.brokerage < 0) {
-          // Debt scenario, allow negative brokerage to simulate debt
-        }
+
+      // 8. Solve taxes and retirement drawdown together. Spending is funded
+      // first by income, then the cash buffer, then account withdrawals. Pre-tax
+      // withdrawals (401k / traditional IRA) are ordinary income, so they raise
+      // taxes, which raise the amount that must be withdrawn - a fixed point
+      // that converges since marginal rates are below 100%.
+      const taxParams = (pretaxWithdrawal) => ({
+        wages, spouseWages,
+        otherOrdinaryIncome: otherOrdinary + pretaxWithdrawal,
+        federalOnlyOrdinaryIncome: ssTaxable,
+        preTaxDeductions,
+        married: state.married, yearOffset, inflationRate: state.inflation
+      });
+      let pretaxWithdrawal = 0;
+      for (let i = 0; i < 16; i++) {
+        const need = annualExpenses + this.calculateTax(taxParams(pretaxWithdrawal)) - cashInflow;
+        const accountsNeed = need - Math.max(0, state.balances.cash);
+        const next = this.pretaxPortionOfWithdrawal(state, accountsNeed);
+        if (Math.abs(next - pretaxWithdrawal) < 1) { pretaxWithdrawal = next; break; }
+        pretaxWithdrawal = next;
       }
-      
-      // 9. Home appreciation & amortization
+      const taxBreakdown = this.taxBreakdown(taxParams(pretaxWithdrawal));
+      const taxes = taxBreakdown.total;
+      const netCashFlow = cashInflow - taxes - annualExpenses; // negative in retirement
+
+      // 9. Apply the year's cash flow.
+      let shortfall = 0;
+      if (netCashFlow >= 0) {
+        // Surplus builds the cash buffer, overflowing into brokerage above 50k.
+        state.balances.cash += netCashFlow;
+        if (state.balances.cash > 50000) {
+          state.balances.brokerage += state.balances.cash - 50000;
+          state.balances.cash = 50000;
+        }
+      } else {
+        // Deficit: spend the cash buffer first, then draw down accounts.
+        let need = -netCashFlow;
+        const fromCash = Math.min(Math.max(0, state.balances.cash), need);
+        state.balances.cash -= fromCash;
+        need -= fromCash;
+        if (need > 0) shortfall = this.drawDown(state, need).shortfall;
+      }
+
+      // 10. Home appreciation & amortization
       let homeEquity = 0;
       if (state.hasHome) {
         state.homeValue *= (1 + state.realEstateAppreciation);
@@ -709,8 +786,8 @@ class LifetimeModel {
         homeEquity = state.homeValue - state.mortgageBalance;
       }
       
-      // 10. Net Worth
-      const netWorth = state.balances.cash + 
+      // 11. Net Worth
+      const netWorth = state.balances.cash +
                        state.balances.brokerage + 
                        state.balances.pretax401k + 
                        state.balances.rothAccounts + 
@@ -731,10 +808,12 @@ class LifetimeModel {
           espp: esppGain,
           spouse: state.spouseIncome,
           rental: state.rentalIncome,
+          socialSecurity: ssIncome,
           oneTime: yearOneTimeIncome
         },
         taxes,
         taxBreakdown,
+        shortfall,
         expenses: {
           total: annualExpenses,
           monthly: baseMonthlyExpenseTotal,
@@ -762,6 +841,7 @@ class LifetimeModel {
         events: eventsThisYear,
         state: {
           employed: state.employed,
+          retired,
           married: state.married,
           children: state.children,
           hasHome: state.hasHome,
@@ -771,7 +851,7 @@ class LifetimeModel {
       
       results.push(yearResult);
       
-      // 11. Apply salary growth and expense inflation for next year
+      // 12. Apply salary growth and expense inflation for next year
       if (state.employed) {
         state.salary *= (1 + state.salaryGrowth);
       }
