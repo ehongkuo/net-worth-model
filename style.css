@@ -484,6 +484,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
   color: var(--text-muted);
   font-weight: 500;
 }
+.form-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  opacity: 0.8;
+  margin: -0.4rem 0 0.9rem;
+}
 
 input[type="text"],
 input[type="number"],

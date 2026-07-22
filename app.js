@@ -506,16 +506,21 @@ function renderEffectFields(type, existingEffects = {}) {
 
   if (type === 'career') {
     const e = existingEffects;
+    const raisePct = e.salaryMultiplier !== undefined ? Math.round((e.salaryMultiplier - 1) * 1000) / 10 : '';
     html = `
       <div class="form-row">
-        <div class="form-group"><label>Base Salary</label><input type="number" data-effect="baseSalary" value="${e.baseSalary || ''}"></div>
+        <div class="form-group"><label>Raise (%)</label><input type="number" step="1" data-effect="salaryMultiplier" value="${raisePct}"></div>
+        <div class="form-group"><label>Base Salary (absolute)</label><input type="number" data-effect="baseSalary" value="${e.baseSalary || ''}"></div>
+      </div>
+      <div class="form-hint">Use Raise % for promotions (scales the salary at that age). Base Salary sets an exact figure, e.g. a job offer.</div>
+      <div class="form-row">
         <div class="form-group"><label>Bonus Percent (%)</label><input type="number" step="0.1" data-effect="bonusPercent" value="${e.bonusPercent !== undefined ? pctDisplay(e.bonusPercent) : ''}"></div>
+        <div class="form-group"><label>RSU Annual Gross</label><input type="number" data-effect="rsuAnnualGross" value="${e.rsuAnnualGross || ''}"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>RSU Annual Gross</label><input type="number" data-effect="rsuAnnualGross" value="${e.rsuAnnualGross || ''}"></div>
         <div class="form-group"><label>Signing Bonus</label><input type="number" data-effect="signingBonus" value="${e.signingBonus || ''}"></div>
+        <div class="form-group"><label>Severance</label><input type="number" data-effect="severance" value="${e.severance || ''}"></div>
       </div>
-      <div class="form-group"><label>Severance</label><input type="number" data-effect="severance" value="${e.severance || ''}"></div>
     `;
   } else if (type === 'housing') {
     const hp = existingEffects.homePurchase || {};
@@ -586,6 +591,7 @@ function saveEvent() {
       if (val === '') return;
       let numVal = parseFloat(val);
       if (input.dataset.effect === 'bonusPercent') numVal = numVal / 100;
+      if (input.dataset.effect === 'salaryMultiplier') numVal = 1 + numVal / 100; // Raise % -> multiplier
       eventObj.effects[input.dataset.effect] = numVal;
     });
   } else if (type === 'housing') {
@@ -625,10 +631,8 @@ function saveEvent() {
       if (input.dataset.effect === 'marketReturn') numVal = numVal / 100;
       eventObj.effects[input.dataset.effect] = numVal;
     });
-    // Auto-generate reversal for duration market events
-    if (duration > 0 && !currentTemplateReversal) {
-      currentTemplateReversal = { marketReturn: model.getConfig().marketReturn };
-    }
+    // No manual reversal needed: the model snapshots the real prior value for
+    // any duration event and restores it when the effect expires.
   } else {
     // Flat effects: purchase, windfall, health
     document.querySelectorAll('#effects-container input[data-effect]').forEach(input => {

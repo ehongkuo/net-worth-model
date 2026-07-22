@@ -55,12 +55,13 @@ window.EVENT_TEMPLATES = {
   promotionSenior: {
     name: 'Promoted to Senior SWE',
     type: 'career',
-    effects: { baseSalary: 195000, bonusPercent: 0.12, rsuAnnualGross: 12500 } // 50k/4yr
+    // Relative raise so it lands correctly whenever it is scheduled.
+    effects: { salaryMultiplier: 1.18, bonusPercent: 0.12, rsuAnnualGross: 12500 } // 50k/4yr
   },
   promotionStaff: {
     name: 'Promoted to Staff SWE',
     type: 'career',
-    effects: { baseSalary: 240000, bonusPercent: 0.15, rsuAnnualGross: 25000 } // 100k/4yr
+    effects: { salaryMultiplier: 1.25, bonusPercent: 0.15, rsuAnnualGross: 25000 } // 100k/4yr
   },
   jobChange: {
     name: 'New Company',
@@ -100,15 +101,13 @@ window.EVENT_TEMPLATES = {
     name: 'Bear Market',
     type: 'market',
     duration: 2,
-    effects: { marketReturn: -0.15 },
-    reversal: { marketReturn: 0.07 }
+    effects: { marketReturn: -0.15 } // reverts to the actual market-return setting via snapshot
   },
   bullMarket: {
     name: 'Bull Market',
     type: 'market',
     duration: 3,
-    effects: { marketReturn: 0.12 },
-    reversal: { marketReturn: 0.07 }
+    effects: { marketReturn: 0.12 } // reverts to the actual market-return setting via snapshot
   },
   inheritance: {
     name: 'Inheritance',
@@ -435,7 +434,13 @@ class LifetimeModel {
     if (event.effects) {
       const effects = event.effects;
       
+      // Salary can be set absolutely (baseSalary), scaled (salaryMultiplier,
+      // e.g. 1.15 for a 15% raise), or bumped (salaryIncrease). Relative forms
+      // avoid the trap where an absolute "promotion" set years out is actually
+      // a pay cut once the base has grown. Applied set -> scale -> add.
       if (effects.baseSalary !== undefined) state.salary = effects.baseSalary;
+      if (effects.salaryMultiplier !== undefined) state.salary *= effects.salaryMultiplier;
+      if (effects.salaryIncrease !== undefined) state.salary += effects.salaryIncrease;
       if (effects.bonusPercent !== undefined) state.bonusPercent = effects.bonusPercent;
       if (effects.rsuAnnualGross !== undefined) state.rsuAnnualGross = effects.rsuAnnualGross;
       if (effects.esppAnnualGain !== undefined) state.esppAnnualGain = effects.esppAnnualGain;
@@ -517,15 +522,36 @@ class LifetimeModel {
   }
 
   /**
-   * Reverses an effect from the state.
+   * Captures the current value of every state field a duration event's effects
+   * will change, so the effect can be undone by restoring the real prior value
+   * rather than a hard-coded guess. This keeps reversals correct even when the
+   * user has changed an assumption (e.g. a bear market restoring the actual
+   * market-return setting, not a baked-in 7%).
+   */
+  snapshotForReversal(state, effects) {
+    if (!effects) return {};
+    const R = LifetimeModel.REVERSIBLE;
+    const snapshot = {};
+    for (const key of Object.keys(effects)) {
+      if (R[key]) snapshot[R[key].rev] = R[key].get(state);
+    }
+    return snapshot;
+  }
+
+  /**
+   * Reverses an effect from the state by restoring snapshotted values.
    */
   reverseEffect(state, reversal) {
     if (!reversal) return;
-    
     if (reversal.employed !== undefined) state.employed = reversal.employed;
     if (reversal.baseSalary !== undefined) state.salary = reversal.baseSalary;
+    if (reversal.bonusPercent !== undefined) state.bonusPercent = reversal.bonusPercent;
+    if (reversal.rsuAnnualGross !== undefined) state.rsuAnnualGross = reversal.rsuAnnualGross;
+    if (reversal.esppAnnualGain !== undefined) state.esppAnnualGain = reversal.esppAnnualGain;
+    if (reversal.spouseIncome !== undefined) state.spouseIncome = reversal.spouseIncome;
+    if (reversal.rentalIncome !== undefined) state.rentalIncome = reversal.rentalIncome;
     if (reversal.marketReturn !== undefined) state.marketReturn = reversal.marketReturn;
-    // Add more reverse properties as needed based on duration events
+    if (reversal.inflationRate !== undefined) state.inflation = reversal.inflationRate;
   }
 
   /**
@@ -651,17 +677,22 @@ class LifetimeModel {
       });
       
       for (const event of matchingEvents) {
+        // Snapshot the pre-event state for any duration event, so it reverts to
+        // the real prior values (explicit event.reversal still merges in for
+        // anything the snapshot doesn't cover).
+        const reversalSnapshot = event.duration ? this.snapshotForReversal(state, event.effects) : null;
+
         const r = this.applyEvent(state, event, yearOffset);
         yearWageIncome += r.oneTimeWageIncome;
         yearOrdinaryIncome += r.oneTimeOrdinaryIncome;
         yearTaxFreeIncome += r.oneTimeTaxFreeIncome;
         yearOneTimeCost += r.oneTimeCost;
         eventsThisYear.push(r.eventName);
-        
-        if (event.duration && event.reversal) {
+
+        if (event.duration) {
           activeEffects.push({
             endYear: yearOffset + event.duration,
-            reversal: event.reversal
+            reversal: { ...(event.reversal || {}), ...reversalSnapshot }
           });
         }
       }
@@ -874,6 +905,24 @@ class LifetimeModel {
     return results;
   }
 }
+
+/**
+ * Maps an effect key to the reversal key and the state value to snapshot, so a
+ * duration event can be undone by restoring the real prior value.
+ */
+LifetimeModel.REVERSIBLE = {
+  baseSalary:       { rev: 'baseSalary',     get: s => s.salary },
+  salaryMultiplier: { rev: 'baseSalary',     get: s => s.salary },
+  salaryIncrease:   { rev: 'baseSalary',     get: s => s.salary },
+  bonusPercent:     { rev: 'bonusPercent',   get: s => s.bonusPercent },
+  rsuAnnualGross:   { rev: 'rsuAnnualGross', get: s => s.rsuAnnualGross },
+  esppAnnualGain:   { rev: 'esppAnnualGain', get: s => s.esppAnnualGain },
+  employed:         { rev: 'employed',       get: s => s.employed },
+  spouseIncome:     { rev: 'spouseIncome',   get: s => s.spouseIncome },
+  rentalIncome:     { rev: 'rentalIncome',   get: s => s.rentalIncome },
+  marketReturn:     { rev: 'marketReturn',   get: s => s.marketReturn },
+  inflationRate:    { rev: 'inflationRate',  get: s => s.inflation }
+};
 
 window.LifetimeModel = LifetimeModel;
 
