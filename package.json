@@ -1,0 +1,10 @@
+{
+  "name": "net-worth-model",
+  "version": "1.0.0",
+  "description": "Interactive lifetime net worth projection model",
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "license": "MIT",
+  "private": true
+}

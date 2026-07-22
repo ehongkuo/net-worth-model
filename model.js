@@ -3,6 +3,10 @@
  * Core simulation engine for projection model.
  */
 
+// Run in both the browser (globals hang off `window`) and Node (for the test
+// suite). In Node there is no `window`, so alias it to `globalThis`.
+if (typeof window === 'undefined') { globalThis.window = globalThis; }
+
 window.DEFAULT_CONFIG = {
   age: 25,
   projectionYears: 75,
@@ -672,3 +676,14 @@ class LifetimeModel {
 }
 
 window.LifetimeModel = LifetimeModel;
+
+// Expose the engine to the Node test suite without affecting the browser bundle.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    LifetimeModel,
+    deepMerge,
+    DEFAULT_CONFIG: window.DEFAULT_CONFIG,
+    EVENT_TYPES: window.EVENT_TYPES,
+    EVENT_TEMPLATES: window.EVENT_TEMPLATES
+  };
+}
