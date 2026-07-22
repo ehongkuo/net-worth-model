@@ -33,12 +33,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (typeof window.LifetimeModel !== 'undefined') {
     model = new window.LifetimeModel();
   } else {
-    console.error("model.js not loaded properly.");
-    model = {
-      simulate: () => [], getEvents: () => [], addEvent: () => {},
-      removeEvent: () => {}, updateEvent: () => {}, updateConfig: () => {},
-      getConfig: () => window.DEFAULT_CONFIG || { age: 25 }
-    };
+    console.error('model.js failed to load; the app cannot run.');
+    showLoadError();
+    return; // don't wire up a UI that can't compute anything
   }
   setupChart();
   setupEventListeners();
@@ -51,6 +48,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function getStartAge() {
   return model.getConfig ? model.getConfig().age : 25;
+}
+
+/** Renders a visible banner when the simulation engine fails to load. */
+function showLoadError() {
+  const banner = document.createElement('div');
+  banner.className = 'load-error';
+  banner.setAttribute('role', 'alert');
+  banner.textContent = 'Could not load the projection engine (model.js). Reload the page; if it persists, check that model.js is present next to index.html.';
+  document.body.prepend(banner);
 }
 
 // ─── Persistence (localStorage + export/import) ────────────────
@@ -386,8 +392,8 @@ function renderEventsList() {
         <span>Age ${eventAge}${e.duration ? ` · ${e.duration}yr` : ''} · ${e.description || ''}</span>
       </div>
       <div class="event-actions">
-        <button class="btn-edit" title="Edit">✏️</button>
-        <button class="btn-remove" title="Remove">🗑️</button>
+        <button class="btn-edit" title="Edit" aria-label="Edit ${e.name}">✏️</button>
+        <button class="btn-remove" title="Remove" aria-label="Remove ${e.name}">🗑️</button>
       </div>
     `;
 
@@ -671,9 +677,18 @@ function renderEffectFields(type, existingEffects = {}) {
 function saveEvent() {
   const id = document.getElementById('event-id').value;
   const startAge = getStartAge();
+  const cfg = model.getConfig ? model.getConfig() : { projectionYears: 75 };
+  const endAge = startAge + cfg.projectionYears;
   const inputAge = parseInt(document.getElementById('event-year').value) || startAge;
-  const type = document.getElementById('event-type').value;
   const duration = parseInt(document.getElementById('event-duration').value) || 0;
+
+  // Keep events inside the projection window so they actually take effect.
+  if (inputAge < startAge || inputAge > endAge) {
+    alert(`Event age must be between ${startAge} and ${endAge}.`);
+    return;
+  }
+
+  const type = document.getElementById('event-type').value;
 
   const eventObj = {
     name: document.getElementById('event-name').value,

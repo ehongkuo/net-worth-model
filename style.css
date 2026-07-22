@@ -188,6 +188,16 @@ header h1 {
   margin: 0.4rem 0 1.2rem;
 }
 
+.load-error {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  padding: 1rem 1.25rem;
+  margin: 1rem;
+  border-radius: 10px;
+  font-size: 0.95rem;
+}
+
 .scenario-hint {
   font-size: 0.8rem;
   color: var(--text-muted);
