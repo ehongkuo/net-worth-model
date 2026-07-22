@@ -52,7 +52,9 @@ describe('calculateMortgagePayment (annual amortization)', () => {
 
 describe('calculateTax', () => {
   const m = new LifetimeModel();
-  const tax = (income, married = false) => m.calculateTax(income, married, 0, 0.03);
+  // Ordinary (non-wage) income keeps FICA out of the picture for these checks.
+  const tax = (income, married = false) =>
+    m.calculateTax({ otherOrdinaryIncome: income, married, yearOffset: 0, inflationRate: 0.03 });
 
   test('is zero for non-positive income', () => {
     assertEqual(tax(0), 0);

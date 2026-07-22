@@ -107,7 +107,7 @@ window.EVENT_TEMPLATES = {
   inheritance: {
     name: 'Inheritance',
     type: 'windfall',
-    effects: { oneTimeIncome: 200000 }
+    effects: { oneTimeIncomeTaxFree: 200000 } // inheritances are not income-taxed
   },
   sabbatical: {
     name: 'Sabbatical',
@@ -115,6 +115,67 @@ window.EVENT_TEMPLATES = {
     duration: 1,
     effects: { employed: false },
     reversal: { employed: true }
+  }
+};
+
+/**
+ * Tax tables (2025). Bracket limits and thresholds are inflation-adjusted at
+ * simulation time via a multiplier, so these are the year-0 nominal values.
+ */
+window.TAX_TABLES = {
+  federal: {
+    single: [
+      { limit: 11925, rate: 0.10 },
+      { limit: 48475, rate: 0.12 },
+      { limit: 103350, rate: 0.22 },
+      { limit: 197300, rate: 0.24 },
+      { limit: 250525, rate: 0.32 },
+      { limit: 626350, rate: 0.35 },
+      { limit: Infinity, rate: 0.37 }
+    ],
+    married: [
+      { limit: 23850, rate: 0.10 },
+      { limit: 96950, rate: 0.12 },
+      { limit: 206700, rate: 0.22 },
+      { limit: 394600, rate: 0.24 },
+      { limit: 501050, rate: 0.32 },
+      { limit: 751600, rate: 0.35 },
+      { limit: Infinity, rate: 0.37 }
+    ],
+    stdDeduction: { single: 15000, married: 30000 }
+  },
+  // California FTB brackets. CA has no preferential rate for capital gains.
+  california: {
+    single: [
+      { limit: 10756, rate: 0.01 },
+      { limit: 25499, rate: 0.02 },
+      { limit: 40245, rate: 0.04 },
+      { limit: 55866, rate: 0.06 },
+      { limit: 70606, rate: 0.08 },
+      { limit: 360659, rate: 0.093 },
+      { limit: 432787, rate: 0.103 },
+      { limit: 721314, rate: 0.113 },
+      { limit: Infinity, rate: 0.123 }
+    ],
+    married: [
+      { limit: 21512, rate: 0.01 },
+      { limit: 50998, rate: 0.02 },
+      { limit: 80490, rate: 0.04 },
+      { limit: 111732, rate: 0.06 },
+      { limit: 141212, rate: 0.08 },
+      { limit: 721318, rate: 0.093 },
+      { limit: 865574, rate: 0.103 },
+      { limit: 1442628, rate: 0.113 },
+      { limit: Infinity, rate: 0.123 }
+    ],
+    stdDeduction: { single: 5540, married: 11080 }
+  },
+  fica: {
+    ssWageBase: 176100,
+    ssRate: 0.062,
+    medicareRate: 0.0145,
+    additionalMedicareRate: 0.009,
+    additionalMedicareThreshold: { single: 200000, married: 250000 }
   }
 };
 
@@ -270,73 +331,95 @@ class LifetimeModel {
   }
 
   /**
-   * Calculates tax liability.
-   * @param {number} taxableIncome - The taxable income amount.
-   * @param {boolean} married - Filing status.
-   * @param {number} yearOffset - Years from start (for inflation).
-   * @param {number} inflationRate - Annual inflation rate.
-   * @returns {number} Total tax liability.
+   * Applies a progressive bracket table to an amount.
+   * @param {Array} brackets - [{limit, rate}, ...] with an Infinity-limit top bracket.
+   * @param {number} amount - Taxable amount (already net of deductions).
+   * @param {number} inflationMultiplier - Scales the (year-0) bracket limits.
+   * @returns {number} Tax owed.
    */
-  calculateTax(taxableIncome, married, yearOffset, inflationRate) {
-    if (taxableIncome <= 0) return 0;
-    
-    const inflationMultiplier = Math.pow(1 + inflationRate, yearOffset);
-    
-    // 2025 Brackets
-    const singleBrackets = [
-      { limit: 11600, rate: 0.10 },
-      { limit: 47150, rate: 0.12 },
-      { limit: 100525, rate: 0.22 },
-      { limit: 191950, rate: 0.24 },
-      { limit: 243725, rate: 0.32 },
-      { limit: 609350, rate: 0.35 },
-      { limit: Infinity, rate: 0.37 }
-    ];
-    
-    const marriedBrackets = [
-      { limit: 23200, rate: 0.10 },
-      { limit: 94300, rate: 0.12 },
-      { limit: 201050, rate: 0.22 },
-      { limit: 383900, rate: 0.24 },
-      { limit: 487450, rate: 0.32 },
-      { limit: 731200, rate: 0.35 },
-      { limit: Infinity, rate: 0.37 }
-    ];
-    
-    const brackets = married ? marriedBrackets : singleBrackets;
-    
-    let federalTax = 0;
+  applyBrackets(brackets, amount, inflationMultiplier) {
+    if (amount <= 0) return 0;
+    let tax = 0;
     let prevLimit = 0;
-    
     for (const bracket of brackets) {
-      const adjustedLimit = bracket.limit === Infinity ? Infinity : bracket.limit * inflationMultiplier;
-      if (taxableIncome > prevLimit) {
-        const taxableAmountInBracket = Math.min(taxableIncome - prevLimit, adjustedLimit - prevLimit);
-        federalTax += taxableAmountInBracket * bracket.rate;
-      } else {
-        break;
-      }
-      prevLimit = adjustedLimit;
+      const limit = bracket.limit === Infinity ? Infinity : bracket.limit * inflationMultiplier;
+      if (amount <= prevLimit) break;
+      tax += Math.min(amount - prevLimit, limit - prevLimit) * bracket.rate;
+      prevLimit = limit;
     }
-    
-    // State CA Tax (Effective 9.3%)
-    const stateTax = taxableIncome * 0.093;
-    
-    // FICA
-    const ssLimit = 168600 * inflationMultiplier;
-    const ssTax = Math.min(taxableIncome, ssLimit) * 0.062;
-    const medTax = taxableIncome * 0.0145;
-    const addlMedThreshold = 200000 * inflationMultiplier;
-    const addlMedTax = taxableIncome > addlMedThreshold ? (taxableIncome - addlMedThreshold) * 0.009 : 0;
-    
-    return federalTax + stateTax + ssTax + medTax + addlMedTax;
+    return tax;
+  }
+
+  /**
+   * Federal income tax on an already-taxable amount (deductions removed).
+   * Exposed for testing.
+   */
+  federalTax(taxableAmount, married, yearOffset, inflationRate) {
+    const t = window.TAX_TABLES.federal;
+    const mult = Math.pow(1 + inflationRate, yearOffset);
+    return this.applyBrackets(married ? t.married : t.single, taxableAmount, mult);
+  }
+
+  /**
+   * Full tax breakdown for a year.
+   *
+   * Splits income by how it is actually taxed rather than lumping everything
+   * together:
+   *   - wages / spouseWages: subject to income tax AND FICA. FICA is on the
+   *     gross wage (401k/HSA do not reduce it), and each earner gets their own
+   *     Social Security wage base.
+   *   - otherOrdinaryIncome: income-taxed but not FICA (rental, taxable one-offs).
+   *   - taxFreeIncome: excluded entirely (inheritances, gifts, home-sale equity).
+   *   - preTaxDeductions: reduce income-taxable ordinary income (401k, HSA)
+   *     but never reduce FICA.
+   *
+   * @returns {{federal:number, state:number, fica:number, total:number}}
+   */
+  taxBreakdown({ wages = 0, spouseWages = 0, otherOrdinaryIncome = 0, preTaxDeductions = 0, married = false, yearOffset = 0, inflationRate = 0 }) {
+    const T = window.TAX_TABLES;
+    const mult = Math.pow(1 + inflationRate, yearOffset);
+    const status = married ? 'married' : 'single';
+
+    // Ordinary income for income-tax purposes (wages are also ordinary income).
+    const ordinaryIncome = Math.max(0, wages + spouseWages + otherOrdinaryIncome - preTaxDeductions);
+
+    const fedTaxable = Math.max(0, ordinaryIncome - T.federal.stdDeduction[status] * mult);
+    const federal = this.applyBrackets(T.federal[status], fedTaxable, mult);
+
+    const caTaxable = Math.max(0, ordinaryIncome - T.california.stdDeduction[status] * mult);
+    const state = this.applyBrackets(T.california[status], caTaxable, mult);
+
+    // FICA on gross wages, per-earner Social Security cap.
+    const ssBase = T.fica.ssWageBase * mult;
+    const ss = (Math.min(wages, ssBase) + Math.min(spouseWages, ssBase)) * T.fica.ssRate;
+    const totalWages = wages + spouseWages;
+    const medicare = totalWages * T.fica.medicareRate;
+    const addlThreshold = T.fica.additionalMedicareThreshold[status] * mult;
+    const addlMedicare = totalWages > addlThreshold ? (totalWages - addlThreshold) * T.fica.additionalMedicareRate : 0;
+    const fica = ss + medicare + addlMedicare;
+
+    return { federal, state, fica, total: federal + state + fica };
+  }
+
+  /**
+   * Total tax liability for a year. Thin wrapper over taxBreakdown().
+   * @returns {number} Total tax owed.
+   */
+  calculateTax(params) {
+    return this.taxBreakdown(params).total;
   }
 
   /**
    * Applies an event to the state.
    */
   applyEvent(state, event, yearOffset) {
-    let oneTimeIncome = 0;
+    // One-time income split by tax treatment:
+    //   wage    - income tax + FICA (severance, signing bonus)
+    //   ordinary- income tax only (taxable one-off, e.g. freelance)
+    //   taxFree - untaxed (inheritance, gift, home-sale equity)
+    let oneTimeWageIncome = 0;
+    let oneTimeOrdinaryIncome = 0;
+    let oneTimeTaxFreeIncome = 0;
     let oneTimeCost = 0;
     let eventName = event.name || 'Event';
     
@@ -354,9 +437,10 @@ class LifetimeModel {
       if (effects.marketReturn !== undefined) state.marketReturn = effects.marketReturn;
       if (effects.inflationRate !== undefined) state.inflation = effects.inflationRate;
       
-      if (effects.severance) oneTimeIncome += effects.severance;
-      if (effects.signingBonus) oneTimeIncome += effects.signingBonus;
-      if (effects.oneTimeIncome) oneTimeIncome += effects.oneTimeIncome;
+      if (effects.severance) oneTimeWageIncome += effects.severance;
+      if (effects.signingBonus) oneTimeWageIncome += effects.signingBonus;
+      if (effects.oneTimeIncome) oneTimeOrdinaryIncome += effects.oneTimeIncome;
+      if (effects.oneTimeIncomeTaxFree) oneTimeTaxFreeIncome += effects.oneTimeIncomeTaxFree;
       if (effects.oneTimeCost) oneTimeCost += effects.oneTimeCost;
       
       if (effects.expenseChanges) {
@@ -374,6 +458,7 @@ class LifetimeModel {
         const downPaymentCost = p.price * p.downPercent * p.yourShare;
         oneTimeCost += downPaymentCost;
         state.hasHome = true;
+        state.homeShare = p.yourShare;
         state.homeValue = p.price * p.yourShare;
         state.mortgageBalance = (p.price - (p.price * p.downPercent)) * p.yourShare;
         state.mortgageRate = p.rate;
@@ -386,7 +471,17 @@ class LifetimeModel {
       }
       
       if (effects.homeSale) {
-        oneTimeIncome += (effects.homeSale.salePrice - (state.mortgageBalance || 0));
+        // Your equity = your share of the sale price minus your mortgage
+        // balance. A salePrice is the full property price; scale it by your
+        // ownership share to match how homeValue/mortgageBalance are tracked.
+        // Primary-residence sale proceeds are treated as a tax-free return of
+        // equity (the $250k/$500k capital-gains exclusion typically covers the
+        // gain for a home held this way).
+        const share = state.homeShare || 1;
+        const grossValue = effects.homeSale.salePrice !== undefined
+          ? effects.homeSale.salePrice * share
+          : state.homeValue;
+        oneTimeTaxFreeIncome += Math.max(0, grossValue - (state.mortgageBalance || 0));
         state.hasHome = false;
         state.homeValue = 0;
         state.mortgageBalance = 0;
@@ -409,7 +504,7 @@ class LifetimeModel {
       }
     }
     
-    return { oneTimeIncome, oneTimeCost, eventName };
+    return { oneTimeWageIncome, oneTimeOrdinaryIncome, oneTimeTaxFreeIncome, oneTimeCost, eventName };
   }
 
   /**
@@ -480,7 +575,9 @@ class LifetimeModel {
       const currentYear = new Date().getFullYear() + yearOffset;
       const currentAge = this.config.age + yearOffset;
       const eventsThisYear = [];
-      let yearOneTimeIncome = 0;
+      let yearWageIncome = 0;      // one-time wage income (severance, signing) - income tax + FICA
+      let yearOrdinaryIncome = 0;  // one-time ordinary income - income tax only
+      let yearTaxFreeIncome = 0;   // one-time tax-free income (inheritance, home equity)
       let yearOneTimeCost = 0;
       
       // 1. Reverse expired duration-based effects
@@ -499,10 +596,12 @@ class LifetimeModel {
       });
       
       for (const event of matchingEvents) {
-        const { oneTimeIncome, oneTimeCost, eventName } = this.applyEvent(state, event, yearOffset);
-        yearOneTimeIncome += oneTimeIncome;
-        yearOneTimeCost += oneTimeCost;
-        eventsThisYear.push(eventName);
+        const r = this.applyEvent(state, event, yearOffset);
+        yearWageIncome += r.oneTimeWageIncome;
+        yearOrdinaryIncome += r.oneTimeOrdinaryIncome;
+        yearTaxFreeIncome += r.oneTimeTaxFreeIncome;
+        yearOneTimeCost += r.oneTimeCost;
+        eventsThisYear.push(r.eventName);
         
         if (event.duration && event.reversal) {
           activeEffects.push({
@@ -521,7 +620,12 @@ class LifetimeModel {
         esppGain = state.esppAnnualGain;
       }
       
-      const totalGross = salary + bonus + rsuGross + esppGain + state.spouseIncome + state.rentalIncome + yearOneTimeIncome;
+      // Income grouped by tax treatment (see taxBreakdown).
+      const wages = salary + bonus + rsuGross + esppGain + yearWageIncome; // FICA + income tax
+      const spouseWages = state.spouseIncome;                              // FICA + income tax (own SS cap)
+      const otherOrdinary = state.rentalIncome + yearOrdinaryIncome;       // income tax only
+      const yearOneTimeIncome = yearWageIncome + yearOrdinaryIncome + yearTaxFreeIncome;
+      const totalGross = wages + spouseWages + otherOrdinary + yearTaxFreeIncome;
       
       // 4. Calculate savings contributions
       let p401k = 0, mBackdoor = 0, hsaC = 0, rIRA = 0;
@@ -532,10 +636,18 @@ class LifetimeModel {
         rIRA = state.rothIRA;
       }
       
-      // 5. Calculate taxes
+      // 5. Calculate taxes. 401k + HSA are pre-tax for income tax (not FICA).
       const preTaxDeductions = p401k + hsaC;
-      const taxableIncome = Math.max(0, totalGross - preTaxDeductions);
-      const taxes = this.calculateTax(taxableIncome, state.married, yearOffset, state.inflation);
+      const taxBreakdown = this.taxBreakdown({
+        wages,
+        spouseWages,
+        otherOrdinaryIncome: otherOrdinary,
+        preTaxDeductions,
+        married: state.married,
+        yearOffset,
+        inflationRate: state.inflation
+      });
+      const taxes = taxBreakdown.total;
       
       // 6. Calculate expenses
       let baseMonthlyExpenseTotal = 0;
@@ -554,10 +666,11 @@ class LifetimeModel {
 
       const annualExpenses = (baseMonthlyExpenseTotal * 12) + state.additionalAnnualExpenses + yearOneTimeCost;
       
-      // 7. Net Cash Flow
-      const postTaxTakeHome = taxableIncome - taxes;
+      // 7. Net Cash Flow. Cash not diverted to pre-tax accounts, less taxes and
+      // post-tax savings, less spending. Tax-free income flows through here in
+      // full (it is part of totalGross but incurs no tax).
       const postTaxSavings = mBackdoor + rIRA;
-      const netCashForSpending = postTaxTakeHome - postTaxSavings;
+      const netCashForSpending = totalGross - preTaxDeductions - taxes - postTaxSavings;
       const netCashFlow = netCashForSpending - annualExpenses;
       
       // 8. Grow balances and add contributions
@@ -621,6 +734,7 @@ class LifetimeModel {
           oneTime: yearOneTimeIncome
         },
         taxes,
+        taxBreakdown,
         expenses: {
           total: annualExpenses,
           monthly: baseMonthlyExpenseTotal,
