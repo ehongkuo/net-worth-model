@@ -104,10 +104,16 @@
       <div class="glass-card">
         <div class="chart-header">
           <h2>📈 Net Worth Projection</h2>
-          <div class="tab-buttons" id="chart-tabs">
-            <button class="tab-btn active" data-view="total">Total</button>
-            <button class="tab-btn" data-view="breakdown">Breakdown</button>
-            <button class="tab-btn" data-view="income">Income vs Expenses</button>
+          <div class="chart-controls">
+            <div class="tab-buttons" id="dollar-toggle" title="Nominal shows future dollars; Today's discounts them back to age-25 purchasing power">
+              <button class="tab-btn active" data-mode="nominal">Nominal $</button>
+              <button class="tab-btn" data-mode="real">Today's $</button>
+            </div>
+            <div class="tab-buttons" id="chart-tabs">
+              <button class="tab-btn active" data-view="total">Total</button>
+              <button class="tab-btn" data-view="breakdown">Breakdown</button>
+              <button class="tab-btn" data-view="income">Income vs Expenses</button>
+            </div>
           </div>
         </div>
         <div class="chart-container">

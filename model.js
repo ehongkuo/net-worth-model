@@ -621,6 +621,10 @@ class LifetimeModel {
     };
 
     let activeEffects = [];
+    // Cumulative price level relative to year 0. Used to convert nominal
+    // figures back to today's dollars for display. Compounds actual per-year
+    // inflation, so it stays exact even if an event changes the rate.
+    let inflationFactor = 1;
 
     for (let yearOffset = 0; yearOffset <= this.config.projectionYears; yearOffset++) {
       const currentYear = new Date().getFullYear() + yearOffset;
@@ -800,6 +804,7 @@ class LifetimeModel {
         year: currentYear,
         age: currentAge,
         yearOffset,
+        inflationFactor,
         income: {
           gross: totalGross,
           salary,
@@ -863,8 +868,9 @@ class LifetimeModel {
       if (state.additionalAnnualExpenses > 0) {
         state.additionalAnnualExpenses *= (1 + state.inflation);
       }
+      inflationFactor *= (1 + state.inflation);
     }
-    
+
     return results;
   }
 }

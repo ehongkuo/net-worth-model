@@ -1,6 +1,18 @@
 let model, chart, currentResults = [], currentView = 'total';
+let displayMode = 'nominal'; // 'nominal' or 'real' (today's dollars)
 let currentTemplateReversal = null;
 let currentTemplateEffects = null;
+
+/**
+ * Converts a nominal figure to today's dollars when the real-dollars toggle is
+ * on, using the year's cumulative inflation factor.
+ */
+function displayValue(value, result) {
+  if (displayMode === 'real' && result && result.inflationFactor) {
+    return value / result.inflationFactor;
+  }
+  return value;
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof window.LifetimeModel !== 'undefined') {
@@ -104,7 +116,7 @@ function updateChart() {
     chart.options.scales.y.stacked = false;
     datasets = [{
       label: 'Net Worth',
-      data: currentResults.map(r => r.netWorth),
+      data: currentResults.map(r => displayValue(r.netWorth, r)),
       borderColor: '#38bdf8',
       borderWidth: 3,
       backgroundColor: createGradient(ctx, 'rgba(56, 189, 248, 0.3)'),
@@ -129,7 +141,7 @@ function updateChart() {
 
     datasets = accounts.map(acc => ({
       label: acc.label,
-      data: currentResults.map(r => r.balances ? (r.balances[acc.key] || 0) : 0),
+      data: currentResults.map(r => displayValue(r.balances ? (r.balances[acc.key] || 0) : 0, r)),
       backgroundColor: hexToRgba(acc.color, 0.6),
       borderColor: acc.color,
       borderWidth: 1,
@@ -144,14 +156,14 @@ function updateChart() {
     datasets = [
       {
         label: 'Gross Income',
-        data: currentResults.map(r => r.income ? r.income.gross || 0 : 0),
+        data: currentResults.map(r => displayValue(r.income ? r.income.gross || 0 : 0, r)),
         borderColor: '#10b981',
         backgroundColor: createGradient(ctx, 'rgba(16, 185, 129, 0.1)'),
         borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 5, tension: 0.3
       },
       {
         label: 'Total Expenses',
-        data: currentResults.map(r => r.expenses ? r.expenses.total || 0 : 0),
+        data: currentResults.map(r => displayValue(r.expenses ? r.expenses.total || 0 : 0, r)),
         borderColor: '#ef4444',
         backgroundColor: createGradient(ctx, 'rgba(239, 68, 68, 0.1)'),
         borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 5, tension: 0.3
@@ -172,26 +184,28 @@ function updateSummaryCards() {
   const age50 = currentResults.find(r => r.age === 50);
   const age65 = currentResults.find(r => r.age === 65);
 
+  // Peak is compared in nominal terms (order is unaffected by deflation) but
+  // displayed in the chosen mode.
   let peak = currentResults[0];
   currentResults.forEach(r => { if (r.netWorth > peak.netWorth) peak = r; });
 
-  document.getElementById('val-start-nw').innerText = formatCurrency(start.netWorth);
+  document.getElementById('val-start-nw').innerText = formatCurrency(displayValue(start.netWorth, start));
   document.getElementById('val-start-age').innerText = `Age ${start.age}`;
 
   if (age35) {
-    document.getElementById('val-nw-35').innerText = formatCurrency(age35.netWorth);
-    document.getElementById('val-35-income').innerText = `Income: ${formatCurrency(age35.income.gross)}`;
+    document.getElementById('val-nw-35').innerText = formatCurrency(displayValue(age35.netWorth, age35));
+    document.getElementById('val-35-income').innerText = `Income: ${formatCurrency(displayValue(age35.income.gross, age35))}`;
   }
   if (age50) {
-    document.getElementById('val-nw-50').innerText = formatCurrency(age50.netWorth);
-    document.getElementById('val-50-income').innerText = `Income: ${formatCurrency(age50.income.gross)}`;
+    document.getElementById('val-nw-50').innerText = formatCurrency(displayValue(age50.netWorth, age50));
+    document.getElementById('val-50-income').innerText = `Income: ${formatCurrency(displayValue(age50.income.gross, age50))}`;
   }
   if (age65) {
-    document.getElementById('val-nw-65').innerText = formatCurrency(age65.netWorth);
-    document.getElementById('val-65-income').innerText = `Income: ${formatCurrency(age65.income.gross)}`;
+    document.getElementById('val-nw-65').innerText = formatCurrency(displayValue(age65.netWorth, age65));
+    document.getElementById('val-65-income').innerText = `Income: ${formatCurrency(displayValue(age65.income.gross, age65))}`;
   }
 
-  document.getElementById('val-peak-nw').innerText = formatCurrency(peak.netWorth);
+  document.getElementById('val-peak-nw').innerText = formatCurrency(displayValue(peak.netWorth, peak));
   document.getElementById('val-peak-age').innerText = `Age ${peak.age}`;
 }
 
@@ -225,11 +239,11 @@ function updateDataTable() {
     tr.innerHTML = `
       <td>${r.age}</td>
       <td>${r.year}</td>
-      <td>${formatCurrencyFull(r.income.gross)}</td>
-      <td>${formatCurrencyFull(r.taxes)}</td>
-      <td>${formatCurrencyFull(r.expenses.total)}</td>
-      <td>${formatCurrencyFull(r.savings.total)}</td>
-      <td class="${nwClass} font-semibold">${formatCurrencyFull(r.netWorth)}</td>
+      <td>${formatCurrencyFull(displayValue(r.income.gross, r))}</td>
+      <td>${formatCurrencyFull(displayValue(r.taxes, r))}</td>
+      <td>${formatCurrencyFull(displayValue(r.expenses.total, r))}</td>
+      <td>${formatCurrencyFull(displayValue(r.savings.total, r))}</td>
+      <td class="${nwClass} font-semibold">${formatCurrencyFull(displayValue(r.netWorth, r))}</td>
       <td>${eventBadges}</td>
     `;
     tbody.appendChild(tr);
@@ -328,13 +342,25 @@ function setupEventListeners() {
     }
   });
 
-  // Chart tab toggles
-  document.querySelectorAll('.tab-btn').forEach(btn => {
+  // Chart tab toggles (view selector)
+  document.querySelectorAll('#chart-tabs .tab-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#chart-tabs .tab-btn').forEach(b => b.classList.remove('active'));
       e.target.classList.add('active');
       currentView = e.target.getAttribute('data-view');
       updateChart();
+    });
+  });
+
+  // Nominal / today's-dollars toggle (affects chart, cards, and table)
+  document.querySelectorAll('#dollar-toggle .tab-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('#dollar-toggle .tab-btn').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      displayMode = e.target.getAttribute('data-mode');
+      updateChart();
+      updateSummaryCards();
+      updateDataTable();
     });
   });
 
