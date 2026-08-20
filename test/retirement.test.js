@@ -63,7 +63,7 @@ describe('drawdown waterfall', () => {
 
   test('taxable brokerage is drawn before Roth', () => {
     const m = retiringModel({ socialSecurityAnnual: 0, brokerage: 300000, rothAccounts: 300000 });
-    const state = { balances: { brokerage: 300000, pretax401k: 0, traditionalIRA: 0, rothAccounts: 300000, hsa: 0, cash: 0 } };
+    const state = { balances: { brokerage: 300000, pretax401k: 0, traditionalIRA: 0, rothAccounts: 300000, hsa: 0, cash: 0 }, basis: { brokerage: 300000 } };
     const out = m.drawDown(state, 100000);
     assertClose(out.drawn, 100000, 1e-6);
     assertClose(state.balances.brokerage, 200000, 1e-6, 'brokerage tapped first');
@@ -73,14 +73,14 @@ describe('drawdown waterfall', () => {
 
   test('pre-tax withdrawals count as taxable ordinary income', () => {
     const m = new LifetimeModel();
-    const state = { balances: { brokerage: 0, pretax401k: 200000, traditionalIRA: 0, rothAccounts: 0, hsa: 0, cash: 0 } };
+    const state = { balances: { brokerage: 0, pretax401k: 200000, traditionalIRA: 0, rothAccounts: 0, hsa: 0, cash: 0 }, basis: { brokerage: 0 } };
     const out = m.drawDown(state, 50000);
     assertClose(out.taxableWithdrawal, 50000, 1e-6, '401k draw is ordinary income');
   });
 
   test('reports a shortfall once every account is exhausted', () => {
     const m = new LifetimeModel();
-    const state = { balances: { brokerage: 10000, pretax401k: 0, traditionalIRA: 0, rothAccounts: 0, hsa: 0, cash: 0 } };
+    const state = { balances: { brokerage: 10000, pretax401k: 0, traditionalIRA: 0, rothAccounts: 0, hsa: 0, cash: 0 }, basis: { brokerage: 10000 } };
     const out = m.drawDown(state, 25000);
     assertClose(out.drawn, 10000, 1e-6);
     assertClose(out.shortfall, 15000, 1e-6);

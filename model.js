@@ -48,7 +48,7 @@ window.DEFAULT_CONFIG = {
   socialSecurityStartAge: 67
 };
 
-window.EVENT_TYPES = ['career', 'housing', 'family', 'health', 'purchase', 'market', 'windfall'];
+window.EVENT_TYPES = ['career', 'housing', 'family', 'health', 'purchase', 'market', 'windfall', 'vehicle'];
 
 window.EVENT_TEMPLATES = {
   promotionSenior: {
@@ -93,8 +93,16 @@ window.EVENT_TEMPLATES = {
   },
   carPurchase: {
     name: 'Buy a Car',
-    type: 'purchase',
-    effects: { oneTimeCost: 45000 }
+    type: 'vehicle',
+    effects: { 
+      vehiclePurchase: { 
+        price: 45000, 
+        insurance: 112, 
+        maintenance: 56, 
+        fuelType: 'gas', 
+        fuel: 150 
+      } 
+    }
   },
   bearMarket: {
     name: 'Bear Market',
@@ -146,7 +154,20 @@ window.TAX_TABLES = {
       { limit: 751600, rate: 0.35 },
       { limit: Infinity, rate: 0.37 }
     ],
-    stdDeduction: { single: 15000, married: 30000 }
+    stdDeduction: { single: 15000, married: 30000 },
+    ltcg: {
+      single: [
+        { limit: 47025, rate: 0.0 },
+        { limit: 518900, rate: 0.15 },
+        { limit: Infinity, rate: 0.20 }
+      ],
+      married: [
+        { limit: 94050, rate: 0.0 },
+        { limit: 583750, rate: 0.15 },
+        { limit: Infinity, rate: 0.20 }
+      ]
+    },
+    niitThreshold: { single: 200000, married: 250000 }
   },
   // California FTB brackets. CA has no preferential rate for capital gains.
   california: {
@@ -379,24 +400,77 @@ class LifetimeModel {
    *
    * @returns {{federal:number, state:number, fica:number, total:number}}
    */
-  taxBreakdown({ wages = 0, spouseWages = 0, otherOrdinaryIncome = 0, federalOnlyOrdinaryIncome = 0, preTaxDeductions = 0, married = false, yearOffset = 0, inflationRate = 0 }) {
+  taxBreakdown({ 
+    wages = 0, spouseWages = 0, otherOrdinaryIncome = 0, federalOnlyOrdinaryIncome = 0, 
+    preTaxDeductions = 0, mortgageInterest = 0, propertyTaxes = 0, realizedLtcg = 0,
+    married = false, yearOffset = 0, inflationRate = 0 
+  }) {
     const T = window.TAX_TABLES;
     const mult = Math.pow(1 + inflationRate, yearOffset);
     const status = married ? 'married' : 'single';
 
-    // Ordinary income for income-tax purposes (wages are also ordinary income).
+    // Ordinary income for income-tax purposes
     const ordinaryIncome = Math.max(0, wages + spouseWages + otherOrdinaryIncome - preTaxDeductions);
-    // federalOnlyOrdinaryIncome (e.g. the taxable portion of Social Security)
-    // is taxed federally but not by California.
     const fedOrdinary = ordinaryIncome + Math.max(0, federalOnlyOrdinaryIncome);
 
-    const fedTaxable = Math.max(0, fedOrdinary - T.federal.stdDeduction[status] * mult);
-    const federal = this.applyBrackets(T.federal[status], fedTaxable, mult);
-
-    const caTaxable = Math.max(0, ordinaryIncome - T.california.stdDeduction[status] * mult);
+    // CA Itemized Deductions
+    const caItemized = propertyTaxes + mortgageInterest;
+    const caStdDed = T.california.stdDeduction[status] * mult;
+    const caDeduction = Math.max(caItemized, caStdDed);
+    
+    // CA treats LTCG as ordinary income
+    const caTaxable = Math.max(0, ordinaryIncome + realizedLtcg - caDeduction);
     const state = this.applyBrackets(T.california[status], caTaxable, mult);
 
-    // FICA on gross wages, per-earner Social Security cap.
+    // Federal Itemized Deductions (SALT capped at $10k)
+    const salt = Math.min(propertyTaxes + state, 10000); 
+    const fedItemized = salt + mortgageInterest;
+    const fedStdDed = T.federal.stdDeduction[status] * mult;
+    const fedDeduction = Math.max(fedItemized, fedStdDed);
+
+    let fedTaxableOrdinary = fedOrdinary - fedDeduction;
+    let fedLtcg = realizedLtcg;
+    
+    // If ordinary deductions exceed ordinary income, the excess reduces LTCG
+    if (fedTaxableOrdinary < 0) {
+       fedLtcg = Math.max(0, fedLtcg + fedTaxableOrdinary);
+       fedTaxableOrdinary = 0;
+    }
+
+    let federal = this.applyBrackets(T.federal[status], fedTaxableOrdinary, mult);
+
+    // Federal LTCG stacked on top of ordinary income
+    if (fedLtcg > 0) {
+      let ltcgTax = 0;
+      let remainingLtcg = fedLtcg;
+      let currentIncome = fedTaxableOrdinary;
+      
+      for (const bracket of T.federal.ltcg[status]) {
+        const limit = bracket.limit === Infinity ? Infinity : bracket.limit * mult;
+        if (currentIncome >= limit) continue; 
+        
+        const roomInBracket = limit - currentIncome;
+        const amountToTax = Math.min(remainingLtcg, roomInBracket);
+        ltcgTax += amountToTax * bracket.rate;
+        
+        remainingLtcg -= amountToTax;
+        currentIncome += amountToTax;
+        
+        if (remainingLtcg <= 0) break;
+      }
+      federal += ltcgTax;
+      
+      // NIIT (Net Investment Income Tax) 3.8%
+      const magi = fedOrdinary + realizedLtcg;
+      const niitThreshold = T.federal.niitThreshold[status] * mult;
+      if (magi > niitThreshold) {
+         const excessMagi = magi - niitThreshold;
+         const niitBase = Math.min(fedLtcg, excessMagi);
+         federal += niitBase * 0.038;
+      }
+    }
+
+    // FICA on gross wages
     const ssBase = T.fica.ssWageBase * mult;
     const ss = (Math.min(wages, ssBase) + Math.min(spouseWages, ssBase)) * T.fica.ssRate;
     const totalWages = wages + spouseWages;
@@ -408,12 +482,42 @@ class LifetimeModel {
     return { federal, state, fica, total: federal + state + fica };
   }
 
-  /**
-   * Total tax liability for a year. Thin wrapper over taxBreakdown().
-   * @returns {number} Total tax owed.
-   */
   calculateTax(params) {
     return this.taxBreakdown(params).total;
+  }
+
+  /**
+   * Simulates a drawdown to determine tax consequences without mutating state.
+   */
+  simulateDrawdown(state, need) {
+    if (need <= 0) return { pretaxWithdrawal: 0, realizedLtcg: 0 };
+    let remaining = need;
+    let pretaxWithdrawal = 0;
+    let realizedLtcg = 0;
+    
+    // Brokerage (LTCG)
+    if (state.balances.brokerage > 0) {
+      const take = Math.min(state.balances.brokerage, remaining);
+      const gainRatio = Math.max(0, (state.balances.brokerage - state.basis.brokerage) / state.balances.brokerage);
+      realizedLtcg += take * gainRatio;
+      remaining -= take;
+    }
+    
+    // Pretax 401k
+    if (remaining > 0 && state.balances.pretax401k > 0) {
+      const take = Math.min(state.balances.pretax401k, remaining);
+      pretaxWithdrawal += take;
+      remaining -= take;
+    }
+    
+    // Traditional IRA
+    if (remaining > 0 && state.balances.traditionalIRA > 0) {
+      const take = Math.min(state.balances.traditionalIRA, remaining);
+      pretaxWithdrawal += take;
+      remaining -= take;
+    }
+    
+    return { pretaxWithdrawal, realizedLtcg };
   }
 
   /**
@@ -515,6 +619,13 @@ class LifetimeModel {
       if (effects.portfolioImpact) {
         state.balances.brokerage += effects.portfolioImpact;
       }
+      
+      if (effects.vehiclePurchase) {
+        const v = effects.vehiclePurchase;
+        oneTimeCost += (v.price || 0); // Assume cash purchase for simplicity
+        const ongoingCost = (v.insurance || 0) + (v.maintenance || 0) + (v.fuel || 0);
+        state.monthlyExpenses.auto = (state.monthlyExpenses.auto || 0) + ongoingCost;
+      }
     }
     
     return { oneTimeWageIncome, oneTimeOrdinaryIncome, oneTimeTaxFreeIncome, oneTimeCost, eventName };
@@ -590,7 +701,16 @@ class LifetimeModel {
       const take = Math.min(bal, remaining);
       state.balances[acct.key] -= take;
       remaining -= take;
-      if (acct.taxable) taxableWithdrawal += take;
+      
+      if (acct.taxable) {
+         taxableWithdrawal += take;
+      }
+      
+      if (acct.key === 'brokerage') {
+         const gainRatio = Math.max(0, (bal - state.basis.brokerage) / bal);
+         const realizedGain = take * gainRatio;
+         state.basis.brokerage = Math.max(0, state.basis.brokerage - (take - realizedGain));
+      }
     }
     return { drawn: need - remaining, shortfall: remaining, taxableWithdrawal };
   }
@@ -642,6 +762,9 @@ class LifetimeModel {
         rothAccounts: this.config.rothAccounts,
         traditionalIRA: this.config.traditionalIRA,
         hsa: this.config.hsa
+      },
+      basis: {
+        brokerage: this.config.brokerage
       }
     };
 
@@ -651,7 +774,46 @@ class LifetimeModel {
     // inflation, so it stays exact even if an event changes the rate.
     let inflationFactor = 1;
 
-    for (let yearOffset = 0; yearOffset <= this.config.projectionYears; yearOffset++) {
+    // Push initial Year 0 snapshot
+    let initialHomeEquity = state.hasHome ? (state.homeValue - state.mortgageBalance) : 0;
+    let initialNetWorth = state.balances.cash + state.balances.brokerage + state.balances.pretax401k + state.balances.rothAccounts + state.balances.traditionalIRA + state.balances.hsa + initialHomeEquity;
+    results.push({
+      year: new Date().getFullYear(),
+      age: this.config.age,
+      yearOffset: 0,
+      inflationFactor: 1,
+      income: { gross: 0, salary: 0, bonus: 0, rsu: 0, espp: 0, spouse: 0, rental: 0, socialSecurity: 0, oneTime: 0, investment: 0 },
+      taxes: 0,
+      taxBreakdown: { federal: 0, state: 0, fica: 0, total: 0 },
+      shortfall: 0,
+      expenses: { total: 0, monthly: 0, oneTime: 0, breakdown: {} },
+      savings: { pretax401k: 0, megaBackdoor: 0, rothIRA: 0, hsa: 0, total: 0 },
+      netCashFlow: 0,
+      balances: { ...state.balances, homeEquity: initialHomeEquity },
+      netWorth: initialNetWorth,
+      events: [],
+      state: { employed: state.employed, retired: false, married: state.married, children: state.children, hasHome: state.hasHome, baseSalary: state.salary }
+    });
+
+    // Apply salary growth and expense inflation for year 1
+    if (state.employed) {
+      state.salary *= (1 + state.salaryGrowth);
+    }
+    for (const cat in state.monthlyExpenses) {
+      if (cat !== 'housing' || !state.hasHome) { // Fixed mortgage payment doesn't inflate
+        state.monthlyExpenses[cat] *= (1 + state.inflation);
+      }
+    }
+    if (state.additionalAnnualExpenses > 0) {
+      state.additionalAnnualExpenses *= (1 + state.inflation);
+    }
+    state.pretax401k *= (1 + state.inflation);
+    state.megaBackdoor *= (1 + state.inflation);
+    state.hsaContrib *= (1 + state.inflation);
+    state.rothIRA *= (1 + state.inflation);
+    inflationFactor *= (1 + state.inflation);
+
+    for (let yearOffset = 1; yearOffset <= this.config.projectionYears; yearOffset++) {
       const currentYear = new Date().getFullYear() + yearOffset;
       const currentAge = this.config.age + yearOffset;
       const eventsThisYear = [];
@@ -761,33 +923,53 @@ class LifetimeModel {
       // 7. Grow balances and add contributions. Growth happens before any
       // drawdown so withdrawals come out of post-growth balances.
       const mr = state.marketReturn;
+      const investmentGain = (state.balances.pretax401k + state.balances.rothAccounts + state.balances.traditionalIRA + state.balances.hsa + state.balances.brokerage) * mr;
+      
       state.balances.pretax401k = state.balances.pretax401k * (1 + mr) + p401k;
       state.balances.rothAccounts = state.balances.rothAccounts * (1 + mr) + postTaxSavings;
       state.balances.traditionalIRA = state.balances.traditionalIRA * (1 + mr);
       state.balances.hsa = state.balances.hsa * (1 + mr) + hsaC;
       state.balances.brokerage = state.balances.brokerage * (1 + mr);
 
-      // 8. Solve taxes and retirement drawdown together. Spending is funded
-      // first by income, then the cash buffer, then account withdrawals. Pre-tax
-      // withdrawals (401k / traditional IRA) are ordinary income, so they raise
-      // taxes, which raise the amount that must be withdrawn - a fixed point
-      // that converges since marginal rates are below 100%.
-      const taxParams = (pretaxWithdrawal) => ({
+      // 8. Calculate Home Amortization & Taxes (Before full drawdown)
+      let mortgageInterest = 0;
+      let propertyTaxes = 0;
+      if (state.hasHome) {
+         propertyTaxes = state.homeValue * state.homePropTaxRate;
+         if (state.mortgageBalance > 0) {
+            const m = this.calculateMortgagePayment(state.mortgageBalance, state.mortgageRate, state.mortgagePayment);
+            const deductibleRatio = Math.min(1, 750000 / Math.max(1, state.mortgageBalance));
+            mortgageInterest = m.interest * deductibleRatio;
+         }
+      }
+
+      // Solve taxes and retirement drawdown together using fixed point.
+      let pretaxW = 0;
+      let ltcgW = 0;
+      const taxParams = (pre, ltcg) => ({
         wages, spouseWages,
-        otherOrdinaryIncome: otherOrdinary + pretaxWithdrawal,
+        otherOrdinaryIncome: otherOrdinary + pre,
+        realizedLtcg: ltcg,
         federalOnlyOrdinaryIncome: ssTaxable,
         preTaxDeductions,
+        mortgageInterest, propertyTaxes,
         married: state.married, yearOffset, inflationRate: state.inflation
       });
-      let pretaxWithdrawal = 0;
+      
       for (let i = 0; i < 16; i++) {
-        const need = annualExpenses + this.calculateTax(taxParams(pretaxWithdrawal)) - cashInflow;
+        const need = annualExpenses + this.calculateTax(taxParams(pretaxW, ltcgW)) - cashInflow;
         const accountsNeed = need - Math.max(0, state.balances.cash);
-        const next = this.pretaxPortionOfWithdrawal(state, accountsNeed);
-        if (Math.abs(next - pretaxWithdrawal) < 1) { pretaxWithdrawal = next; break; }
-        pretaxWithdrawal = next;
+        const { pretaxWithdrawal, realizedLtcg } = this.simulateDrawdown(state, accountsNeed);
+        if (Math.abs(pretaxWithdrawal - pretaxW) < 1 && Math.abs(realizedLtcg - ltcgW) < 1) { 
+           pretaxW = pretaxWithdrawal; 
+           ltcgW = realizedLtcg;
+           break; 
+        }
+        pretaxW = pretaxWithdrawal;
+        ltcgW = realizedLtcg;
       }
-      const taxBreakdown = this.taxBreakdown(taxParams(pretaxWithdrawal));
+      
+      const taxBreakdown = this.taxBreakdown(taxParams(pretaxW, ltcgW));
       const taxes = taxBreakdown.total;
       const netCashFlow = cashInflow - taxes - annualExpenses; // negative in retirement
 
@@ -797,7 +979,9 @@ class LifetimeModel {
         // Surplus builds the cash buffer, overflowing into brokerage above 50k.
         state.balances.cash += netCashFlow;
         if (state.balances.cash > 50000) {
-          state.balances.brokerage += state.balances.cash - 50000;
+          const surplus = state.balances.cash - 50000;
+          state.balances.brokerage += surplus;
+          state.basis.brokerage += surplus;
           state.balances.cash = 50000;
         }
       } else {
@@ -844,7 +1028,8 @@ class LifetimeModel {
           spouse: state.spouseIncome,
           rental: state.rentalIncome,
           socialSecurity: ssIncome,
-          oneTime: yearOneTimeIncome
+          oneTime: yearOneTimeIncome,
+          investment: investmentGain
         },
         taxes,
         taxBreakdown,

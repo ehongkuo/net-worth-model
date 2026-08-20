@@ -6,5 +6,8 @@
     "test": "node test/run.js"
   },
   "license": "MIT",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "puppeteer": "^25.4.0"
+  }
 }
