@@ -1,7 +1,9 @@
 let model, chart, currentResults = [], currentView = 'total';
 let displayMode = 'nominal'; // 'nominal' or 'real' (today's dollars)
+let currentTimeWindow = 'full';
 let currentTemplateReversal = null;
 let currentTemplateEffects = null;
+let currentScrubberIndex = 0;
 
 const STORAGE_KEY = 'netWorthModel:v1';
 
@@ -10,6 +12,7 @@ const STORAGE_KEY = 'netWorthModel:v1';
 // restore-from-storage sync can use them.
 const pct = (v) => v.toFixed(1) + '%';
 const ASSUMPTION_SLIDERS = [
+  { id: 'slider-base-rent', displayId: 'val-base-rent', key: 'expenses.housing', raw: true, format: (v) => formatCurrencyFull(v) },
   { id: 'slider-inflation', displayId: 'val-inflation', key: 'inflation', format: pct },
   { id: 'slider-market-return', displayId: 'val-market-return', key: 'marketReturn', format: pct },
   { id: 'slider-salary-growth', displayId: 'val-salary-growth', key: 'salaryGrowth', format: pct },
@@ -105,8 +108,15 @@ function syncControlsFromConfig() {
   ASSUMPTION_SLIDERS.forEach(s => {
     const el = document.getElementById(s.id);
     const disp = document.getElementById(s.displayId);
-    if (!el || cfg[s.key] === undefined || cfg[s.key] === null) return;
-    const raw = s.raw ? cfg[s.key] : cfg[s.key] * 100;
+    let configVal = cfg;
+    if (s.key.includes('.')) {
+      const parts = s.key.split('.');
+      configVal = cfg[parts[0]] ? cfg[parts[0]][parts[1]] : undefined;
+    } else {
+      configVal = cfg[s.key];
+    }
+    if (!el || configVal === undefined || configVal === null) return;
+    const raw = s.raw ? configVal : configVal * 100;
     el.value = raw;
     if (disp) disp.innerText = s.format(raw);
   });
@@ -156,6 +166,38 @@ function setupChart() {
   chart = new Chart(ctx, {
     type: 'line',
     data: { labels: [], datasets: [] },
+    plugins: [{
+      id: 'verticalLinePlugin',
+      afterDraw: (chart) => {
+        if (!currentResults || currentResults.length === 0) return;
+        const ctx = chart.ctx;
+        const xAxis = chart.scales.x;
+        const yAxis = chart.scales.y;
+        
+        // Only draw if the scrubber index is visible in the current zoom window
+        const label = `Age ${currentResults[currentScrubberIndex].age}`;
+        const xPos = xAxis.getPixelForTick(currentScrubberIndex);
+        
+        // In Chart.js, if a tick is out of view, getPixelForTick might still return a value, 
+        // but it might be outside the chart area.
+        if (xPos >= xAxis.left && xPos <= xAxis.right) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(xPos, yAxis.top);
+          ctx.lineTo(xPos, yAxis.bottom);
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+          ctx.setLineDash([5, 5]);
+          ctx.stroke();
+          
+          ctx.beginPath();
+          ctx.arc(xPos, yAxis.top, 5, 0, 2 * Math.PI);
+          ctx.fillStyle = '#38bdf8';
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    }],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -184,7 +226,9 @@ function setupChart() {
         x: { grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false } },
         y: {
           grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-          ticks: { callback: function(value) { return formatCurrency(value); } }
+          ticks: { callback: function(value) { return formatCurrency(value); } },
+          beginAtZero: true,
+          grace: '15%'
         }
       }
     }
@@ -194,8 +238,19 @@ function setupChart() {
 function runSimulation() {
   if (model && model.simulate) {
     currentResults = model.simulate();
+    
+    // Update scrubber max based on projection years
+    const scrubber = document.getElementById('timeline-scrubber');
+    if (scrubber) {
+      scrubber.max = currentResults.length - 1;
+      if (currentScrubberIndex >= currentResults.length) {
+        currentScrubberIndex = currentResults.length - 1;
+        scrubber.value = currentScrubberIndex;
+      }
+    }
+    
     updateChart();
-    updateSummaryCards();
+    updateTimelineSnapshot();
     updateDataTable();
     renderEventsList();
     saveState();
@@ -220,6 +275,37 @@ function updateChart() {
   if (!currentResults || currentResults.length === 0) return;
 
   const labels = currentResults.map(r => `Age ${r.age}`);
+  
+  const scrollContainer = document.getElementById('chart-scrollbar-container');
+  const scrollContent = document.getElementById('chart-scrollbar-content');
+
+  if (currentTimeWindow !== 'full' && scrollContainer && scrollContent) {
+    const years = parseInt(currentTimeWindow);
+    const totalPoints = currentResults.length;
+    const pointsInView = years + 1;
+    
+    scrollContainer.style.display = 'block';
+    const ratio = totalPoints / pointsInView;
+    scrollContent.style.width = `${ratio * 100}%`;
+
+    const maxScrollLeft = scrollContainer.scrollWidth - scrollContainer.clientWidth;
+    let scrollPct = 0;
+    if (maxScrollLeft > 0) {
+      scrollPct = scrollContainer.scrollLeft / maxScrollLeft;
+    }
+    
+    const maxStartIndex = Math.max(0, totalPoints - pointsInView);
+    const startIndex = Math.max(0, Math.min(maxStartIndex, Math.round(scrollPct * maxStartIndex)));
+    const endIndex = Math.min(totalPoints - 1, startIndex + pointsInView - 1);
+
+    chart.options.scales.x.min = labels[startIndex];
+    chart.options.scales.x.max = labels[endIndex];
+  } else {
+    if (scrollContainer) scrollContainer.style.display = 'none';
+    delete chart.options.scales.x.min;
+    delete chart.options.scales.x.max;
+  }
+
   let datasets = [];
   const ctx = document.getElementById('nw-chart').getContext('2d');
 
@@ -268,7 +354,7 @@ function updateChart() {
     datasets = [
       {
         label: 'Gross Income',
-        data: currentResults.map(r => displayValue(r.income ? r.income.gross || 0 : 0, r)),
+        data: currentResults.map(r => displayValue((r.income ? r.income.gross || 0 : 0) + (r.income ? r.income.investment || 0 : 0), r)),
         borderColor: '#10b981',
         backgroundColor: createGradient(ctx, 'rgba(16, 185, 129, 0.1)'),
         borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 5, tension: 0.3
@@ -283,42 +369,82 @@ function updateChart() {
     ];
   }
 
+  delete chart.options.scales.y.max;
+  delete chart.options.scales.y.min;
+
   chart.data.labels = labels;
   chart.data.datasets = datasets;
   chart.update();
 }
 
-function updateSummaryCards() {
+function updateTimelineSnapshot() {
   if (!currentResults || currentResults.length === 0) return;
 
-  const start = currentResults[0];
-  const age35 = currentResults.find(r => r.age === 35);
-  const age50 = currentResults.find(r => r.age === 50);
-  const age65 = currentResults.find(r => r.age === 65);
+  const r = currentResults[currentScrubberIndex];
+  if (!r) return;
 
-  // Peak is compared in nominal terms (order is unaffected by deflation) but
-  // displayed in the chosen mode.
-  let peak = currentResults[0];
-  currentResults.forEach(r => { if (r.netWorth > peak.netWorth) peak = r; });
+  // Update labels
+  document.getElementById('timeline-end-label').innerText = `Age ${currentResults[currentResults.length - 1].age}`;
+  document.getElementById('timeline-current-label').innerText = `Age ${r.age} (Year ${r.year})`;
 
-  document.getElementById('val-start-nw').innerText = formatCurrency(displayValue(start.netWorth, start));
-  document.getElementById('val-start-age').innerText = `Age ${start.age}`;
+  // Income vs Savings
+  const grossIn = (r.income.gross || 0) + (r.income.investment || 0);
+  const saved = (r.savings.total || 0) + (r.savings.postTax || 0); // Need to calculate post tax savings if it exists
+  const isPostTax = (r.income.gross - r.taxes - r.expenses.total - r.savings.total);
+  const totalSaved = r.savings.total + Math.max(0, isPostTax);
+  
+  document.getElementById('snap-gross-in').innerText = formatCurrency(displayValue(grossIn, r));
+  document.getElementById('snap-saved').innerText = formatCurrency(displayValue(totalSaved, r));
 
-  if (age35) {
-    document.getElementById('val-nw-35').innerText = formatCurrency(displayValue(age35.netWorth, age35));
-    document.getElementById('val-35-income').innerText = `Income: ${formatCurrency(displayValue(age35.income.gross, age35))}`;
+  // Housing
+  const housing = r.expenses.breakdown && r.expenses.breakdown.housing ? r.expenses.breakdown.housing * 12 : 0;
+  document.getElementById('snap-housing').innerText = formatCurrency(displayValue(housing, r));
+
+  // Living & Auto
+  const auto = r.expenses.breakdown && r.expenses.breakdown.auto ? r.expenses.breakdown.auto * 12 : 0;
+  // Total expenses minus housing and auto
+  const living = r.expenses.total - housing - auto;
+  
+  document.getElementById('snap-auto').innerText = formatCurrency(displayValue(auto, r));
+  document.getElementById('snap-living').innerText = formatCurrency(displayValue(living, r));
+
+  // Taxes
+  document.getElementById('snap-taxes').innerText = formatCurrency(displayValue(r.taxes, r));
+  const cashGross = r.income.gross || 0;
+  const effectiveRate = cashGross > 0 ? (r.taxes / cashGross) * 100 : 0;
+  document.getElementById('snap-tax-rate').innerText = `Effective Rate: ${effectiveRate.toFixed(1)}%`;
+
+  // Calculate Cumulatives
+  let cumGrossIn = 0, cumSaved = 0, cumHousing = 0, cumAuto = 0, cumLiving = 0, cumTaxes = 0;
+  for (let i = 1; i <= currentScrubberIndex; i++) {
+     const row = currentResults[i];
+     const rowGrossIn = (row.income.gross || 0) + (row.income.investment || 0);
+     cumGrossIn += displayValue(rowGrossIn, row);
+     const rowIsPostTax = (row.income.gross - row.taxes - row.expenses.total - row.savings.total);
+     cumSaved += displayValue(row.savings.total + Math.max(0, rowIsPostTax), row);
+     
+     const rowHousing = row.expenses.breakdown && row.expenses.breakdown.housing ? row.expenses.breakdown.housing * 12 : 0;
+     const rowAuto = row.expenses.breakdown && row.expenses.breakdown.auto ? row.expenses.breakdown.auto * 12 : 0;
+     cumHousing += displayValue(rowHousing, row);
+     cumAuto += displayValue(rowAuto, row);
+     cumLiving += displayValue(row.expenses.total - rowHousing - rowAuto, row);
+     cumTaxes += displayValue(row.taxes, row);
   }
-  if (age50) {
-    document.getElementById('val-nw-50').innerText = formatCurrency(displayValue(age50.netWorth, age50));
-    document.getElementById('val-50-income').innerText = `Income: ${formatCurrency(displayValue(age50.income.gross, age50))}`;
-  }
-  if (age65) {
-    document.getElementById('val-nw-65').innerText = formatCurrency(displayValue(age65.netWorth, age65));
-    document.getElementById('val-65-income').innerText = `Income: ${formatCurrency(displayValue(age65.income.gross, age65))}`;
-  }
+  
+  document.getElementById('snap-cum-gross-in').innerText = formatCurrency(cumGrossIn);
+  document.getElementById('snap-cum-saved').innerText = formatCurrency(cumSaved);
+  document.getElementById('snap-cum-housing').innerText = formatCurrency(cumHousing);
+  document.getElementById('snap-cum-auto').innerText = formatCurrency(cumAuto);
+  document.getElementById('snap-cum-living').innerText = formatCurrency(cumLiving);
+  document.getElementById('snap-cum-taxes').innerText = formatCurrency(cumTaxes);
 
-  document.getElementById('val-peak-nw').innerText = formatCurrency(displayValue(peak.netWorth, peak));
-  document.getElementById('val-peak-age').innerText = `Age ${peak.age}`;
+  // Events
+  const eventsList = document.getElementById('snap-events-list');
+  if (r.events && r.events.length > 0) {
+    eventsList.innerHTML = r.events.map(e => `<span class="event-badge ${getTypeForEventName(e)}">${e}</span>`).join('');
+  } else {
+    eventsList.innerHTML = '<span class="no-events">-</span>';
+  }
 }
 
 function updateDataTable() {
@@ -351,7 +477,7 @@ function updateDataTable() {
     tr.innerHTML = `
       <td>${r.age}</td>
       <td>${r.year}</td>
-      <td>${formatCurrencyFull(displayValue(r.income.gross, r))}</td>
+      <td>${formatCurrencyFull(displayValue((r.income.gross || 0) + (r.income.investment || 0), r))}</td>
       <td>${formatCurrencyFull(displayValue(r.taxes, r))}</td>
       <td>${formatCurrencyFull(displayValue(r.expenses.total, r))}</td>
       <td>${formatCurrencyFull(displayValue(r.savings.total, r))}</td>
@@ -436,7 +562,12 @@ function setupEventListeners() {
         const val = parseFloat(e.target.value);
         disp.innerText = s.format(val);
         if (model && model.updateConfig) {
-          model.updateConfig({ [s.key]: s.raw ? val : val / 100 });
+          if (s.key.includes('.')) {
+            const parts = s.key.split('.');
+            model.updateConfig({ [parts[0]]: { [parts[1]]: s.raw ? val : val / 100 } });
+          } else {
+            model.updateConfig({ [s.key]: s.raw ? val : val / 100 });
+          }
           runSimulation();
         }
       });
@@ -453,6 +584,46 @@ function setupEventListeners() {
     });
   });
 
+  // Time window toggles
+  document.querySelectorAll('#time-window-toggle .tab-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('#time-window-toggle .tab-btn').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      currentTimeWindow = e.target.getAttribute('data-window');
+      
+      const scrollContainer = document.getElementById('chart-scrollbar-container');
+      if (scrollContainer) scrollContainer.scrollLeft = 0;
+      
+      updateChart();
+    });
+  });
+
+  // Chart native scrollbar sync
+  const scrollContainer = document.getElementById('chart-scrollbar-container');
+  if (scrollContainer) {
+    scrollContainer.addEventListener('scroll', () => {
+      if (currentTimeWindow === 'full' || !currentResults || currentResults.length === 0) return;
+      
+      const years = parseInt(currentTimeWindow);
+      const totalPoints = currentResults.length;
+      const pointsInView = years + 1;
+      
+      const maxScrollLeft = scrollContainer.scrollWidth - scrollContainer.clientWidth;
+      let scrollPct = 0;
+      if (maxScrollLeft > 0) {
+        scrollPct = scrollContainer.scrollLeft / maxScrollLeft;
+      }
+      
+      const maxStartIndex = Math.max(0, totalPoints - pointsInView);
+      const startIndex = Math.max(0, Math.min(maxStartIndex, Math.round(scrollPct * maxStartIndex)));
+      const endIndex = Math.min(totalPoints - 1, startIndex + pointsInView - 1);
+      
+      chart.options.scales.x.min = chart.data.labels[startIndex];
+      chart.options.scales.x.max = chart.data.labels[endIndex];
+      chart.update('none');
+    });
+  }
+
   // Nominal / today's-dollars toggle (affects chart, cards, and table)
   document.querySelectorAll('#dollar-toggle .tab-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -460,10 +631,20 @@ function setupEventListeners() {
       e.target.classList.add('active');
       displayMode = e.target.getAttribute('data-mode');
       updateChart();
-      updateSummaryCards();
+      updateTimelineSnapshot();
       updateDataTable();
     });
   });
+
+  // Timeline scrubber
+  const scrubber = document.getElementById('timeline-scrubber');
+  if (scrubber) {
+    scrubber.addEventListener('input', (e) => {
+      currentScrubberIndex = parseInt(e.target.value);
+      updateTimelineSnapshot();
+      if (chart) chart.draw(); // Just redraw chart to update the vertical line
+    });
+  }
 
   // Data table controls
   document.getElementById('show-all-years').addEventListener('change', updateDataTable);
@@ -667,6 +848,47 @@ function renderEffectFields(type, existingEffects = {}) {
     html = `<div class="form-group"><label>One-Time Income</label><input type="number" data-effect="oneTimeIncome" value="${existingEffects.oneTimeIncome || ''}"></div>`;
   } else if (type === 'health') {
     html = `<div class="form-group"><label>One-Time Cost</label><input type="number" data-effect="oneTimeCost" value="${existingEffects.oneTimeCost || ''}"></div>`;
+  } else if (type === 'vehicle') {
+    const v = existingEffects.vehiclePurchase || {};
+    html = `
+      <div class="form-row">
+        <div class="form-group"><label>Car Price (Cash)</label><input type="number" data-effect="veh_price" id="veh-price-input" value="${v.price || ''}"></div>
+        <div class="form-group">
+          <label>Fuel Type</label>
+          <select data-effect="veh_fuelType" id="veh-fuel-toggle">
+            <option value="gas" ${v.fuelType === 'gas' ? 'selected' : ''}>Gas</option>
+            <option value="ev" ${v.fuelType === 'ev' ? 'selected' : ''}>EV</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Monthly Insurance</label><input type="number" data-effect="veh_insurance" id="veh-insurance" value="${v.insurance !== undefined ? v.insurance : ''}"></div>
+        <div class="form-group"><label>Monthly Maintenance</label><input type="number" data-effect="veh_maintenance" id="veh-maintenance" value="${v.maintenance !== undefined ? v.maintenance : ''}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Monthly Fuel/Charging</label><input type="number" data-effect="veh_fuel" id="veh-fuel" value="${v.fuel !== undefined ? v.fuel : ''}"></div>
+      </div>
+      <div class="form-hint">Insurance is estimated at ~3% of car price annually. Maintenance ~1.5%. EV charging is typically ~60% cheaper than gas.</div>
+    `;
+    
+    // Auto-calculate on price/fuel change if empty
+    setTimeout(() => {
+      const priceInput = document.getElementById('veh-price-input');
+      const fuelToggle = document.getElementById('veh-fuel-toggle');
+      const insInput = document.getElementById('veh-insurance');
+      const maintInput = document.getElementById('veh-maintenance');
+      const fuelInput = document.getElementById('veh-fuel');
+      
+      const updateAutoCosts = () => {
+        const price = parseFloat(priceInput.value) || 0;
+        insInput.value = Math.round((price * 0.03) / 12);
+        maintInput.value = Math.round((price * 0.015) / 12);
+        fuelInput.value = fuelToggle.value === 'ev' ? 60 : 150;
+      };
+
+      if (priceInput) priceInput.addEventListener('change', updateAutoCosts);
+      if (fuelToggle) fuelToggle.addEventListener('change', updateAutoCosts);
+    }, 0);
   }
 
   container.innerHTML = html;
@@ -753,6 +975,19 @@ function saveEvent() {
     });
     // No manual reversal needed: the model snapshots the real prior value for
     // any duration event and restores it when the effect expires.
+  } else if (type === 'vehicle') {
+    const v = {};
+    document.querySelectorAll('#effects-container input[data-effect], #effects-container select[data-effect]').forEach(input => {
+      const val = input.value;
+      if (val === '') return;
+      const key = input.dataset.effect.replace('veh_', '');
+      if (key === 'fuelType') {
+        v[key] = val;
+      } else {
+        v[key] = parseFloat(val);
+      }
+    });
+    eventObj.effects = { vehiclePurchase: v };
   } else {
     // Flat effects: purchase, windfall, health
     document.querySelectorAll('#effects-container input[data-effect]').forEach(input => {

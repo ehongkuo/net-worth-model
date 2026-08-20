@@ -15,32 +15,50 @@
     <p class="subtitle">Interactive financial trajectory model · Age 25 → 100</p>
   </header>
 
-  <!-- Summary Cards -->
-  <div id="summary-cards" class="summary-grid">
-    <div class="summary-card" id="card-start">
-      <span class="card-label">Starting Net Worth</span>
-      <span class="card-value" id="val-start-nw">$0</span>
-      <span class="card-sub" id="val-start-age">Age 25</span>
+  <!-- Timeline Scrubber & Snapshot -->
+  <div class="timeline-dashboard">
+    <div class="timeline-slider-container">
+      <div class="slider-labels">
+        <span id="timeline-start-label">Age 25</span>
+        <span id="timeline-current-label" class="current-age-badge">Age 25 (Year 2026)</span>
+        <span id="timeline-end-label">Age 100</span>
+      </div>
+      <input type="range" id="timeline-scrubber" min="0" max="75" step="1" value="0">
     </div>
-    <div class="summary-card" id="card-35">
-      <span class="card-label">Net Worth at 35</span>
-      <span class="card-value" id="val-nw-35">$0</span>
-      <span class="card-sub" id="val-35-income">—</span>
-    </div>
-    <div class="summary-card" id="card-50">
-      <span class="card-label">Net Worth at 50</span>
-      <span class="card-value" id="val-nw-50">$0</span>
-      <span class="card-sub" id="val-50-income">—</span>
-    </div>
-    <div class="summary-card" id="card-65">
-      <span class="card-label">Net Worth at 65</span>
-      <span class="card-value" id="val-nw-65">$0</span>
-      <span class="card-sub" id="val-65-income">—</span>
-    </div>
-    <div class="summary-card highlight" id="card-peak">
-      <span class="card-label">Peak Net Worth</span>
-      <span class="card-value" id="val-peak-nw">$0</span>
-      <span class="card-sub" id="val-peak-age">—</span>
+    
+    <div class="snapshot-cards">
+      <div class="snapshot-card highlight">
+        <span class="card-label">Income vs Savings</span>
+        <div class="card-row"><span class="lbl">Gross In:</span> <span class="val positive" id="snap-gross-in">$0</span></div>
+        <div class="card-row"><span class="lbl">Cum In:</span> <span class="val positive" id="snap-cum-gross-in">$0</span></div>
+        <div class="card-row"><span class="lbl">Saved:</span> <span class="val" id="snap-saved">$0</span></div>
+        <div class="card-row"><span class="lbl">Cum Saved:</span> <span class="val" id="snap-cum-saved">$0</span></div>
+      </div>
+      <div class="snapshot-card">
+        <span class="card-label">Housing</span>
+        <span class="card-value" id="snap-housing">$0</span>
+        <span class="card-sub">per year</span>
+        <div class="card-row mt-top"><span class="lbl">Cumulative:</span> <span class="val" id="snap-cum-housing">$0</span></div>
+      </div>
+      <div class="snapshot-card">
+        <span class="card-label">Living & Auto</span>
+        <div class="card-row"><span class="lbl">Living:</span> <span class="val" id="snap-living">$0</span></div>
+        <div class="card-row"><span class="lbl">Cum Living:</span> <span class="val" id="snap-cum-living">$0</span></div>
+        <div class="card-row"><span class="lbl">Auto:</span> <span class="val" id="snap-auto">$0</span></div>
+        <div class="card-row"><span class="lbl">Cum Auto:</span> <span class="val" id="snap-cum-auto">$0</span></div>
+      </div>
+      <div class="snapshot-card">
+        <span class="card-label">Taxes Paid</span>
+        <span class="card-value danger" id="snap-taxes">$0</span>
+        <span class="card-sub" id="snap-tax-rate">Effective Rate: 0%</span>
+        <div class="card-row mt-top"><span class="lbl">Cumulative:</span> <span class="val danger" id="snap-cum-taxes">$0</span></div>
+      </div>
+      <div class="snapshot-card events-snapshot">
+        <span class="card-label">Life Events</span>
+        <div id="snap-events-list" class="snap-events-list">
+          <span class="no-events">-</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -55,6 +73,10 @@
           <span class="toggle-icon">▾</span>
         </div>
         <div class="panel-content" id="assumptions-content">
+          <div class="slider-group">
+            <div class="slider-header"><label>Base Rent (Monthly)</label><span class="slider-value" id="val-base-rent">$3,500</span></div>
+            <input type="range" id="slider-base-rent" min="0" max="10000" step="100" value="3500">
+          </div>
           <div class="slider-group">
             <div class="slider-header"><label>Inflation Rate</label><span class="slider-value" id="val-inflation">3.0%</span></div>
             <input type="range" id="slider-inflation" min="0" max="8" step="0.1" value="3">
@@ -126,6 +148,14 @@
               <button class="tab-btn active" data-mode="nominal">Nominal $</button>
               <button class="tab-btn" data-mode="real">Today's $</button>
             </div>
+            <div class="tab-buttons" id="time-window-toggle" title="Chart Time Window">
+              <button class="tab-btn" data-window="5">5Y</button>
+              <button class="tab-btn" data-window="10">10Y</button>
+              <button class="tab-btn" data-window="20">20Y</button>
+              <button class="tab-btn" data-window="30">30Y</button>
+              <button class="tab-btn" data-window="50">50Y</button>
+              <button class="tab-btn active" data-window="full">Full</button>
+            </div>
             <div class="tab-buttons" id="chart-tabs">
               <button class="tab-btn active" data-view="total">Total</button>
               <button class="tab-btn" data-view="breakdown">Breakdown</button>
@@ -135,6 +165,9 @@
         </div>
         <div class="chart-container">
           <canvas id="nw-chart"></canvas>
+        </div>
+        <div id="chart-scrollbar-container" class="chart-scrollbar-container" style="display: none;">
+          <div id="chart-scrollbar-content" class="chart-scrollbar-content"></div>
         </div>
       </div>
 
