@@ -232,6 +232,7 @@ class LifetimeModel {
    */
   constructor(config = {}) {
     this.config = deepMerge(window.DEFAULT_CONFIG, config);
+    if (config.compensation) this.updateConfig({ compensation: config.compensation });
     this.events = [];
     this.nextEventId = 1;
   }
@@ -290,6 +291,21 @@ class LifetimeModel {
    */
   updateConfig(partialConfig) {
     this.config = deepMerge(this.config, partialConfig);
+    if (this.config.compensation && window.Compensation) {
+      const c = this.config.compensation;
+      if (partialConfig.compensation?.tax?.overrides) c.tax.overrides = deepMerge({}, partialConfig.compensation.tax.overrides);
+      if (partialConfig.compensation?.espp?.enrollments) c.espp.enrollments = deepMerge({}, partialConfig.compensation.espp.enrollments);
+      if (partialConfig.salaryGrowth !== undefined) c.salaryGrowth = partialConfig.salaryGrowth;
+      if (partialConfig.age !== undefined) c.age = partialConfig.age;
+      if (partialConfig.compensation) {
+        this.config.baseSalary = c.salary;
+        this.config.bonusPercent = c.bonusPercent;
+        this.config.salaryGrowth = c.salaryGrowth;
+        this.config.age = c.age;
+        this.config.spouseIncome = c.tax.spouseIncome;
+        this.config.rentalIncome = c.tax.otherIncome;
+      }
+    }
   }
 
   /**
@@ -721,11 +737,16 @@ class LifetimeModel {
    */
   simulate() {
     const results = [];
+    const compensation = this.config.compensation;
+    const baseYear = compensation?.taxYear || new Date().getFullYear();
+    const employmentHistory = {};
+    let previousStockAssets = 0;
+    let capitalLossCarry = compensation?.tax.capitalLossCarry || 0;
     
     // Initialize state
     const state = {
       employed: true,
-      married: false,
+      married: compensation?.tax.filing === 'married',
       children: 0,
       hasHome: false,
       homeValue: 0,
@@ -778,7 +799,8 @@ class LifetimeModel {
     let initialHomeEquity = state.hasHome ? (state.homeValue - state.mortgageBalance) : 0;
     let initialNetWorth = state.balances.cash + state.balances.brokerage + state.balances.pretax401k + state.balances.rothAccounts + state.balances.traditionalIRA + state.balances.hsa + initialHomeEquity;
     results.push({
-      year: new Date().getFullYear(),
+      year: baseYear,
+      isInitial: true,
       age: this.config.age,
       yearOffset: 0,
       inflationFactor: 1,
@@ -796,6 +818,7 @@ class LifetimeModel {
     });
 
     // Apply salary growth and expense inflation for year 1
+    if (!compensation) {
     if (state.employed) {
       state.salary *= (1 + state.salaryGrowth);
     }
@@ -812,10 +835,11 @@ class LifetimeModel {
     state.hsaContrib *= (1 + state.inflation);
     state.rothIRA *= (1 + state.inflation);
     inflationFactor *= (1 + state.inflation);
+    }
 
-    for (let yearOffset = 1; yearOffset <= this.config.projectionYears; yearOffset++) {
-      const currentYear = new Date().getFullYear() + yearOffset;
-      const currentAge = this.config.age + yearOffset;
+    for (let yearOffset = 1; yearOffset <= this.config.projectionYears + (compensation ? 1 : 0); yearOffset++) {
+      const currentYear = baseYear + yearOffset - (compensation ? 1 : 0);
+      const currentAge = this.config.age + yearOffset - (compensation ? 1 : 0);
       const eventsThisYear = [];
       let yearWageIncome = 0;      // one-time wage income (severance, signing) - income tax + FICA
       let yearOrdinaryIncome = 0;  // one-time ordinary income - income tax only
@@ -834,7 +858,7 @@ class LifetimeModel {
       // 2. Apply events for this year
       const matchingEvents = this.events.filter(e => {
         const eYear = e.yearOffset !== undefined ? e.yearOffset : (e.year !== undefined ? e.year : (e.age !== undefined ? e.age - this.config.age : 0));
-        return eYear === yearOffset;
+        return eYear === yearOffset - (compensation ? 1 : 0);
       });
       
       for (const event of matchingEvents) {
@@ -880,6 +904,21 @@ class LifetimeModel {
         rsuGross = state.rsuAnnualGross;
         esppGain = state.esppAnnualGain;
       }
+      employmentHistory[currentYear] = { employed: state.employed, salary: state.salary, bonusPercent: state.bonusPercent };
+      const payroll = compensation && window.Compensation.calculate(window.Compensation.merge(compensation, { tax: { filing: state.married ? 'married' : 'single' } }), currentYear, {
+        salary: state.salary, bonusPercent: state.bonusPercent, employed: state.employed,
+        spouseIncome: state.spouseIncome, otherIncome: state.rentalIncome,
+        history: employmentHistory,
+        iraPretaxBalance: state.balances.traditionalIRA + (compensation.retirement.iraPretaxBalance || 0),
+        capitalLossCarry,
+        stopYear: baseYear + this.config.retirementAge - this.config.age,
+        ...(state.rsuAnnualGross !== this.config.rsuAnnualGross ? { rsuOverride: state.rsuAnnualGross } : {})
+      });
+      if (payroll) {
+        employmentHistory[currentYear].rsuSellToCover=payroll.rsuSellToCover;
+        rsuGross = payroll.rsuGross;
+        esppGain = payroll.espp.ordinary;
+      }
 
       // Income grouped by tax treatment (see taxBreakdown).
       const wages = salary + bonus + rsuGross + esppGain + yearWageIncome; // FICA + income tax
@@ -896,6 +935,12 @@ class LifetimeModel {
         hsaC = state.hsaContrib;
         rIRA = state.rothIRA;
       }
+      if (payroll) {
+        p401k = payroll.contributions.traditional;
+        mBackdoor = payroll.contributions.mega;
+        hsaC = payroll.contributions.hsa;
+        rIRA = payroll.contributions.ira;
+      }
       
       // 5. Expenses
       let baseMonthlyExpenseTotal = 0;
@@ -911,24 +956,26 @@ class LifetimeModel {
             baseMonthlyExpenseTotal += val;
          }
       }
-      const annualExpenses = (baseMonthlyExpenseTotal * 12) + state.additionalAnnualExpenses + yearOneTimeCost;
+      const annualExpenses = (baseMonthlyExpenseTotal * 12) + state.additionalAnnualExpenses + yearOneTimeCost + (payroll?.benefits || 0);
 
       // 6. Contributions (already zero when not employed) and spendable cash.
       // 401k + HSA are pre-tax for income tax (not FICA). Contributions are
       // diverted to accounts, so they are not available to spend.
       const preTaxDeductions = p401k + hsaC;
-      const postTaxSavings = mBackdoor + rIRA;
-      const cashInflow = totalGross - preTaxDeductions - postTaxSavings;
+      const postTaxSavings = mBackdoor + rIRA + (payroll?.contributions.roth || 0);
+      const cashInflow = payroll
+        ? payroll.bankCash + payroll.withholding + payroll.benefits + yearWageIncome + yearOrdinaryIncome + yearTaxFreeIncome + ssIncome
+        : totalGross - preTaxDeductions - postTaxSavings;
 
       // 7. Grow balances and add contributions. Growth happens before any
       // drawdown so withdrawals come out of post-growth balances.
       const mr = state.marketReturn;
       const investmentGain = (state.balances.pretax401k + state.balances.rothAccounts + state.balances.traditionalIRA + state.balances.hsa + state.balances.brokerage) * mr;
       
-      state.balances.pretax401k = state.balances.pretax401k * (1 + mr) + p401k;
-      state.balances.rothAccounts = state.balances.rothAccounts * (1 + mr) + postTaxSavings;
+      state.balances.pretax401k = state.balances.pretax401k * (1 + mr) + p401k + (payroll?.contributions.employer || 0);
+      state.balances.rothAccounts = state.balances.rothAccounts * (1 + mr) + postTaxSavings + (payroll?.contributions.conversionEarnings || 0);
       state.balances.traditionalIRA = state.balances.traditionalIRA * (1 + mr);
-      state.balances.hsa = state.balances.hsa * (1 + mr) + hsaC;
+      state.balances.hsa = state.balances.hsa * (1 + mr) + hsaC + (payroll?.contributions.hsaEmployer || 0);
       state.balances.brokerage = state.balances.brokerage * (1 + mr);
 
       // 8. Calculate Home Amortization & Taxes (Before full drawdown)
@@ -955,9 +1002,18 @@ class LifetimeModel {
         mortgageInterest, propertyTaxes,
         married: state.married, yearOffset, inflationRate: state.inflation
       });
+      const annualTax = (pre, ltcg) => payroll ? window.Compensation.tax({
+        ...payroll.income,
+        wages: payroll.income.wages + yearWageIncome,
+        ordinary: payroll.income.ordinary + yearOrdinaryIncome + pre,
+        longGain: payroll.income.longGain + ltcg,
+        federalOnly: ssTaxable,
+        mortgageInterest, propertyTaxes,
+        stateItemized: mortgageInterest + propertyTaxes
+      }, currentYear, { ...compensation.tax, filing: state.married ? 'married' : 'single' }) : this.taxBreakdown(taxParams(pre, ltcg));
       
       for (let i = 0; i < 16; i++) {
-        const need = annualExpenses + this.calculateTax(taxParams(pretaxW, ltcgW)) - cashInflow;
+        const need = annualExpenses + annualTax(pretaxW, ltcgW).total - cashInflow;
         const accountsNeed = need - Math.max(0, state.balances.cash);
         const { pretaxWithdrawal, realizedLtcg } = this.simulateDrawdown(state, accountsNeed);
         if (Math.abs(pretaxWithdrawal - pretaxW) < 1 && Math.abs(realizedLtcg - ltcgW) < 1) { 
@@ -969,7 +1025,8 @@ class LifetimeModel {
         ltcgW = realizedLtcg;
       }
       
-      const taxBreakdown = this.taxBreakdown(taxParams(pretaxW, ltcgW));
+      const taxBreakdown = annualTax(pretaxW, ltcgW);
+      capitalLossCarry = taxBreakdown.lossCarryforward || 0;
       const taxes = taxBreakdown.total;
       const netCashFlow = cashInflow - taxes - annualExpenses; // negative in retirement
 
@@ -1011,7 +1068,7 @@ class LifetimeModel {
                        state.balances.rothAccounts + 
                        state.balances.traditionalIRA + 
                        state.balances.hsa + 
-                       homeEquity;
+                       homeEquity + (payroll?.stockAssets || 0);
                        
       // Create result snapshot
       const yearResult = {
@@ -1032,6 +1089,7 @@ class LifetimeModel {
           investment: investmentGain
         },
         taxes,
+        payroll,
         taxBreakdown,
         shortfall,
         expenses: {
@@ -1045,12 +1103,16 @@ class LifetimeModel {
           megaBackdoor: mBackdoor,
           rothIRA: rIRA,
           hsa: hsaC,
-          total: p401k + mBackdoor + rIRA + hsaC
+          employer: payroll?.contributions.employer || 0,
+          roth401k: payroll?.contributions.roth || 0,
+          stock: payroll ? payroll.stockAssets - previousStockAssets : 0,
+          total: p401k + mBackdoor + rIRA + hsaC + (payroll?.contributions.roth || 0) + (payroll?.contributions.employer || 0) + (payroll?.contributions.hsaEmployer || 0)
         },
         netCashFlow,
         balances: {
           cash: state.balances.cash,
           brokerage: state.balances.brokerage,
+          companyEquity: payroll?.stockAssets || 0,
           pretax401k: state.balances.pretax401k,
           rothAccounts: state.balances.rothAccounts,
           traditionalIRA: state.balances.traditionalIRA,
@@ -1069,7 +1131,11 @@ class LifetimeModel {
         }
       };
       
+      if (payroll) yearResult.cashFlow = window.Compensation.cashFlow(payroll,{
+        taxes:taxBreakdown, expenses:annualExpenses-payroll.benefits, socialSecurity:ssIncome, eventIncome:yearOneTimeIncome
+      });
       results.push(yearResult);
+      previousStockAssets = payroll?.stockAssets || 0;
       
       // 12. Apply salary growth and expense inflation for next year
       if (state.employed) {

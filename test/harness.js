@@ -34,7 +34,7 @@ function assertEqual(actual, expected, msg) {
 
 /** Float comparison with an absolute tolerance (default 1e-6). */
 function assertClose(actual, expected, tol = 1e-6, msg) {
-  if (Math.abs(actual - expected) > tol) {
+  if (!Number.isFinite(Number(actual)) || !Number.isFinite(Number(expected)) || Math.abs(actual - expected) > tol) {
     throw new AssertionError(`${msg || 'assertClose'}: expected ~${expected} (±${tol}), got ${actual}`);
   }
 }

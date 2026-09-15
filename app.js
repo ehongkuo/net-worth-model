@@ -1,5 +1,13 @@
 let model, chart, currentResults = [], currentView = 'total';
-let displayMode = 'nominal'; // 'nominal' or 'real' (today's dollars)
+const ASSET_GROUPS = [
+  {label:'Liquid cash',color:'#38bdf8',keys:['cash']},
+  {label:'Taxable investments',color:'#f59e0b',keys:['brokerage','companyEquity']},
+  {label:'Retirement',color:'#a78bfa',keys:['pretax401k','rothAccounts','traditionalIRA']},
+  {label:'HSA',color:'#2dd4bf',keys:['hsa']},
+  {label:'Home equity',color:'#f472b6',keys:['homeEquity']}
+];
+const assetValue = (r,group) => group.keys.reduce((sum,key)=>sum+(r.balances?.[key] || 0),0);
+let displayMode = 'real'; // 'nominal' or 'real' (today's dollars)
 let currentTimeWindow = 'full';
 let currentTemplateReversal = null;
 let currentTemplateEffects = null;
@@ -45,6 +53,10 @@ document.addEventListener('DOMContentLoaded', () => {
   populateTemplateDropdown();
   populateTypeDropdown();
   loadState();            // restore a saved scenario, if any, into model + controls
+  displayMode = model.getConfig().displayMode || 'real';
+  document.querySelectorAll('#dollar-toggle .tab-btn').forEach(b => b.classList.toggle('active',b.dataset.mode===displayMode));
+  setupCompensationUI();
+  setupMarketUI();
   syncControlsFromConfig();
   runSimulation();
 });
@@ -94,7 +106,10 @@ function loadState() {
 /** Applies a {config, events} scenario object to the model. */
 function applyScenario(scenario) {
   if (!scenario || !model.updateConfig) return;
-  if (scenario.config) model.updateConfig(scenario.config);
+  if (scenario.config) {
+    const config = { ...scenario.config, compensation: Compensation.fromLegacy(scenario.config) };
+    model.updateConfig(config);
+  }
   if (model.clearEvents) model.clearEvents();
   if (Array.isArray(scenario.events) && model.addEvent) {
     scenario.events.forEach(e => model.addEvent(e));
@@ -120,6 +135,9 @@ function syncControlsFromConfig() {
     el.value = raw;
     if (disp) disp.innerText = s.format(raw);
   });
+  if (document.getElementById('rsu-grants')) {
+    ensureCompensation(); renderGrantFields(); syncCompensationFields();
+  }
 }
 
 /** Downloads the current scenario as a JSON file. */
@@ -176,7 +194,7 @@ function setupChart() {
         
         // Only draw if the scrubber index is visible in the current zoom window
         const label = `Age ${currentResults[currentScrubberIndex].age}`;
-        const xPos = xAxis.getPixelForTick(currentScrubberIndex);
+        const xPos = xAxis.getPixelForValue(currentScrubberIndex);
         
         // In Chart.js, if a tick is out of view, getPixelForTick might still return a value, 
         // but it might be outside the chart area.
@@ -237,6 +255,7 @@ function setupChart() {
 
 function runSimulation() {
   if (model && model.simulate) {
+    ensureCompensation();
     currentResults = model.simulate();
     
     // Update scrubber max based on projection years
@@ -253,6 +272,7 @@ function runSimulation() {
     updateTimelineSnapshot();
     updateDataTable();
     renderEventsList();
+    renderCompensation();
     saveState();
   }
 }
@@ -274,7 +294,7 @@ function hexToRgba(hex, alpha) {
 function updateChart() {
   if (!currentResults || currentResults.length === 0) return;
 
-  const labels = currentResults.map(r => `Age ${r.age}`);
+  const labels = currentResults.map(r => r.isInitial ? 'Start' : `Age ${r.age}`);
   
   const scrollContainer = document.getElementById('chart-scrollbar-container');
   const scrollContent = document.getElementById('chart-scrollbar-content');
@@ -321,32 +341,24 @@ function updateChart() {
       fill: true,
       pointRadius: 0,
       pointHoverRadius: 6,
-      tension: 0.4
+      tension: 0
     }];
   } else if (currentView === 'breakdown') {
     chart.options.plugins.legend.display = true;
     chart.options.scales.y.stacked = true;
 
-    const accounts = [
-      { key: 'hsa', label: 'HSA', color: '#06b6d4' },
-      { key: 'traditionalIRA', label: 'Traditional IRA', color: '#8b5cf6' },
-      { key: 'pretax401k', label: '401(k) Pre-Tax', color: '#3b82f6' },
-      { key: 'rothAccounts', label: 'Roth Accounts', color: '#10b981' },
-      { key: 'brokerage', label: 'Brokerage', color: '#f59e0b' },
-      { key: 'cash', label: 'Cash', color: '#64748b' },
-      { key: 'homeEquity', label: 'Home Equity', color: '#ec4899' }
-    ];
+    const accounts = ASSET_GROUPS;
 
     datasets = accounts.map(acc => ({
       label: acc.label,
-      data: currentResults.map(r => displayValue(r.balances ? (r.balances[acc.key] || 0) : 0, r)),
+      data: currentResults.map(r => displayValue(assetValue(r,acc), r)),
       backgroundColor: hexToRgba(acc.color, 0.6),
       borderColor: acc.color,
       borderWidth: 1,
       fill: true,
       pointRadius: 0,
       pointHoverRadius: 4,
-      tension: 0.1
+      tension: 0
     }));
   } else if (currentView === 'income') {
     chart.options.plugins.legend.display = true;
@@ -357,14 +369,14 @@ function updateChart() {
         data: currentResults.map(r => displayValue((r.income ? r.income.gross || 0 : 0) + (r.income ? r.income.investment || 0 : 0), r)),
         borderColor: '#10b981',
         backgroundColor: createGradient(ctx, 'rgba(16, 185, 129, 0.1)'),
-        borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 5, tension: 0.3
+        borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 5, tension: 0
       },
       {
         label: 'Total Expenses',
         data: currentResults.map(r => displayValue(r.expenses ? r.expenses.total || 0 : 0, r)),
         borderColor: '#ef4444',
         backgroundColor: createGradient(ctx, 'rgba(239, 68, 68, 0.1)'),
-        borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 5, tension: 0.3
+        borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 5, tension: 0
       }
     ];
   }
@@ -383,9 +395,13 @@ function updateTimelineSnapshot() {
   const r = currentResults[currentScrubberIndex];
   if (!r) return;
 
+  const balanceLabels = {companyEquity:'Held company shares',cash:'Cash',brokerage:'Brokerage',pretax401k:'Pre-tax 401(k)',rothAccounts:'Roth accounts',traditionalIRA:'Traditional IRA',hsa:'HSA',homeEquity:'Home equity'};
+  document.getElementById('balance-snapshot').innerHTML = `<div class="balance-total"><span>${r.isInitial?'Starting net worth':'Net worth'}</span><strong>${formatCurrencyFull(displayValue(r.netWorth,r))}</strong></div>` + ASSET_GROUPS.map(group=>`<div style="border-top:3px solid ${group.color}"><span>${group.label}</span><strong>${formatCurrencyFull(displayValue(assetValue(r,group),r))}</strong></div>`).join('') + `<details class="balance-details"><summary>Account breakdown</summary>` + Object.entries(balanceLabels).map(([key,label])=>`<div><span>${label}</span><strong>${formatCurrencyFull(displayValue(r.balances[key] || 0,r))}</strong></div>`).join('') + '</details>';
+  document.querySelector('.snapshot-cards').hidden = r.isInitial;
   // Update labels
+  document.getElementById('timeline-start-label').innerText = `Start of ${currentResults[0].year}`;
   document.getElementById('timeline-end-label').innerText = `Age ${currentResults[currentResults.length - 1].age}`;
-  document.getElementById('timeline-current-label').innerText = `Age ${r.age} (Year ${r.year})`;
+  document.getElementById('timeline-current-label').innerText = r.isInitial ? `Starting balances (${r.year})` : `Age ${r.age} (Year ${r.year})`;
 
   // Income vs Savings
   const grossIn = (r.income.gross || 0) + (r.income.investment || 0);
@@ -633,6 +649,9 @@ function setupEventListeners() {
       updateChart();
       updateTimelineSnapshot();
       updateDataTable();
+      model.updateConfig({displayMode});
+      renderCompensation();
+      saveState();
     });
   });
 
@@ -641,6 +660,7 @@ function setupEventListeners() {
   if (scrubber) {
     scrubber.addEventListener('input', (e) => {
       currentScrubberIndex = parseInt(e.target.value);
+      renderCompensation();
       updateTimelineSnapshot();
       if (chart) chart.draw(); // Just redraw chart to update the vertical line
     });
