@@ -6,14 +6,15 @@
   <title>Lifetime Net Worth Projection</title>
   <meta name="description" content="Interactive lifetime net worth projection model with customizable life events">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260914-sankey">
 </head>
 <body>
   <!-- Header -->
   <header id="app-header">
     <h1>Lifetime Net Worth Projection</h1>
-    <p class="subtitle">Interactive financial trajectory model · Age 25 → 100</p>
+    <p class="subtitle">Compensation, monthly cash flow and your lifetime financial trajectory</p>
   </header>
+  <button type="button" class="btn-secondary mobile-input-toggle" id="mobile-input-toggle" aria-expanded="false" aria-controls="model-sidebar">Edit inputs</button>
 
   <!-- Timeline Scrubber & Snapshot -->
   <div class="timeline-dashboard">
@@ -26,7 +27,7 @@
       <input type="range" id="timeline-scrubber" min="0" max="75" step="1" value="0">
     </div>
     
-    <div class="snapshot-cards">
+    <div id="balance-snapshot" class="balance-snapshot"></div><div class="snapshot-cards">
       <div class="snapshot-card highlight">
         <span class="card-label">Income vs Savings</span>
         <div class="card-row"><span class="lbl">Gross In:</span> <span class="val positive" id="snap-gross-in">$0</span></div>
@@ -65,18 +66,16 @@
   <!-- Main Content -->
   <div class="main-grid">
     <!-- Sidebar -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="model-sidebar">
       <!-- Assumptions Panel -->
       <div class="glass-card panel" id="assumptions-panel">
         <div class="panel-header" data-panel="assumptions-content">
           <h2>⚙️ Assumptions</h2>
           <span class="toggle-icon">▾</span>
         </div>
-        <div class="panel-content" id="assumptions-content">
-          <div class="slider-group">
-            <div class="slider-header"><label>Base Rent (Monthly)</label><span class="slider-value" id="val-base-rent">$3,500</span></div>
-            <input type="range" id="slider-base-rent" min="0" max="10000" step="100" value="3500">
-          </div>
+        <div class="panel-content" id="assumptions-content"><div id="starting-balances"></div>
+          <div id="tax-assumptions"></div>
+          <details class="cf-group"><summary>Long-term assumptions</summary>
           <div class="slider-group">
             <div class="slider-header"><label>Inflation Rate</label><span class="slider-value" id="val-inflation">3.0%</span></div>
             <input type="range" id="slider-inflation" min="0" max="8" step="0.1" value="3">
@@ -102,6 +101,24 @@
             <div class="slider-header"><label>Social Security (annual, today's $)</label><span class="slider-value" id="val-social-security">$40,000</span></div>
             <input type="range" id="slider-social-security" min="0" max="80000" step="1000" value="40000">
           </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="glass-card panel" id="cashflow-panel">
+        <div class="panel-header" data-panel="cashflow-content">
+          <h2>Monthly Cash Flow</h2><span class="toggle-icon">▾</span>
+        </div>
+        <div class="panel-content" id="cashflow-content">
+          <div id="cash-sidebar-summary" class="cf-sidebar-summary"></div>
+          <div id="compensation-controls"></div>
+          <details class="cf-group"><summary>Monthly living expenses</summary>
+            <div class="slider-group">
+              <div class="slider-header"><label for="slider-base-rent">Base rent</label><span class="slider-value" id="val-base-rent">$3,500</span></div>
+              <input type="range" id="slider-base-rent" min="0" max="10000" step="100" value="3500">
+            </div>
+            <div id="living-expense-controls" class="cf-fields"></div>
+          </details>
         </div>
       </div>
 
@@ -139,15 +156,53 @@
 
     <!-- Main Content Area -->
     <main class="content">
+                  <div class="tab-buttons" id="dollar-toggle" title="Nominal shows future dollars; Today's discounts them back to scenario-start purchasing power">
+              <button class="tab-btn" data-mode="nominal">Nominal $</button>
+              <button class="tab-btn active" data-mode="real">Today's $</button>
+            </div>
+<p class="cf-note">Growth inputs are nominal. Today's dollars adjusts projected results for inflation; editable tax limits remain statutory dollar amounts.</p><nav class="cf-tabs" id="model-tabs" aria-label="Model views">
+        <button class="tab-btn" data-open-view="projection" aria-selected="false">Projection</button>
+        <button class="tab-btn active" data-open-view="cashflow" aria-selected="true">Monthly Cash Flow</button>
+        <button class="tab-btn" data-open-view="espp" aria-selected="false">ESPP</button>
+        <button class="tab-btn" data-open-view="market" aria-selected="false">Stock prices</button>
+        <button class="tab-btn" data-open-view="limits" aria-selected="false">Future Limits</button>
+      </nav>
+      <section data-main-view="cashflow" aria-label="Monthly cash flow">
+        <div class="cf-intro"><span class="cf-eyebrow">COMPENSATION TO CASH</span><h2>See where your money goes.</h2><p>Cash pay becomes take-home cash. Taxes and spending leave your assets; account contributions move money into assets.</p></div>
+        <p id="cash-period" class="cf-note"></p><div id="cash-summary"></div><div id="cash-alerts"></div>
+        <section class="glass-card sankey-card"><div class="sankey-heading"><h3>Your monthly flow</h3><div class="flow-legend"><span class="cash-text">Cash</span><span class="loss-text">Taxes + spending</span><span class="asset-text">Asset transfers</span><span class="equity-text">Equity</span></div></div><p class="cf-note">Flow widths show monthly averages. Orange funding flows show cash needed from existing assets, not new income. Tax refunds are estimates; ESPP refunds return your contributed money.</p><div id="flow-income" class="flow-outcomes"></div><div id="money-sankey"></div><div id="flow-outcomes"></div><details class="flow-table-details"><summary>View every flow as a table</summary><div id="flow-table"></div></details><div id="noncash-flow"></div></section>
+        <details class="flow-details"><summary>Detailed reconciliation and account destinations</summary>
+        <div class="cf-two-columns">
+          <section class="glass-card"><h3>Your monthly money flow</h3><p class="cf-note">Monthly averages. Bonus and stock payments arrive on their scheduled dates below.</p><div id="cash-reconciliation"></div></section>
+          <section class="glass-card"><h3>Monthly taxes and withholding</h3><div id="tax-reconciliation"></div><p class="cf-note">Withholding is an estimate. Positive tax reserve is money to set aside beyond payroll withholding.</p></section>
+        </div>
+        <section class="glass-card"><h3>Where your savings go</h3><div id="account-contributions"></div></section>
+        </details><section class="glass-card cf-monthly"><h3>Month by month</h3><p class="cf-note">Cash after withholding includes every income source shown, minus account transfers, benefits, ESPP deductions and withholding. Net cash flow also subtracts living costs and the tax adjustment. * Annual life-event amounts, living costs and the tax settlement are spread over 12 months for planning; these are not actual payment dates. Negative tax adjustments represent estimated overpayments. Net cash flow is before withdrawals from existing assets. Amounts are rounded to cents; calculations use full precision.</p><div id="cash-months"></div></section>
+        <div id="cash-warnings" aria-live="polite"></div>
+      </section>
+      <section data-main-view="espp" aria-label="Employee stock purchase plan" hidden>
+        <div class="cf-intro"><span class="cf-eyebrow">EMPLOYEE STOCK PURCHASE PLAN</span><h2>Follow the money through your ESPP.</h2><p>Payroll deductions, share purchases, refunds and sales share the same compensation assumptions.</p></div>
+        <div class="cf-two-columns"><section class="glass-card"><h3>Plan settings</h3><p class="cf-note">Section 423 plan. Each purchase period begins a new offering; the annual FMV allowance is conservative and does not assume unused rights carry across years.</p><div id="espp-controls" class="cf-fields"></div></section><section class="glass-card"><h3>This year's transactions</h3><div id="espp-summary"></div><p class="cf-note">Shares held across year-end remain invested. Returned principal is separate from taxable income. Company-stock growth adjusts the entered scenario prices in later years.</p></section></div>
+        <section class="glass-card"><h3>Purchase and sale lots</h3><div id="espp-lots"></div></section>
+        <section class="glass-card"><h3>Compare sale timing</h3><p class="cf-note">Comparison uses the same share-price assumptions for each strategy. Qualifying treatment requires both date tests. Switching timing may move proceeds into a later tax year.</p><div id="espp-comparison"></div></section>
+      </section>
+      <section data-main-view="market" aria-label="Stock prices" hidden>
+        <div class="cf-intro"><span class="cf-eyebrow">MARKET DATA</span><h2>Prices for your equity assumptions.</h2><p>Quotes appear automatically beside your RSU and ESPP tickers. Review the price and timestamp, then choose to use it as an estimate. Historical grant sizing and offering prices stay fixed.</p></div>
+        <section class="glass-card"><h3>Connect Twelve Data</h3><p class="cf-note">The free Basic plan supports eligible symbols with 8 credits per minute and 800 per day. Coverage and freshness depend on the exchange and plan. Quotes are cached for five minutes; this is not a streaming feed. <a href="https://twelvedata.com/account/api-keys" target="_blank" rel="noreferrer">Open your API key dashboard</a>.</p><label for="market-key">API key</label><div class="market-connect"><input type="password" id="market-key" autocomplete="off" placeholder="Enter key for this server session"><button type="button" class="btn-secondary" id="market-connect">Connect</button><button type="button" class="btn-secondary" id="market-disconnect">Disconnect</button></div><p class="cf-note">The key stays in local server memory and is excluded from saved scenarios. Reconnect after restarting the server.</p><p id="market-message" role="status"></p></section>
+        <section class="glass-card"><h3>Linked stocks</h3><p class="cf-note">Set tickers in your RSU grants and ESPP settings. Apply changes to baseline valuation estimates only when appropriate for your scenario. Future prices remain projections.</p><div id="market-targets"></div></section>
+      </section>
+      <section data-main-view="limits" aria-label="Projected tax limits" hidden>
+        <div class="cf-intro"><span class="cf-eyebrow">PUBLISHED BASELINE, ADJUSTABLE PROJECTIONS</span><h2>Plan for limits that change.</h2><p>2026 federal limits anchor the forecast. Later values use your growth assumptions and rounding. Catch-ups are applied separately based on age.</p></div>
+        <section class="glass-card"><h3>Override limits for the starting tax year</h3><p class="cf-note">Leave fields blank to use the baseline or projection. Overrides affect only the starting tax year.</p><div id="limit-overrides" class="cf-fields"></div></section>
+        <section class="glass-card"><h3>Next 30 years</h3><div id="limit-table"></div><p class="cf-note">Additional Medicare and NIIT thresholds, the HSA catch-up and the ESPP statutory allowance remain fixed. Future values are estimates, not announced IRS limits.</p></section>
+        <section class="glass-card cf-sources"><h3>Rules and sources</h3><p><a href="https://www.irs.gov/pub/irs-drop/n-25-67.pdf" target="_blank" rel="noreferrer">IRS retirement limits</a> · <a href="https://www.irs.gov/pub/irs-drop/rp-25-19.pdf" target="_blank" rel="noreferrer">IRS HSA limits</a> · <a href="https://www.irs.gov/irb/2025-45_IRB" target="_blank" rel="noreferrer">IRS tax brackets</a> · <a href="https://www.ssa.gov/oact/COLA/cbb.html" target="_blank" rel="noreferrer">Social Security wage base</a> · <a href="https://www.ftb.ca.gov/forms/2025/2025-540-booklet.html" target="_blank" rel="noreferrer">California tax tables</a> · <a href="https://edd.ca.gov/en/Payroll_Taxes/Rates_and_Withholding" target="_blank" rel="noreferrer">California payroll rates</a></p><p class="cf-note">CA income tax is projected from published 2025 tables. Tax credits and special adjustments require your inputs. The model estimates taxes on compensation and modeled stock sales; it does not prepare a tax return.</p></section>
+      </section>
+      <section data-main-view="projection" hidden>
       <!-- Chart -->
       <div class="glass-card">
         <div class="chart-header">
           <h2>📈 Net Worth Projection</h2>
           <div class="chart-controls">
-            <div class="tab-buttons" id="dollar-toggle" title="Nominal shows future dollars; Today's discounts them back to age-25 purchasing power">
-              <button class="tab-btn active" data-mode="nominal">Nominal $</button>
-              <button class="tab-btn" data-mode="real">Today's $</button>
-            </div>
             <div class="tab-buttons" id="time-window-toggle" title="Chart Time Window">
               <button class="tab-btn" data-window="5">5Y</button>
               <button class="tab-btn" data-window="10">10Y</button>
@@ -200,6 +255,7 @@
           </div>
         </div>
       </div>
+      </section>
     </main>
   </div>
 
@@ -252,7 +308,11 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="model.js"></script>
-  <script src="app.js"></script>
+  <script src="compensation.js?v=20260914-sankey"></script>
+  <script src="model.js?v=20260914-sankey"></script>
+  <script src="money-flow.js?v=20260914-sankey"></script>
+  <script src="market-ui.js?v=20260914-sankey"></script>
+  <script src="compensation-ui.js?v=20260914-sankey"></script>
+  <script src="app.js?v=20260914-sankey"></script>
 </body>
 </html>
