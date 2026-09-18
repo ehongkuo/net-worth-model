@@ -36,7 +36,7 @@ test('offering opt-out, rate and prices are independently configurable',()=>{
  const p=C.calculate(C.merge(C.defaults(),{salary:120000,frequency:'monthly',firstPayday:'2026-01-15',espp:{...plan,enrollments:{'2026-06-09':{enrolled:false}}}}),2026);
  assertClose(p.espp.contributions,1000,.01);assert(p.espp.lots.every(l=>l.grantDate!=='2026-06-09'));
 });
-test('SoFi tax-guide examples distinguish qualifying and disqualifying sales',()=>{
+test('Worked disposition examples distinguish qualifying and disqualifying sales',()=>{
  const lot={shares:1,cost:6.29,purchasePrice:9,grantPrice:7.4,discount:.15,grantDate:'2024-12-09',purchaseDate:'2025-06-08'};
  const early=C.sellLot(lot,'2025-07-01',10),long=C.sellLot(lot,'2026-07-01',10),qualified=C.sellLot(lot,'2026-12-10',10);
  assertClose(early.ordinary,2.71,.001);assertClose(early.shortGain,1,.001);
@@ -62,8 +62,8 @@ test('sell-to-cover preserves yearly net worth and graph conservation',()=>{
  const p=C.calculate(C.merge(C.defaults(),{salary:120000,tax:{state:'none'},grants:[grant]}),2026),g=F.buildFlow(p,C.cashFlow(p));
  for(const n of g.nodes.filter(n=>n.kind==='hub'))assertClose(g.links.filter(l=>l.target===n.id).reduce((s,l)=>s+l.value,0),g.links.filter(l=>l.source===n.id).reduce((s,l)=>s+l.value,0),.001);
 });
-test('SoFi preset limits annual payroll contributions and keeps fractional shares',()=>{
- const p=C.calculate(C.merge(C.defaults(),{salary:1000000,frequency:'monthly',firstPayday:'2026-01-15',espp:{...plan,...C.planPresets.sofi,rate:.15,offerPrice:13,purchasePrice:15}}),2026);
+test('Configured plan limits annual payroll contributions and keeps fractional shares',()=>{
+ const p=C.calculate(C.merge(C.defaults(),{salary:1000000,frequency:'monthly',firstPayday:'2026-01-15',espp:{...plan,...{minRate:.01,maxRate:.15,annualPayrollCap:21250,payrollRounding:true,stopAtAnnualLimit:true,fractional:true},rate:.15,offerPrice:13,purchasePrice:15}}),2026);
  assertClose(p.espp.contributions,21250,.01);
  const lot=p.espp.lots.find(l=>l.purchaseDate==='2026-12-08');assertClose(lot.shares,25000/13,.001);
 });

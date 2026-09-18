@@ -9,6 +9,11 @@ This app is used for detailed personal financial projections and must also work 
 - Keep statutory rules in documented, tax-year-specific rule tables. Keep employer-specific rules in configurable plan profiles. Distinguish legal limits from user assumptions and employer restrictions.
 - Configuration need not mean a visible input for every rule. Use sensible presets and progressive disclosure; expose overrides where they affect meaningful choices or accuracy.
 - Model employment eligibility and actual participation separately. For ESPP, track enrollment by offering and account for skipped offerings, differing schedules, and plan-specific re-enrollment behavior.
-- Preserve saved user inputs when changing defaults or migrating scenarios. Test with synthetic scenarios on an isolated browser origin, never by changing the owner's saved scenario.
+- Preserve saved user inputs when changing defaults or migrating scenarios. Test with synthetic scenarios in an isolated browser profile, never by changing the owner's saved scenario.
 - Write independent expected-value tests before comparing engine or UI outputs. Cover materially different users and plan choices, including zeros, partial-year participation, limits, and boundary dates.
 - Consider portability with every change: a different user must be able to use the feature through configuration, without changing source code.
+
+## Local preview
+
+- Reuse http://127.0.0.1:5190 for this app. Run `npm start`; do not create a new preview port for each task. Restart the same server when backend code changes.
+- Preserve the owner's browser storage. Use a fresh isolated browser profile for automated input tests against the existing preview.

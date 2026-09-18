@@ -111,7 +111,7 @@
         </div>
         <div class="panel-content" id="cashflow-content">
           <div id="cash-sidebar-summary" class="cf-sidebar-summary"></div>
-          <div id="compensation-controls"></div>
+          <div id="compensation-controls"></div><p class="cf-note">Income and contributions come from your setup and reviewed paychecks.</p><button type="button" class="btn-secondary" data-open-view="limits">Edit setup, compensation &amp; limits</button><button type="button" class="btn-secondary" data-open-view="espp">Edit ESPP offerings</button>
           <details class="cf-group"><summary>Monthly living expenses</summary>
             <div class="slider-group">
               <div class="slider-header"><label for="slider-base-rent">Base rent</label><span class="slider-value" id="val-base-rent">$3,500</span></div>
@@ -163,22 +163,28 @@
 <p class="cf-note">Growth inputs are nominal. Today's dollars adjusts projected results for inflation; editable tax limits remain statutory dollar amounts.</p><nav class="cf-tabs" id="model-tabs" aria-label="Model views">
         <button class="tab-btn" data-open-view="projection" aria-selected="false">Projection</button>
         <button class="tab-btn active" data-open-view="cashflow" aria-selected="true">Monthly Cash Flow</button>
+        <button class="tab-btn" data-open-view="taxes" aria-selected="false">Taxes</button>
         <button class="tab-btn" data-open-view="espp" aria-selected="false">ESPP</button>
         <button class="tab-btn" data-open-view="market" aria-selected="false">Stock prices</button>
-        <button class="tab-btn" data-open-view="limits" aria-selected="false">Future Limits</button>
+        <button class="tab-btn" data-open-view="limits" aria-selected="false">Setup &amp; limits</button>
+        <button class="tab-btn" data-open-view="paychecks" aria-selected="false">Paychecks</button>
       </nav>
       <section data-main-view="cashflow" aria-label="Monthly cash flow">
         <div class="cf-intro"><span class="cf-eyebrow">COMPENSATION TO CASH</span><h2>See where your money goes.</h2><p>Cash pay becomes take-home cash. Taxes and spending leave your assets; account contributions move money into assets.</p></div>
-        <p id="cash-period" class="cf-note"></p><div id="cash-summary"></div><div id="cash-alerts"></div>
-        <section class="glass-card sankey-card"><div class="sankey-heading"><h3>Your monthly flow</h3><div class="flow-legend"><span class="cash-text">Cash</span><span class="loss-text">Taxes + spending</span><span class="asset-text">Asset transfers</span><span class="equity-text">Equity</span></div></div><p class="cf-note">Flow widths show monthly averages. Orange funding flows show cash needed from existing assets, not new income. Tax refunds are estimates; ESPP refunds return your contributed money.</p><div id="flow-income" class="flow-outcomes"></div><div id="money-sankey"></div><div id="flow-outcomes"></div><details class="flow-table-details"><summary>View every flow as a table</summary><div id="flow-table"></div></details><div id="noncash-flow"></div></section>
+        <div class="flow-mode-toggle" role="group" aria-label="Flow timing"><button type="button" data-flow-mode="average" aria-pressed="true">Monthly average (amortized)</button><button type="button" data-flow-mode="current" aria-pressed="false">Current month</button></div><p id="cash-period" class="cf-note"></p><div id="cash-alerts"></div>
+        <section class="glass-card sankey-card"><div class="sankey-heading"><h3>Your monthly flow</h3><div class="flow-legend"><span class="cash-text">Cash</span><span class="equity-text">Equity</span><span class="asset-text">Retirement / HSA</span><span class="loss-text">Taxes / costs</span></div></div><p class="cf-note"><span id="flow-timing-note">Flow widths show monthly averages.</span> Cash, equity and retirement stay grouped. Ribbons widen or narrow with stock valuation; click an asset bucket to see its components. Expenses use cash first, then equity, then retirement, as an illustration only.</p><div id="money-sankey"></div><details class="flow-table-details"><summary>Cash and asset summary</summary><div id="flow-income" class="flow-outcomes"></div></details><div id="flow-outcomes"></div><details class="flow-table-details"><summary>View every flow as a table</summary><div id="flow-table"></div></details><div id="noncash-flow"></div><div id="monthly-tax-streams"></div></section>
         <details class="flow-details"><summary>Detailed reconciliation and account destinations</summary>
         <div class="cf-two-columns">
           <section class="glass-card"><h3>Your monthly money flow</h3><p class="cf-note">Monthly averages. Bonus and stock payments arrive on their scheduled dates below.</p><div id="cash-reconciliation"></div></section>
           <section class="glass-card"><h3>Monthly taxes and withholding</h3><div id="tax-reconciliation"></div><p class="cf-note">Withholding is an estimate. Positive tax reserve is money to set aside beyond payroll withholding.</p></section>
         </div>
         <section class="glass-card"><h3>Where your savings go</h3><div id="account-contributions"></div></section>
-        </details><section class="glass-card cf-monthly"><h3>Month by month</h3><p class="cf-note">Cash after withholding includes every income source shown, minus account transfers, benefits, ESPP deductions and withholding. Net cash flow also subtracts living costs and the tax adjustment. * Annual life-event amounts, living costs and the tax settlement are spread over 12 months for planning; these are not actual payment dates. Negative tax adjustments represent estimated overpayments. Net cash flow is before withdrawals from existing assets. Amounts are rounded to cents; calculations use full precision.</p><div id="cash-months"></div></section>
+        </details><section class="glass-card cf-monthly"><h3>Month by month</h3><p class="cf-note">Cash after withholding includes every income source shown, minus account transfers, benefits, ESPP deductions, withholding and estimated tax payments. Net cash flow also subtracts living costs and the tax adjustment. Unallocated cash additionally excludes the optional future-ESPP-tax earmark, which remains part of your assets. * Annual life-event amounts, living costs and the tax settlement are spread over 12 months for planning; these are not actual payment dates. Negative tax adjustments represent estimated overpayments. Net cash flow is before withdrawals from existing assets. Amounts are rounded to cents; calculations use full precision.</p><div id="cash-months"></div></section>
         <div id="cash-warnings" aria-live="polite"></div>
+      </section>
+      <section data-main-view="taxes" aria-label="Tax calculation" hidden>
+        <div class="cf-intro"><span class="cf-eyebrow">FROM COMPENSATION TO TAX</span><h2>Understand every tax dollar.</h2><p>See what is taxable, how deductions change it, and how your tax bill compares with money already withheld.</p></div>
+        <div id="tax-explorer"></div>
       </section>
       <section data-main-view="espp" aria-label="Employee stock purchase plan" hidden>
         <div class="cf-intro"><span class="cf-eyebrow">EMPLOYEE STOCK PURCHASE PLAN</span><h2>Follow the money through your ESPP.</h2><p>Payroll deductions, share purchases, refunds and sales share the same compensation assumptions.</p></div>
@@ -191,9 +197,16 @@
         <section class="glass-card"><h3>Connect Twelve Data</h3><p class="cf-note">The free Basic plan supports eligible symbols with 8 credits per minute and 800 per day. Coverage and freshness depend on the exchange and plan. Quotes are cached for five minutes; this is not a streaming feed. <a href="https://twelvedata.com/account/api-keys" target="_blank" rel="noreferrer">Open your API key dashboard</a>.</p><label for="market-key">API key</label><div class="market-connect"><input type="password" id="market-key" autocomplete="off" placeholder="Enter key for this server session"><button type="button" class="btn-secondary" id="market-connect">Connect</button><button type="button" class="btn-secondary" id="market-disconnect">Disconnect</button></div><p class="cf-note">The key stays in local server memory and is excluded from saved scenarios. Reconnect after restarting the server.</p><p id="market-message" role="status"></p></section>
         <section class="glass-card"><h3>Linked stocks</h3><p class="cf-note">Set tickers in your RSU grants and ESPP settings. Apply changes to baseline valuation estimates only when appropriate for your scenario. Future prices remain projections.</p><div id="market-targets"></div></section>
       </section>
-      <section data-main-view="limits" aria-label="Projected tax limits" hidden>
-        <div class="cf-intro"><span class="cf-eyebrow">PUBLISHED BASELINE, ADJUSTABLE PROJECTIONS</span><h2>Plan for limits that change.</h2><p>2026 federal limits anchor the forecast. Later values use your growth assumptions and rounding. Catch-ups are applied separately based on age.</p></div>
-        <section class="glass-card"><h3>Override limits for the starting tax year</h3><p class="cf-note">Leave fields blank to use the baseline or projection. Overrides affect only the starting tax year.</p><div id="limit-overrides" class="cf-fields"></div></section>
+      <section data-main-view="paychecks" aria-label="Paycheck calendar" hidden>
+        <div class="cf-intro"><span class="cf-eyebrow">ONE CALENDAR, EVERY PAYCHECK</span><h2>See when your take-home changes.</h2><p>Expand a paycheck for deductions, withholding and remaining contribution room. Monthly cash flow totals use the same events.</p></div>
+        <div id="paycheck-results"></div>
+      </section>
+      <section data-main-view="limits" aria-label="Setup and contribution limits" hidden>
+        <div class="cf-intro"><span class="cf-eyebrow">THREE STEPS TO YOUR PAYROLL FORECAST</span><h2>Tax profile. Plan limits. Paychecks.</h2><p>Statutory limits set the ceiling. Employer restrictions can lower it. Uploaded elections continue until a limit is reached.</p></div>
+        <section class="glass-card setup-step"><h3>1. Tax and eligibility</h3><div id="setup-tax" class="cf-fields"></div><details class="cf-group"><summary>Advanced tax assumptions</summary><div id="advanced-tax-inputs"></div></details><p class="cf-note">Tax year, age and HSA coverage determine contribution eligibility. Filing status and state determine tax treatment. Other income and deductions remain under advanced tax assumptions.</p></section>
+        <section class="glass-card setup-step"><h3>2. Plan limits and employer funding</h3><div id="setup-plan" class="cf-fields"></div><div id="effective-limits"></div><p class="cf-note">Blank optional caps mean no additional employer restriction. Employer funding consumes shared account capacity. Published statutory ceilings cannot be raised by a custom cap.</p></section>
+        <section class="glass-card setup-step"><h3>3. Upload recent paychecks</h3><p class="cf-note">PDFs are processed in this browser. Review financial fields before saving. Original documents, bank details and addresses are not stored. Text-based regular paystubs are supported; scanned PDFs and reversal checks need manual entry.</p><input type="file" id="paystub-files" accept="application/pdf,.pdf" multiple><p id="paystub-status" role="status" aria-live="polite"></p><div id="paystub-review"></div><div id="payroll-controls" class="cf-fields"></div><div id="payroll-elections"></div><div id="paystub-records"></div><details class="cf-group"><summary>Compensation, RSU grants and manual adjustments</summary><p class="cf-note">Use these for compensation not present on a regular paystub, IRA transfers, or manual entry. Imported contribution elections take precedence when the paycheck calendar is enabled. Pre-tax insurance / benefits are payroll-paid health, dental, vision or eligible FSA premiums; they reduce take-home and eligible taxable wages, not retirement savings.</p><div id="manual-compensation-inputs"></div></details></section>
+        <details class="glass-card"><summary>Advanced statutory projections</summary><p class="cf-note">Optional overrides can lower a contribution ceiling, but cannot exceed the published or projected baseline. Company caps belong in step 2.</p><div id="limit-overrides" class="cf-fields"></div></details>
         <section class="glass-card"><h3>Next 30 years</h3><div id="limit-table"></div><p class="cf-note">Additional Medicare and NIIT thresholds, the HSA catch-up and the ESPP statutory allowance remain fixed. Future values are estimates, not announced IRS limits.</p></section>
         <section class="glass-card cf-sources"><h3>Rules and sources</h3><p><a href="https://www.irs.gov/pub/irs-drop/n-25-67.pdf" target="_blank" rel="noreferrer">IRS retirement limits</a> · <a href="https://www.irs.gov/pub/irs-drop/rp-25-19.pdf" target="_blank" rel="noreferrer">IRS HSA limits</a> · <a href="https://www.irs.gov/irb/2025-45_IRB" target="_blank" rel="noreferrer">IRS tax brackets</a> · <a href="https://www.ssa.gov/oact/COLA/cbb.html" target="_blank" rel="noreferrer">Social Security wage base</a> · <a href="https://www.ftb.ca.gov/forms/2025/2025-540-booklet.html" target="_blank" rel="noreferrer">California tax tables</a> · <a href="https://edd.ca.gov/en/Payroll_Taxes/Rates_and_Withholding" target="_blank" rel="noreferrer">California payroll rates</a></p><p class="cf-note">CA income tax is projected from published 2025 tables. Tax credits and special adjustments require your inputs. The model estimates taxes on compensation and modeled stock sales; it does not prepare a tax return.</p></section>
       </section>
@@ -308,11 +321,19 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="tax-engine.js?v=20260915"></script>
+  <script src="tax-ui.js?v=20260915"></script>
+  <script src="payroll-calendar.js"></script>
+  <script src="paystub-parser.js"></script>
+  <script src="payroll-ui.js"></script>
   <script src="compensation.js?v=20260914-sankey"></script>
   <script src="model.js?v=20260914-sankey"></script>
   <script src="money-flow.js?v=20260914-sankey"></script>
+  <script src="compact-flow.js"></script>
   <script src="market-ui.js?v=20260914-sankey"></script>
   <script src="compensation-ui.js?v=20260914-sankey"></script>
+  <script src="development-defaults.js"></script>
+  <script src="scenario-defaults.js"></script>
   <script src="app.js?v=20260914-sankey"></script>
 </body>
 </html>

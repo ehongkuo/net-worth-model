@@ -28,7 +28,7 @@ See [Tax rules and calculation boundaries](TAX_RULES.md) for sources, cash-timin
 
 ## Usage
 
-With Node.js 20 or later, run `npm start` and open http://127.0.0.1:5182. No build step is required. Run `npm test` for the calculation and local-server tests.
+With Node.js 20 or later, run `npm start` and open [http://127.0.0.1:5190](http://127.0.0.1:5190). No build step is required. Run `npm test` for the calculation and local-server tests.
 
 Monthly Cash Flow shows gross cash pay minus withholding and payroll deductions as take-home cash. The Sankey follows that cash into spending, additional tax reserves, asset contributions and remaining cash. Held RSUs, ESPP purchase benefits and employer contributions enter as asset value and reach the account destinations on the right. Proceeds and refunds recycle ESPP principal without counting it as new income. Expand the flow table for exact monthly amounts.
 
@@ -50,7 +50,7 @@ The following describes the original programmatic path. Browser scenarios use th
 
 - **Federal**: 2025 progressive brackets on income above the standard deduction ($15k single / $30k married), inflation-adjusted.
 - **California**: full FTB progressive brackets above the CA standard deduction.
-- **FICA**: Social Security (per-earner wage-base cap) + Medicare + additional Medicare, levied on **gross wages only**. 401k/HSA do not reduce FICA; rental income, Social Security, and windfalls are not subject to it.
+- **FICA**: Social Security (per-earner wage-base cap) + Medicare + additional Medicare, levied on **gross wages only**. Traditional 401(k) contributions do not reduce FICA. Qualifying payroll HSA contributions reduce federal FICA wages; direct HSA contributions do not. In the legacy calculation path, HSA contributions are treated as direct contributions; rental income, Social Security, and windfalls are not subject to it.
 - **Income by treatment**: wages (income tax + FICA), ordinary non-wage income (income tax only), and tax-free income (inheritance, gift, home-sale equity).
 
 ### Retirement
@@ -92,3 +92,31 @@ Covers the tax engine, retirement and drawdown, event mechanics, inflation adjus
 🤖 Generated with Codex
 
 Monthly Cash Flow always uses the starting tax year. The projection slider only changes the lifetime projection. Calculation fixtures and their independent derivations live in `test/expected-cash-flow.test.js`.
+
+## Taxes view
+
+The Taxes tab explains the annual tax calculation used by monthly cash flow and the lifetime projection: income sources, deductions, ordinary and capital-gains brackets, contribution effects, payroll taxes, withholding and remaining liability. Expand bracket rows to inspect their arithmetic. Federal rules use the published 2026 baseline; California and later-year estimates are labeled.
+
+ESPP settings are employer-neutral. Held-share future-tax reserves are optional cash earmarks; actual sales feed current liability once. See [TAX_RULES.md](TAX_RULES.md) for supported cases, assumptions and source links.
+
+Monthly Cash Flow can switch between an explicitly amortized monthly average and the current calendar month when it matches the scenario tax year. The current-month view follows scheduled pay, vesting and ESPP transactions. Annual tax settlements and reserves remain monthly planning allocations. The Taxes tab compares gross income and income after pre-tax contributions and benefits. Household deductions and the resulting taxable income appear separately below the bars, followed by tax calculations and cash/equity outcomes.
+
+The Sankey has six stages: sources, total incoming value, pre-tax deductions, tax payments, cash/assets, and illustrative cost allocation. Costs use current-period cash, then ESPP, RSUs and retirement value. This is a visual allocation only: it never sells holdings, withdraws account balances or changes the projection. Unfunded costs and the actual cash shortfall stay visible. HSA assets and earmarked future-tax cash are excluded from general expense allocation.
+
+The monthly overview leads with spendable cash, living expenses and cash surplus or shortfall. A separate account breakdown shows retirement, HSA and retained equity additions. Sankey ribbons use category colors: cash and bonus, equity, retirement/HSA, and taxes/costs. Filled curves and centered columns keep joins smooth. Salary timing explains annual salary divided by 12 versus paychecks scheduled in the current month.
+
+For local development, an optional `development-defaults.js` defines `window.DEVELOPMENT_SCENARIO` as an exported `{config, events}` scenario. It is excluded from Git. New browser origins and Reset use this preset; existing saved scenarios take precedence. Without a preset, the built-in configurable defaults apply. The local server serves an empty optional script when the file is absent.
+
+Payday anchor accepts any known payday for weekly or biweekly schedules. The same cadence is extended backward and forward from that date. Monthly and semimonthly schedules retain their calendar-based behavior.
+
+The local preview defaults to port 5190. Running `npm start` again reuses the preview only when that port serves this checkout. It does not choose another port automatically. Refresh the page after frontend edits; server edits require a restart.
+
+ESPP offerings end the day before the next offering by default. An explicit end date also becomes the purchase date, with per-offering overrides available. Payroll funds remain cash until purchase. For qualified Section 423 plans, held shares have no purchase-time income tax; sale taxes follow the ordinary-income and capital-gain rules described in [IRS Publication 525](https://www.irs.gov/publications/p525).
+
+## Upload-driven forecasts and flow details
+
+The latest reviewed regular paycheck supplies future pay and recurring deductions. Percentage elections follow eligible pay; fixed deductions repeat per paycheck. Uploaded actuals stay intact, and YTD totals reduce remaining annual capacity. A capped paycheck retains an earlier uncapped election or the configured election. Without either, the app keeps annual settings and displays a warning.
+
+Future federal withholding uses the uploaded federal taxable-wage rate. State withholding uses the uploaded amount relative to gross salary and bonus because the importer does not currently extract a state taxable-wage basis. Payroll taxes still follow statutory rules. The tax engine calculates annual liability separately from these projected payments.
+
+Click a Sankey base or ribbon for a Component / Based on / Rate / Amount table. Expanded details include individual paycheck elections, applied limits and pricing assumptions. Effective rates describe the displayed period; elections can differ when a limit is reached. Pending ESPP valuation is a visual estimate and does not change purchase timing or account balances.

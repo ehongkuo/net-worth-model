@@ -28,3 +28,11 @@ test('local endpoint protects keys and files',async()=>{
     assert.equal((await status.json()).configured,false);
   } finally {await new Promise(resolve=>server.close(resolve));}
 });
+
+test('local preview exposes an app identity for safe reuse of its fixed port',async()=>{
+  const server=createServer({client:createMarketClient()});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try {
+    const response=await fetch(`http://127.0.0.1:${server.address().port}/api/preview`,{headers:{'x-model-request':'1'}});
+    assert.equal(response.status,200);assert.equal((await response.json()).app,'net-worth-model');
+  } finally {await new Promise(resolve=>server.close(resolve));}
+});
