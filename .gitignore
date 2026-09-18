@@ -1,3 +1,6 @@
 .DS_Store
 .agents/
 node_modules/
+
+# Local editable personal scenario, loaded only by the development app.
+development-defaults.js

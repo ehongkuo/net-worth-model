@@ -59,6 +59,8 @@ document.addEventListener('DOMContentLoaded', () => {
   setupMarketUI();
   syncControlsFromConfig();
   runSimulation();
+  const initialView=new URLSearchParams(location.search).get('view');
+  if(['limits','paychecks'].includes(initialView))showCompensationView(initialView);
 });
 
 function getStartAge() {
@@ -95,12 +97,11 @@ function loadState() {
   let saved;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    saved = JSON.parse(raw);
+    if (raw) saved = JSON.parse(raw);
   } catch (e) {
-    return;
+    saved = null;
   }
-  applyScenario(saved);
+  applyScenario(ScenarioDefaults.resolve(saved,window.DEVELOPMENT_SCENARIO));
 }
 
 /** Applies a {config, events} scenario object to the model. */
@@ -171,6 +172,7 @@ function importScenario(file) {
 function resetScenario() {
   try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
   if (window.LifetimeModel) model = new window.LifetimeModel();
+  applyScenario(ScenarioDefaults.resolve(null,window.DEVELOPMENT_SCENARIO));
   syncControlsFromConfig();
   runSimulation();
 }

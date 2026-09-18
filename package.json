@@ -9,6 +9,7 @@
   "license": "MIT",
   "private": true,
   "dependencies": {
+    "pdfjs-dist": "^6.3.289",
     "puppeteer": "^25.4.0"
   }
 }
