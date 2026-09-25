@@ -3,7 +3,7 @@
   const cents = v => Math.round((Number(v) || 0) * 100);
   const amount = v => v / 100;
   const positive = v => Math.max(0,Number(v)||0);
-  const fields = ['salary','bonus','allowance','imputed','traditional','roth','mega','hsa','health','post','espp','employer','hsaEmployer','federal','state','ss','medicare','sdi'];
+  const fields = ['salary','bonus','allowance','taxableAllowance','imputed','traditional','roth','mega','hsa','health','post','espp','employer','hsaEmployer','federal','state','ss','medicare','sdi'];
   const sum = (rows,key) => amount(rows.reduce((n,p)=>n+cents(p[key]),0));
   function validDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s||'') && Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0,10)===s; }
   function splitCents(total,count) {
@@ -16,6 +16,7 @@
     const p=c.payroll||{},r=c.retirement,h=c.hsa,offset=year-c.taxYear;
     const parser=typeof module!=='undefined'&&module.exports?require('./paystub-parser'):root.PaystubParser;
     const baseline=p.uploadBaseline===false?{}:parser.suggest((p.records||[]).filter(r=>Number(r.date.slice(0,4))<=year),c);
+    const benefitPlans=p.benefitPlans||parser.benefitPlans(p.records||[]);
     const warnings=[...(baseline.warnings||[])],elections=p.elections||{};
     const rows=dates.map(date=>({date,kind:'regular',source:'forecast',capEvents:[],...Object.fromEntries(fields.map(k=>[k,0]))}));
     distribute(rows,'salary',salary);
@@ -24,17 +25,30 @@
     distribute(rows,'health',targets.health||0);distribute(rows,'post',targets.post||0);
     for(const row of rows){
       const observed=baseline.record&&row.date>baseline.record.date;
-      if(observed&&employed&&baseline.record.current.salary!=null)row.salary=amount(cents(baseline.record.current.salary*(1+c.salaryGrowth)**Math.max(0,year-Number(baseline.record.date.slice(0,4)))));
+      if(observed&&employed&&!p.manualFields?.includes("compensation.salary")&&baseline.record.current.salary!=null)row.salary=amount(cents(baseline.record.current.salary*(1+c.salaryGrowth)**Math.max(0,year-Number(baseline.record.date.slice(0,4)))));
       row.elections={...elections,...(observed?baseline.elections:{})};
-      if(observed)for(const [key,e] of Object.entries(elections))if(e.sourceDate&&e.sourceDate===baseline.elections?.[key]?.sourceDate)row.elections[key]=e;
+      if(observed)for(const [key,e] of Object.entries(elections))if(e.manual || (e.sourceDate&&e.sourceDate===baseline.elections?.[key]?.sourceDate))row.elections[key]=e;
       for(const key of p.annualSettingKeys||[])delete row.elections[key];
       if(observed)row.withholdingBaseline=baseline.withholding;
+      if(observed&&employed&&baseline.record.current.employer!=null&&!p.manualFields?.some(k=>k.startsWith('employerPlan.retirement.employer')||k.includes('match')))row.employer=amount(cents(baseline.record.current.employer));
+      if(observed&&employed&&baseline.record.current.hsaEmployer!=null)row.hsaEmployer=amount(cents(baseline.record.current.hsaEmployer));
       row.espp=targets.esppByDate?.[row.date]||0;
       for(const [key,e] of Object.entries(row.elections)){
         if(key==='espp'&&targets.esppByDate?.[row.date]==null)continue;
         if(!fields.includes(key)||['employer','hsaEmployer'].includes(key))continue;
         const eligible=row.salary+(['traditional','roth','mega'].includes(key)&&r.bonusEligible || key==='espp'&&c.espp.bonusEligible?row.bonus:0);
         row[key]=employed?amount(cents(e.mode==='percent'?eligible*positive(e.value):positive(e.value))):0;
+      }
+      if(employed && (observed||p.ongoing)){
+        row.benefitDetails=[];
+        const managed=new Set(benefitPlans.map(b=>parser.benefitTypes[b.category]?.field).filter(key=>key&&!p.annualSettingKeys?.includes(key)&&!elections[key]?.manual));
+        for(const key of managed)row[key]=0;
+        for(const b of benefitPlans){
+          const key=parser.benefitTypes[b.category]?.field;if(!managed.has(key))continue;
+          const first=rows.find(x=>x.date.slice(0,7)===row.date.slice(0,7));
+          const value=b.schedule==='once'||b.schedule==='review'?0:b.schedule==='monthly'&&first!==row?0:positive(b.current);
+          row[key]=(row[key]||0)+value;row.benefitDetails.push({...b,value});
+        }
       }
       if(!r.megaEnabled)row.mega=0;
       if(!h.eligible)row.hsa=row.hsaEmployer=0;
@@ -46,28 +60,52 @@
       if(row)row.date=record.date;
       if(!row){row={date:record.date,kind:record.kind||'regular',capEvents:[],...Object.fromEntries(fields.map(k=>[k,0]))};rows.push(row);}
       for(const key of fields)row[key]=Number(record.current[key])||0;
-      row.source='uploaded';row.recordId=record.id;row.reportedNet=record.netPay;
-      row.taxableFederal=record.current.taxableFederal;row.taxablePayroll=record.current.taxablePayroll;
+      row.benefitDetails=(record.benefits||[]).map(b=>({...b,value:b.current||0}));row.source='uploaded';row.recordId=record.id;row.reportedNet=record.netPay;
+      row.taxableMedicare=record.current.taxableMedicare;row.taxableFederal=record.current.taxableFederal;row.taxablePayroll=record.current.taxablePayroll;
     }
     rows.sort((a,b)=>a.date.localeCompare(b.date));
     const last=records.at(-1);
     if(last&&p.useYtd!==false){
       const history=rows.filter(x=>x.date<=last.date),missing=history.filter(x=>x.source!=='uploaded');
       for(const key of [...fields,'taxablePayroll','taxableFederal','taxableMedicare']){
-        if(last.ytd?.[key]==null)continue;
-        const residual=cents(last.ytd[key])-cents(sum(history.filter(x=>x.source==='uploaded'),key));
+        const snapshot=records.filter(r=>r.ytd?.[key]!=null).at(-1);
+        if(!snapshot)continue;
+        const through=history.filter(x=>x.date<=snapshot.date);
+        const residual=cents(snapshot.ytd[key])-cents(sum(through.filter(x=>x.source==='uploaded'),key));
         if(residual<0){warnings.push(`Uploaded ${key} exceeds the latest YTD snapshot; review the documents.`);continue;}
         if(!missing.length&&residual){warnings.push(`No dated history available for ${key} YTD remainder.`);continue;}
-        const eligibleHistory=key==='espp'?missing.filter(x=>targets.esppByDate?.[x.date]!=null):missing;
+        const eligibleHistory=missing.filter(x=>x.date<=snapshot.date&&(key!=='espp'||targets.esppByDate?.[x.date]!=null));
         if(eligibleHistory.length)distribute(eligibleHistory,key,amount(residual));
         else if(residual)warnings.push(`Unable to date ${key} YTD funding with the current enrollment schedule.`);
       }
       missing.forEach(x=>x.source='history-estimate');
       if(missing.length)warnings.push('Earlier paycheck dates and amounts are estimates reconciled to the latest available YTD fields, not uploaded actuals.');
       for(const key of ['employer','hsaEmployer']){
+        if(baseline.record?.current[key]!=null && (key==='hsaEmployer'||!p.manualFields?.some(k=>k.startsWith('employerPlan.retirement.employer')||k.includes('match'))))continue;
         const future=rows.filter(x=>x.date>last.date&&x.source==='forecast');
         distribute(future,key,Math.max(0,(targets[key]||0)-sum(history,key)));
       }
+    }
+    const benefitUsed={},monthUsed={},planUsed={};
+    for(const category of ['fsa','dependentCare']){
+      const snapshots=records.flatMap(record=>(record.benefits||[]).filter(b=>b.category===category&&b.ytd!=null).map(b=>({...b,date:record.date})));
+      const latestById=new Map();for(const b of snapshots)latestById.set(b.id,b);
+      benefitUsed[category]=[...latestById.values()].reduce((n,b)=>n+b.ytd+records.filter(rec=>rec.date>b.date).reduce((s,rec)=>s+(rec.benefits||[]).filter(x=>x.id===b.id).reduce((s,x)=>s+(x.current||0),0),0),0);
+    }
+    for(const b of benefitPlans){
+      const latest=records.flatMap(rec=>(rec.benefits||[]).filter(x=>x.id===b.id&&x.ytd!=null).map(x=>({...x,date:rec.date}))).at(-1);
+      planUsed[b.id]=latest?(latest.ytd+records.filter(rec=>rec.date>latest.date).reduce((n,rec)=>n+(rec.benefits||[]).filter(x=>x.id===b.id).reduce((n,x)=>n+(x.current||0),0),0)):records.reduce((n,rec)=>n+(rec.benefits||[]).filter(x=>x.id===b.id).reduce((n,x)=>n+(x.current||0),0),0);
+    }
+    for(const row of rows)for(const b of row.benefitDetails||[]){
+      const key=parser.benefitTypes[b.category]?.field,month=row.date.slice(0,7)+b.category;
+      const annual=b.category==='fsa'?l.healthFsa:b.category==='dependentCare'?Math.min(l.dependentCare,salary+bonus,c.tax.filing==='married'?positive(c.tax.spouseIncome):Infinity):Infinity;
+      const monthly=['commuter','parking'].includes(b.category)?l.commuterMonthly:Infinity;
+      if(row.source==='forecast'){
+        const value=Math.min(b.value,Math.max(0,(b.annualCap??Infinity)-(planUsed[b.id]||0)),Math.max(0,annual-(benefitUsed[b.category]||0)),Math.max(0,monthly-(monthUsed[month]||0)));
+        if(value<b.value){row[key]-=b.value-value;row.capEvents.push(`${b.label}: limited to ${value.toFixed(2)}`);}
+        b.value=value;planUsed[b.id]=(planUsed[b.id]||0)+value;benefitUsed[b.category]=(benefitUsed[b.category]||0)+value;
+      }
+      monthUsed[month]=(monthUsed[month]||0)+b.value;
     }
     const age=c.age+offset,catchup=age>=60&&age<=63?l.superCatchup:age>=50?l.catchup:0;
     const prior=offset===0;
@@ -104,7 +142,9 @@
   }
   function withholding(schedule,c,year,taxEngine,equity={rsuVests:[]}) {
     const l=taxEngine.limits(year,c.tax),rows=schedule.rows,n=rows.filter(x=>x.kind==='regular').length||1;
-    let wages=0,supplemental=0;
+    let wages=0,medicareWages=0,supplemental=0;
+    const snapshots=(c.payroll?.useYtd===false?[]:c.payroll?.records||[]).filter(r=>Number(r.date.slice(0,4))===year).sort((a,b)=>a.date.localeCompare(b.date));
+    const ssThrough=snapshots.filter(r=>r.ytd?.taxablePayroll!=null).at(-1)?.date||'',medicareThrough=snapshots.filter(r=>r.ytd?.taxableMedicare!=null||r.ytd?.taxablePayroll!=null).at(-1)?.date||'';
     schedule.equityTaxes=[];
     const supplementalTax=(value,rate)=>{const excess=Math.max(0,supplemental+value-1000000)-Math.max(0,supplemental-1000000);supplemental+=value;return (value-excess)*rate+excess*.37;};
     const events=[...rows.map(row=>({date:row.date,row})),...(equity.rsuVests||[]).map(vest=>({date:vest.date,vest}))].sort((a,b)=>a.date.localeCompare(b.date));
@@ -112,20 +152,20 @@
       if(event.vest){
         const v=event.vest,value=v.value;
         const ss=.062*(Math.min(l.ssBase,wages+value)-Math.min(l.ssBase,wages));
-        const medicare=value*.0145+.009*(Math.max(0,wages+value-200000)-Math.max(0,wages-200000));
+        const medicare=value*.0145+.009*(Math.max(0,medicareWages+value-200000)-Math.max(0,medicareWages-200000));
         const federal=supplementalTax(value,c.tax.rsuFederalRate),state=c.tax.state==='none'?0:value*c.tax.rsuStateRate,sdi=c.tax.state==='CA'?value*c.tax.caSdi:0;
-        schedule.equityTaxes.push({date:v.date,value,federal,state,ss,medicare,sdi});wages+=value;continue;
+        schedule.equityTaxes.push({date:v.date,value,federal,state,ss,medicare,sdi});if(event.date>ssThrough)wages+=value;if(event.date>medicareThrough)medicareWages+=value;continue;
       }
       const row=event.row;
-      const payrollBase=Math.max(0,row.salary+row.bonus+row.imputed-row.health-(c.hsa.payroll?row.hsa:0));
+      const payrollBase=Math.max(0,row.salary+row.bonus+row.taxableAllowance+row.imputed-row.health-(c.hsa.payroll?row.hsa:0));
       const federalBase=Math.max(0,payrollBase-row.traditional);
       if(row.source==='forecast'){
         row.taxablePayroll=payrollBase;row.taxableFederal=federalBase;
         row.ss=amount(cents(.062*(Math.min(l.ssBase,wages+payrollBase)-Math.min(l.ssBase,wages))));
-        row.medicare=amount(cents(.0145*payrollBase+.009*(Math.max(0,wages+payrollBase-200000)-Math.max(0,wages-200000))));
-        row.sdi=c.tax.state==='CA'?amount(cents(Math.max(0,row.salary+row.bonus+row.imputed-row.health)*c.tax.caSdi)):0;
-        const regularFederal=Math.max(0,row.salary+row.imputed-row.health-(c.hsa.payroll?row.hsa:0)-row.traditional*(row.salary/Math.max(1,row.salary+(c.retirement.bonusEligible?row.bonus:0))));
-        const hypothetical=taxEngine.calculate({wages:(row.salary+row.imputed)*n,pretax:row.traditional*n,payrollDeduction:row.health*n,hsa:row.hsa*n,hsaPayroll:c.hsa.payroll?row.hsa*n:0,employerHsa:row.hsaEmployer*n},year,c.tax);
+        row.medicare=amount(cents(.0145*payrollBase+.009*(Math.max(0,medicareWages+payrollBase-200000)-Math.max(0,medicareWages-200000))));
+        row.sdi=c.tax.state==='CA'?amount(cents(Math.max(0,row.salary+row.bonus+row.taxableAllowance+row.imputed-row.health)*c.tax.caSdi)):0;
+        const regularFederal=Math.max(0,row.salary+row.taxableAllowance+row.imputed-row.health-(c.hsa.payroll?row.hsa:0)-row.traditional*(row.salary/Math.max(1,row.salary+(c.retirement.bonusEligible?row.bonus:0))));
+        const hypothetical=taxEngine.calculate({wages:(row.salary+row.taxableAllowance+row.imputed)*n,pretax:row.traditional*n,payrollDeduction:row.health*n,hsa:row.hsa*n,hsaPayroll:c.hsa.payroll?row.hsa*n:0,employerHsa:row.hsaEmployer*n},year,c.tax);
         row.federal=amount(cents((c.tax.salaryFederalRate==null?taxEngine.federalWithholding(regularFederal*n,year,c.tax)/n:regularFederal*c.tax.salaryFederalRate)+supplementalTax(Math.max(0,federalBase-regularFederal),c.tax.bonusFederalRate)+c.tax.federalExtra));
         row.state=c.tax.state==='none'?0:amount(cents((c.tax.salaryStateRate==null?hypothetical.state/n:Math.max(0,row.salary-row.traditional-row.health-(c.tax.state==='CA'?0:row.hsa))*c.tax.salaryStateRate)+row.bonus*c.tax.bonusStateRate+c.tax.stateExtra));
       }
@@ -136,7 +176,8 @@
       }
       if(row.source!=='forecast')supplemental+=row.bonus;
       wages+=row.taxablePayroll??payrollBase;
-      row.grossCash=row.salary+row.bonus+row.allowance;
+      medicareWages+=row.taxableMedicare??row.taxablePayroll??payrollBase;
+      row.grossCash=row.salary+row.bonus+row.allowance+row.taxableAllowance;
       row.withholding=amount(cents(row.federal+row.state+row.ss+row.medicare+row.sdi));
       row.netPay=amount(cents(row.grossCash-row.traditional-row.roth-row.mega-(c.hsa.payroll?row.hsa:0)-row.health-row.post-row.espp-row.withholding));
     }

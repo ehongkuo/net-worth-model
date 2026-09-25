@@ -45,7 +45,7 @@ test('Worked disposition examples distinguish qualifying and disqualifying sales
 });
 test('hidden Sankey rendering preserves its existing geometry',()=>{
  const container={clientWidth:0,innerHTML:'existing layout'};
- F.render(container,{nodes:[],links:[]},String);
+ require('../compact-flow').render(container,{nodes:[],links:[]},String);
  assert(container.innerHTML==='existing layout');
 });
 test('offering-specific rate and prices override the baseline',()=>{
@@ -54,9 +54,9 @@ test('offering-specific rate and prices override the baseline',()=>{
  assertClose(lot.cost,3000,.01);assertClose(lot.shares,3000/17,.001);assertClose(lot.purchasePrice,30,.001);
 });
 test('sell-to-cover preserves yearly net worth and graph conservation',()=>{
- const {LifetimeModel}=require('../model');
+ const S=require('../scenario'),P=require('../projection');
  const config={projectionYears:3,marketReturn:0,inflation:0,cash:100000,brokerage:0,pretax401kBal:0,rothAccounts:0,traditionalIRA:0,hsa:0,socialSecurityAnnual:0,retirementAge:90,expenses:{housing:0,dining:0,groceries:0,giving:0,travel:0,entertainment:0,auto:0,other:0}};
- const scenario=mode=>new LifetimeModel({...config,compensation:C.merge(C.defaults(),{salary:120000,salaryGrowth:0,tax:{state:'none'},grants:[{...grant,saleMode:mode}]})}).simulate();
+ const scenario=mode=>P.calculate(S.migrate({config:{...config,compensation:C.merge(C.defaults(),{salary:120000,salaryGrowth:0,tax:{state:'none'},grants:[{...grant,saleMode:mode}]})}}).scenario).rows;
  const cover=scenario('cover'),hold=scenario('hold');
  cover.forEach((row,i)=>assertClose(row.netWorth,hold[i].netWorth,.01));
  const p=C.calculate(C.merge(C.defaults(),{salary:120000,tax:{state:'none'},grants:[grant]}),2026),g=F.buildFlow(p,C.cashFlow(p));
@@ -68,8 +68,9 @@ test('Configured plan limits annual payroll contributions and keeps fractional s
  const lot=p.espp.lots.find(l=>l.purchaseDate==='2026-12-08');assertClose(lot.shares,25000/13,.001);
 });
 test('clearing an offering override restores the plan baseline',()=>{
- const {LifetimeModel}=require('../model');
- const m=new LifetimeModel({compensation:C.merge(C.defaults(),{espp:{...plan,enrollments:{'2026-06-09':{offerPrice:20,enrolled:true}}}})});
- const c=m.getConfig().compensation;delete c.espp.enrollments['2026-06-09'].offerPrice;m.updateConfig({compensation:c});
- assert(m.getConfig().compensation.espp.enrollments['2026-06-09'].offerPrice===undefined);
+ const S=require('../scenario'),P=require('../projection');
+ const c=C.merge(C.defaults(),{espp:{...plan,enrollments:{'2026-06-09':{offerPrice:20,enrolled:true}}}});
+ delete c.espp.enrollments['2026-06-09'].offerPrice;
+ const restored=S.engineInput(S.migrate({config:{compensation:c}}).scenario);
+ assert(restored.espp.enrollments['2026-06-09'].offerPrice===undefined);
 });

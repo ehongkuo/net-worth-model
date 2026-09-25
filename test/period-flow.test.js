@@ -1,6 +1,6 @@
 const {test,assert,assertClose}=require('./harness');
 const C=require('../compensation'),F=require('../money-flow'),T=require('../tax-engine');
-const UI=require('../compensation-ui'),{taxChartLayout}=require('../tax-ui');
+const UI=require('../input-rules'),{taxChartLayout}=require('../tax-ui');
 const cfg=C.merge(C.defaults(),{salary:120000,frequency:'monthly',bonusPercent:.1,bonusMonth:3,tax:{state:'none'},retirement:{traditional:12000},hsa:{employee:2400},grants:[{value:12000,grantPrice:100,start:'2025-12-31',months:12,interval:3,saleMode:'cover'}],espp:{enabled:true,rate:.1,holdShares:false,fractional:false,offerPrice:100,purchasePrice:100,salePrice:100}});
 test('current month uses actual bonus, vesting, ESPP dates and matches the monthly ledger',()=>{
  const p=C.calculate(cfg),f=C.cashFlow(p,{expenses:24000});

@@ -1,1065 +1,1185 @@
-let model, chart, currentResults = [], currentView = 'total';
-const ASSET_GROUPS = [
-  {label:'Liquid cash',color:'#38bdf8',keys:['cash']},
-  {label:'Taxable investments',color:'#f59e0b',keys:['brokerage','companyEquity']},
-  {label:'Retirement',color:'#a78bfa',keys:['pretax401k','rothAccounts','traditionalIRA']},
-  {label:'HSA',color:'#2dd4bf',keys:['hsa']},
-  {label:'Home equity',color:'#f472b6',keys:['homeEquity']}
-];
-const assetValue = (r,group) => group.keys.reduce((sum,key)=>sum+(r.balances?.[key] || 0),0);
-let displayMode = 'real'; // 'nominal' or 'real' (today's dollars)
-let currentTimeWindow = 'full';
-let currentTemplateReversal = null;
-let currentTemplateEffects = null;
-let currentScrubberIndex = 0;
-
-const STORAGE_KEY = 'netWorthModel:v1';
-
-// Assumption sliders. Percentage sliders store value/100; raw sliders store the
-// value as-is. Defined at module scope so both the input wiring and the
-// restore-from-storage sync can use them.
-const pct = (v) => v.toFixed(1) + '%';
-const ASSUMPTION_SLIDERS = [
-  { id: 'slider-base-rent', displayId: 'val-base-rent', key: 'expenses.housing', raw: true, format: (v) => formatCurrencyFull(v) },
-  { id: 'slider-inflation', displayId: 'val-inflation', key: 'inflation', format: pct },
-  { id: 'slider-market-return', displayId: 'val-market-return', key: 'marketReturn', format: pct },
-  { id: 'slider-salary-growth', displayId: 'val-salary-growth', key: 'salaryGrowth', format: pct },
-  { id: 'slider-real-estate', displayId: 'val-real-estate', key: 'realEstateAppreciation', format: pct },
-  { id: 'slider-retirement-age', displayId: 'val-retirement-age', key: 'retirementAge', raw: true, format: (v) => String(v) },
-  { id: 'slider-social-security', displayId: 'val-social-security', key: 'socialSecurityAnnual', raw: true, format: (v) => formatCurrencyFull(v) }
-];
-
-/**
- * Converts a nominal figure to today's dollars when the real-dollars toggle is
- * on, using the year's cumulative inflation factor.
- */
-function displayValue(value, result) {
-  if (displayMode === 'real' && result && result.inflationFactor) {
-    return value / result.inflationFactor;
-  }
-  return value;
+"use strict";
+const $ = (id) => document.getElementById(id);
+const escape = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+const money = (value) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value || 0);
+const KEY = "netWorthModel:scenario:v3",
+  BACKUP = "netWorthModel:legacy-backup";
+let scenario,
+  result,
+  view = "monthly",
+  drafts = [],
+  fieldConfig,
+  profileStep = 0,
+  grantTimelineAnnual = false;
+const get = (object, path) => path.split(".").reduce((v, k) => v?.[k], object);
+function set(object, path, value) {
+  const keys = path.split(".");
+  let o = object;
+  for (const k of keys.slice(0, -1)) o = o[k] ??= {};
+  o[keys.at(-1)] = value;
 }
-
-document.addEventListener('DOMContentLoaded', () => {
-  if (typeof window.LifetimeModel !== 'undefined') {
-    model = new window.LifetimeModel();
-  } else {
-    console.error('model.js failed to load; the app cannot run.');
-    showLoadError();
-    return; // don't wire up a UI that can't compute anything
-  }
-  setupChart();
-  setupEventListeners();
-  populateTemplateDropdown();
-  populateTypeDropdown();
-  loadState();            // restore a saved scenario, if any, into model + controls
-  displayMode = model.getConfig().displayMode || 'real';
-  document.querySelectorAll('#dollar-toggle .tab-btn').forEach(b => b.classList.toggle('active',b.dataset.mode===displayMode));
-  setupCompensationUI();
-  setupMarketUI();
-  syncControlsFromConfig();
-  runSimulation();
-  const initialView=new URLSearchParams(location.search).get('view');
-  if(['limits','paychecks'].includes(initialView))showCompensationView(initialView);
-});
-
-function getStartAge() {
-  return model.getConfig ? model.getConfig().age : 25;
+function table(headers, rows) {
+  return `<table><thead><tr>${headers.map((x) => `<th>${escape(x)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((v) => `<td>${escape(v)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
-
-/** Renders a visible banner when the simulation engine fails to load. */
-function showLoadError() {
-  const banner = document.createElement('div');
-  banner.className = 'load-error';
-  banner.setAttribute('role', 'alert');
-  banner.textContent = 'Could not load the projection engine (model.js). Reload the page; if it persists, check that model.js is present next to index.html.';
-  document.body.prepend(banner);
+function field(path, label, type = "number", hint = "") {
+  const enginePath = path.startsWith("employerPlan.")
+    ? path.slice(13)
+    : path.startsWith("taxProfile.settings.")
+      ? "tax." + path.slice(20)
+      : null;
+  if (
+    enginePath &&
+    fieldConfig &&
+    !compensationFieldVisible(fieldConfig, enginePath)
+  )
+    return "";
+  const source = scenario.uploads.fieldSources?.[path];
+  const election = path.startsWith("uploads.elections.")
+    ? scenario.uploads.elections[path.split(".")[2]]
+    : null;
+  const manual =
+    election?.manual || scenario.uploads.manualFields?.includes(path);
+  const provenance = manual
+    ? "Your override"
+    : source
+      ? `${source.basis}. From ${source.sourceDate} paycheck.`
+      : election?.sourceDate
+        ? `From ${election.sourceDate} paycheck. ${election.mode === "percent" ? "Inferred from base salary plus bonus when configured eligible." : "Observed amount per paycheck."}`
+        : "";
+  hint = [hint, provenance].filter(Boolean).join(" ");
+  const value = get(scenario, path),
+    attrs = `data-path="${path}" data-type="${type}"`;
+  const state = Profile.fieldState(scenario, path);
+  const badge = `<span class="field-status">${escape(state.label)}</span>`;
+  const approve =
+    state.kind === "review" && state.label !== "Needs input"
+      ? `<button type="button" class="confirm-field" data-confirm="${path}" aria-label="Confirm ${escape(label)}">Confirm assumption</button>`
+      : "";
+  if (type === "check")
+    return `<div class="profile-cell state-${state.kind}"><label class="check">${badge}<input ${attrs} type="checkbox" ${value ? "checked" : ""}>${escape(label)}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${approve}</div>`;
+  const choices = Array.isArray(type) ? type : null;
+  const control = choices
+    ? `<select ${attrs}>${choices
+        .map((v) => {
+          const [key, text] = Array.isArray(v) ? v : [v, v];
+          return `<option value="${key}" ${String(value) === String(key) ? "selected" : ""}>${escape(text)}</option>`;
+        })
+        .join("")}</select>`
+    : `<input ${attrs} type="${["date", "text"].includes(type) ? type : "number"}" step="any" value="${escape(Profile.displayValue(value, type === "number" && /(?:^taxProfile\.(?:year|age)$|\.(?:years|retirementAge|socialSecurityStartAge|eligibleMonths|periodMonths|holdMonths|cliff|interval|shareCap)$)/.test(path) ? "count" : type))}">`;
+  return `<div class="profile-cell state-${state.kind}"><label class="field">${badge}<span>${escape(label)}${type === "percent" ? " (%)" : ""}</span>${control}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${approve}</div>`;
 }
-
-// ─── Persistence (localStorage + export/import) ────────────────
-
-/** Serializes the current scenario (assumptions + events) to localStorage. */
-function saveState() {
-  if (!model.getConfig) return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      config: model.getConfig(),
-      events: model.getEvents ? model.getEvents() : []
-    }));
-  } catch (e) {
-    // Storage can be unavailable (private mode, quota); persistence is a
-    // convenience, so fail quietly.
-  }
-}
-
-/** Restores a saved scenario from localStorage into the model, if present. */
-function loadState() {
-  let saved;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) saved = JSON.parse(raw);
-  } catch (e) {
-    saved = null;
-  }
-  applyScenario(ScenarioDefaults.resolve(saved,window.DEVELOPMENT_SCENARIO));
-}
-
-/** Applies a {config, events} scenario object to the model. */
-function applyScenario(scenario) {
-  if (!scenario || !model.updateConfig) return;
-  if (scenario.config) {
-    const config = { ...scenario.config, compensation: Compensation.fromLegacy(scenario.config) };
-    model.updateConfig(config);
-  }
-  if (model.clearEvents) model.clearEvents();
-  if (Array.isArray(scenario.events) && model.addEvent) {
-    scenario.events.forEach(e => model.addEvent(e));
-  }
-}
-
-/** Pushes the model's config values back into the slider controls. */
-function syncControlsFromConfig() {
-  if (!model.getConfig) return;
-  const cfg = model.getConfig();
-  ASSUMPTION_SLIDERS.forEach(s => {
-    const el = document.getElementById(s.id);
-    const disp = document.getElementById(s.displayId);
-    let configVal = cfg;
-    if (s.key.includes('.')) {
-      const parts = s.key.split('.');
-      configVal = cfg[parts[0]] ? cfg[parts[0]][parts[1]] : undefined;
-    } else {
-      configVal = cfg[s.key];
-    }
-    if (!el || configVal === undefined || configVal === null) return;
-    const raw = s.raw ? configVal : configVal * 100;
-    el.value = raw;
-    if (disp) disp.innerText = s.format(raw);
-  });
-  if (document.getElementById('rsu-grants')) {
-    ensureCompensation(); renderGrantFields(); syncCompensationFields();
-  }
-}
-
-/** Downloads the current scenario as a JSON file. */
-function exportScenario() {
-  const data = JSON.stringify({ config: model.getConfig(), events: model.getEvents() }, null, 2);
-  const blob = new Blob([data], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'net-worth-scenario.json';
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-/** Loads a scenario from a user-selected JSON file. */
-function importScenario(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      applyScenario(JSON.parse(reader.result));
-      syncControlsFromConfig();
-      runSimulation();
-    } catch (e) {
-      alert('Could not read that scenario file - it is not valid JSON.');
-    }
+const group = (title, body, open = false) =>
+  `<details ${open ? "open" : ""}><summary>${escape(title)}</summary><div class="field-grid">${body}</div></details>`;
+function setup() {
+  fieldConfig = Scenario.engineInput(scenario);
+  const t = "taxProfile.",
+    r = "employerPlan.retirement.",
+    h = "employerPlan.hsa.",
+    e = "employerPlan.espp.",
+    c = "compensation.",
+    p = "projection.";
+  const plan = scenario.employerPlan,
+    limits = TaxEngine.limits(
+      scenario.taxProfile.year,
+      scenario.taxProfile.settings,
+    );
+  const tax =
+    field(t + "year", "Starting tax year") +
+    field(t + "age", "Age at start of projection") +
+    field(t + "settings.filing", "Filing status", [
+      ["single", "Single"],
+      ["married", "Married filing jointly"],
+    ]) +
+    field(t + "settings.state", "State tax model", [
+      ["CA", "California"],
+      ["none", "No state income tax"],
+      ["custom", "Other state (effective rate)"],
+    ]) +
+    (scenario.taxProfile.settings.state === "custom"
+      ? field(t + "settings.customStateRate", "State effective rate", "percent")
+      : "") +
+    `<p class="cf-note">${limits.year} limits: employee 401(k) ${money(limits.deferral)}, total plan ${money(limits.total401k)}, IRA ${money(limits.ira)}. Catch-up eligibility is applied by age.</p>` +
+    group(
+      "Additional tax information",
+      field(t + "settings.spouseIncome", "Spouse annual wages") +
+        field(t + "settings.otherIncome", "Other annual ordinary income") +
+        field(
+          t + "settings.federalDeduction",
+          "Federal itemized deduction (0 uses standard)",
+        ) +
+        field(t + "settings.stateDeduction", "State deduction override") +
+        field(t + "settings.federalCredits", "Federal credits") +
+        field(t + "settings.stateCredits", "State credits") +
+        field(
+          t + "settings.estimatedPayments",
+          "Annual estimated tax payments",
+        ) +
+        field(t + "settings.capitalLossCarry", "Capital loss carryforward") +
+        field(t + "settings.withholdingMethod", "Forecast withholding", [
+          ["annual-estimate", "Estimated annual tax"],
+          ["w4", "W-4 payroll method"],
+        ]) +
+        field(t + "settings.w4Credits", "W-4 annual credits") +
+        field(t + "settings.w4OtherIncome", "W-4 other income") +
+        field(t + "settings.w4Deductions", "W-4 deductions") +
+        field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check") +
+        field(
+          t + "settings.caGrowth2026",
+          "California 2026 bracket adjustment",
+          "percent",
+        ) +
+        field(t + "settings.limitGrowth", "Future limit growth", "percent") +
+        field(t + "settings.bracketGrowth", "Future bracket growth", "percent"),
+    );
+  const electionField = (key) => {
+    const v = scenario.uploads.elections[key];
+    return v
+      ? field(
+          `uploads.elections.${key}.value`,
+          `${PaystubParser.labels[key]} (${v.mode === "percent" ? "of eligible pay" : "per paycheck"})`,
+          v.mode === "percent" ? "percent" : "number",
+        )
+      : "";
   };
-  reader.readAsText(file);
-}
-
-/** Clears the saved scenario and resets the model to defaults. */
-function resetScenario() {
-  try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
-  if (window.LifetimeModel) model = new window.LifetimeModel();
-  applyScenario(ScenarioDefaults.resolve(null,window.DEVELOPMENT_SCENARIO));
-  syncControlsFromConfig();
-  runSimulation();
-}
-
-function setupChart() {
-  const ctx = document.getElementById('nw-chart').getContext('2d');
-
-  Chart.defaults.color = '#94a3b8';
-  Chart.defaults.font.family = "'Inter', sans-serif";
-
-  chart = new Chart(ctx, {
-    type: 'line',
-    data: { labels: [], datasets: [] },
-    plugins: [{
-      id: 'verticalLinePlugin',
-      afterDraw: (chart) => {
-        if (!currentResults || currentResults.length === 0) return;
-        const ctx = chart.ctx;
-        const xAxis = chart.scales.x;
-        const yAxis = chart.scales.y;
-        
-        // Only draw if the scrubber index is visible in the current zoom window
-        const label = `Age ${currentResults[currentScrubberIndex].age}`;
-        const xPos = xAxis.getPixelForValue(currentScrubberIndex);
-        
-        // In Chart.js, if a tick is out of view, getPixelForTick might still return a value, 
-        // but it might be outside the chart area.
-        if (xPos >= xAxis.left && xPos <= xAxis.right) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.moveTo(xPos, yAxis.top);
-          ctx.lineTo(xPos, yAxis.bottom);
-          ctx.lineWidth = 2;
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
-          ctx.setLineDash([5, 5]);
-          ctx.stroke();
-          
-          ctx.beginPath();
-          ctx.arc(xPos, yAxis.top, 5, 0, 2 * Math.PI);
-          ctx.fillStyle = '#38bdf8';
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-    }],
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 750 },
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: 'rgba(30, 41, 59, 0.9)',
-          titleColor: '#f8fafc',
-          bodyColor: '#f8fafc',
-          borderColor: 'rgba(255,255,255,0.1)',
-          borderWidth: 1,
-          padding: 10,
-          callbacks: {
-            label: function(context) {
-              let label = context.dataset.label || '';
-              if (label) label += ': ';
-              if (context.parsed.y !== null) label += formatCurrencyFull(context.parsed.y);
-              return label;
-            }
-          }
-        }
-      },
-      scales: {
-        x: { grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false } },
-        y: {
-          grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-          ticks: { callback: function(value) { return formatCurrency(value); } },
-          beginAtZero: true,
-          grace: '15%'
-        }
-      }
-    }
-  });
-}
-
-function runSimulation() {
-  if (model && model.simulate) {
-    ensureCompensation();
-    currentResults = model.simulate();
-    
-    // Update scrubber max based on projection years
-    const scrubber = document.getElementById('timeline-scrubber');
-    if (scrubber) {
-      scrubber.max = currentResults.length - 1;
-      if (currentScrubberIndex >= currentResults.length) {
-        currentScrubberIndex = currentResults.length - 1;
-        scrubber.value = currentScrubberIndex;
-      }
-    }
-    
-    updateChart();
-    updateTimelineSnapshot();
-    updateDataTable();
-    renderEventsList();
-    renderCompensation();
-    saveState();
-  }
-}
-
-function createGradient(ctx, color) {
-  const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-  gradient.addColorStop(0, color);
-  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  return gradient;
-}
-
-function hexToRgba(hex, alpha) {
-  let r = parseInt(hex.slice(1, 3), 16),
-      g = parseInt(hex.slice(3, 5), 16),
-      b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function updateChart() {
-  if (!currentResults || currentResults.length === 0) return;
-
-  const labels = currentResults.map(r => r.isInitial ? 'Start' : `Age ${r.age}`);
-  
-  const scrollContainer = document.getElementById('chart-scrollbar-container');
-  const scrollContent = document.getElementById('chart-scrollbar-content');
-
-  if (currentTimeWindow !== 'full' && scrollContainer && scrollContent) {
-    const years = parseInt(currentTimeWindow);
-    const totalPoints = currentResults.length;
-    const pointsInView = years + 1;
-    
-    scrollContainer.style.display = 'block';
-    const ratio = totalPoints / pointsInView;
-    scrollContent.style.width = `${ratio * 100}%`;
-
-    const maxScrollLeft = scrollContainer.scrollWidth - scrollContainer.clientWidth;
-    let scrollPct = 0;
-    if (maxScrollLeft > 0) {
-      scrollPct = scrollContainer.scrollLeft / maxScrollLeft;
-    }
-    
-    const maxStartIndex = Math.max(0, totalPoints - pointsInView);
-    const startIndex = Math.max(0, Math.min(maxStartIndex, Math.round(scrollPct * maxStartIndex)));
-    const endIndex = Math.min(totalPoints - 1, startIndex + pointsInView - 1);
-
-    chart.options.scales.x.min = labels[startIndex];
-    chart.options.scales.x.max = labels[endIndex];
-  } else {
-    if (scrollContainer) scrollContainer.style.display = 'none';
-    delete chart.options.scales.x.min;
-    delete chart.options.scales.x.max;
-  }
-
-  let datasets = [];
-  const ctx = document.getElementById('nw-chart').getContext('2d');
-
-  if (currentView === 'total') {
-    chart.options.plugins.legend.display = false;
-    chart.options.scales.y.stacked = false;
-    datasets = [{
-      label: 'Net Worth',
-      data: currentResults.map(r => displayValue(r.netWorth, r)),
-      borderColor: '#38bdf8',
-      borderWidth: 3,
-      backgroundColor: createGradient(ctx, 'rgba(56, 189, 248, 0.3)'),
-      fill: true,
-      pointRadius: 0,
-      pointHoverRadius: 6,
-      tension: 0
-    }];
-  } else if (currentView === 'breakdown') {
-    chart.options.plugins.legend.display = true;
-    chart.options.scales.y.stacked = true;
-
-    const accounts = ASSET_GROUPS;
-
-    datasets = accounts.map(acc => ({
-      label: acc.label,
-      data: currentResults.map(r => displayValue(assetValue(r,acc), r)),
-      backgroundColor: hexToRgba(acc.color, 0.6),
-      borderColor: acc.color,
-      borderWidth: 1,
-      fill: true,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      tension: 0
-    }));
-  } else if (currentView === 'income') {
-    chart.options.plugins.legend.display = true;
-    chart.options.scales.y.stacked = false;
-    datasets = [
-      {
-        label: 'Gross Income',
-        data: currentResults.map(r => displayValue((r.income ? r.income.gross || 0 : 0) + (r.income ? r.income.investment || 0 : 0), r)),
-        borderColor: '#10b981',
-        backgroundColor: createGradient(ctx, 'rgba(16, 185, 129, 0.1)'),
-        borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 5, tension: 0
-      },
-      {
-        label: 'Total Expenses',
-        data: currentResults.map(r => displayValue(r.expenses ? r.expenses.total || 0 : 0, r)),
-        borderColor: '#ef4444',
-        backgroundColor: createGradient(ctx, 'rgba(239, 68, 68, 0.1)'),
-        borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 5, tension: 0
-      }
-    ];
-  }
-
-  delete chart.options.scales.y.max;
-  delete chart.options.scales.y.min;
-
-  chart.data.labels = labels;
-  chart.data.datasets = datasets;
-  chart.update();
-}
-
-function updateTimelineSnapshot() {
-  if (!currentResults || currentResults.length === 0) return;
-
-  const r = currentResults[currentScrubberIndex];
-  if (!r) return;
-
-  const balanceLabels = {companyEquity:'Held company shares',cash:'Cash',brokerage:'Brokerage',pretax401k:'Pre-tax 401(k)',rothAccounts:'Roth accounts',traditionalIRA:'Traditional IRA',hsa:'HSA',homeEquity:'Home equity'};
-  document.getElementById('balance-snapshot').innerHTML = `<div class="balance-total"><span>${r.isInitial?'Starting net worth':'Net worth'}</span><strong>${formatCurrencyFull(displayValue(r.netWorth,r))}</strong></div>` + ASSET_GROUPS.map(group=>`<div style="border-top:3px solid ${group.color}"><span>${group.label}</span><strong>${formatCurrencyFull(displayValue(assetValue(r,group),r))}</strong></div>`).join('') + `<details class="balance-details"><summary>Account breakdown</summary>` + Object.entries(balanceLabels).map(([key,label])=>`<div><span>${label}</span><strong>${formatCurrencyFull(displayValue(r.balances[key] || 0,r))}</strong></div>`).join('') + '</details>';
-  document.querySelector('.snapshot-cards').hidden = r.isInitial;
-  // Update labels
-  document.getElementById('timeline-start-label').innerText = `Start of ${currentResults[0].year}`;
-  document.getElementById('timeline-end-label').innerText = `Age ${currentResults[currentResults.length - 1].age}`;
-  document.getElementById('timeline-current-label').innerText = r.isInitial ? `Starting balances (${r.year})` : `Age ${r.age} (Year ${r.year})`;
-
-  // Income vs Savings
-  const grossIn = (r.income.gross || 0) + (r.income.investment || 0);
-  const saved = (r.savings.total || 0) + (r.savings.postTax || 0); // Need to calculate post tax savings if it exists
-  const isPostTax = (r.income.gross - r.taxes - r.expenses.total - r.savings.total);
-  const totalSaved = r.savings.total + Math.max(0, isPostTax);
-  
-  document.getElementById('snap-gross-in').innerText = formatCurrency(displayValue(grossIn, r));
-  document.getElementById('snap-saved').innerText = formatCurrency(displayValue(totalSaved, r));
-
-  // Housing
-  const housing = r.expenses.breakdown && r.expenses.breakdown.housing ? r.expenses.breakdown.housing * 12 : 0;
-  document.getElementById('snap-housing').innerText = formatCurrency(displayValue(housing, r));
-
-  // Living & Auto
-  const auto = r.expenses.breakdown && r.expenses.breakdown.auto ? r.expenses.breakdown.auto * 12 : 0;
-  // Total expenses minus housing and auto
-  const living = r.expenses.total - housing - auto;
-  
-  document.getElementById('snap-auto').innerText = formatCurrency(displayValue(auto, r));
-  document.getElementById('snap-living').innerText = formatCurrency(displayValue(living, r));
-
-  // Taxes
-  document.getElementById('snap-taxes').innerText = formatCurrency(displayValue(r.taxes, r));
-  const cashGross = r.income.gross || 0;
-  const effectiveRate = cashGross > 0 ? (r.taxes / cashGross) * 100 : 0;
-  document.getElementById('snap-tax-rate').innerText = `Effective Rate: ${effectiveRate.toFixed(1)}%`;
-
-  // Calculate Cumulatives
-  let cumGrossIn = 0, cumSaved = 0, cumHousing = 0, cumAuto = 0, cumLiving = 0, cumTaxes = 0;
-  for (let i = 1; i <= currentScrubberIndex; i++) {
-     const row = currentResults[i];
-     const rowGrossIn = (row.income.gross || 0) + (row.income.investment || 0);
-     cumGrossIn += displayValue(rowGrossIn, row);
-     const rowIsPostTax = (row.income.gross - row.taxes - row.expenses.total - row.savings.total);
-     cumSaved += displayValue(row.savings.total + Math.max(0, rowIsPostTax), row);
-     
-     const rowHousing = row.expenses.breakdown && row.expenses.breakdown.housing ? row.expenses.breakdown.housing * 12 : 0;
-     const rowAuto = row.expenses.breakdown && row.expenses.breakdown.auto ? row.expenses.breakdown.auto * 12 : 0;
-     cumHousing += displayValue(rowHousing, row);
-     cumAuto += displayValue(rowAuto, row);
-     cumLiving += displayValue(row.expenses.total - rowHousing - rowAuto, row);
-     cumTaxes += displayValue(row.taxes, row);
-  }
-  
-  document.getElementById('snap-cum-gross-in').innerText = formatCurrency(cumGrossIn);
-  document.getElementById('snap-cum-saved').innerText = formatCurrency(cumSaved);
-  document.getElementById('snap-cum-housing').innerText = formatCurrency(cumHousing);
-  document.getElementById('snap-cum-auto').innerText = formatCurrency(cumAuto);
-  document.getElementById('snap-cum-living').innerText = formatCurrency(cumLiving);
-  document.getElementById('snap-cum-taxes').innerText = formatCurrency(cumTaxes);
-
-  // Events
-  const eventsList = document.getElementById('snap-events-list');
-  if (r.events && r.events.length > 0) {
-    eventsList.innerHTML = r.events.map(e => `<span class="event-badge ${getTypeForEventName(e)}">${e}</span>`).join('');
-  } else {
-    eventsList.innerHTML = '<span class="no-events">-</span>';
-  }
-}
-
-function updateDataTable() {
-  if (!currentResults || currentResults.length === 0) return;
-
-  const tbody = document.getElementById('data-table-body');
-  tbody.innerHTML = '';
-
-  const showAll = document.getElementById('show-all-years').checked;
-  let prevNw = currentResults[0].netWorth;
-
-  currentResults.forEach((r, i) => {
-    const hasEvents = r.events && r.events.length > 0;
-    const isFifthYear = i % 5 === 0;
-    const isLastYear = i === currentResults.length - 1;
-
-    if (!showAll && !hasEvents && !isFifthYear && !isLastYear && i !== 0) {
-      prevNw = r.netWorth;
-      return;
-    }
-
-    const tr = document.createElement('tr');
-    if (hasEvents) tr.classList.add('event-row');
-
-    const nwClass = r.netWorth >= prevNw ? 'positive-growth' : 'negative-growth';
-    const eventBadges = hasEvents
-      ? r.events.map(e => `<span class="event-badge ${getTypeForEventName(e)}">${e}</span>`).join(' ')
-      : '-';
-
-    tr.innerHTML = `
-      <td>${r.age}</td>
-      <td>${r.year}</td>
-      <td>${formatCurrencyFull(displayValue((r.income.gross || 0) + (r.income.investment || 0), r))}</td>
-      <td>${formatCurrencyFull(displayValue(r.taxes, r))}</td>
-      <td>${formatCurrencyFull(displayValue(r.expenses.total, r))}</td>
-      <td>${formatCurrencyFull(displayValue(r.savings.total, r))}</td>
-      <td class="${nwClass} font-semibold">${formatCurrencyFull(displayValue(r.netWorth, r))}</td>
-      <td>${eventBadges}</td>
-    `;
-    tbody.appendChild(tr);
-    prevNw = r.netWorth;
-  });
-}
-
-function getTypeForEventName(eventName) {
-  const events = model.getEvents ? model.getEvents() : [];
-  const evt = events.find(e => e.name === eventName);
-  return evt ? evt.type : 'career';
-}
-
-function renderEventsList() {
-  const container = document.getElementById('events-list');
-  const events = model.getEvents ? model.getEvents() : [];
-  const startAge = getStartAge();
-
-  if (events.length === 0) {
-    container.innerHTML = `<p class="empty-state">No events added yet. Add life events to see how they shape your trajectory.</p>`;
-    return;
-  }
-
-  container.innerHTML = '';
-  events.forEach(e => {
-    const eventAge = (e.year || 0) + startAge;
-    const div = document.createElement('div');
-    div.className = 'event-item';
-    div.dataset.id = e.id;
-    div.innerHTML = `
-      <span class="event-badge ${e.type}">${e.type}</span>
-      <div class="event-info">
-        <strong>${e.name}</strong>
-        <span>Age ${eventAge}${e.duration ? ` · ${e.duration}yr` : ''} · ${e.description || ''}</span>
-      </div>
-      <div class="event-actions">
-        <button class="btn-edit" title="Edit" aria-label="Edit ${e.name}">✏️</button>
-        <button class="btn-remove" title="Remove" aria-label="Remove ${e.name}">🗑️</button>
-      </div>
-    `;
-
-    div.querySelector('.btn-edit').addEventListener('click', () => openEventModal(e.id));
-    div.querySelector('.btn-remove').addEventListener('click', () => {
-      model.removeEvent(e.id);
-      runSimulation();
+  const funding = Profile.employerFunding(scenario, result?.rows[1]?.payroll);
+  const fundingSummary = `<div class="funding-summary"><h3>Employer retirement funding</h3>${table(["Reported YTD", "Projected remaining", "Projected annual total"], [[funding.ytd == null ? "No YTD uploaded" : money(funding.ytd), money(funding.remaining), money(funding.total)]])}<p class="cf-note">${funding.date ? `YTD through ${escape(funding.date)}. ` : ""}Reported YTD is already included in the projection. An annual target or matching rule sets expected future funding.</p></div>`;
+  const retirement =
+    fundingSummary +
+    ["traditional", "roth", "mega"].map(electionField).join("") +
+    field(
+      r + "employerAnnual",
+      "Fixed annual employer funding (excluding formula match)",
+    ) +
+    field(
+      r + "matchPercent",
+      "Match applies to the first portion of pay",
+      "percent",
+    ) +
+    field(
+      r + "matchRate",
+      "Employer pays this portion of matched contributions",
+      "percent",
+    ) +
+    field(r + "megaEnabled", "After-tax retirement contributions", "check") +
+    (plan.retirement.megaEnabled
+      ? field(
+          r + "megaAnnualCap",
+          "Employer annual mega backdoor cap",
+          "number",
+          "Blank means no employer cap beyond IRS limits.",
+        )
+      : "") +
+    field(r + "iraMode", "IRA strategy", [
+      ["backdoor", "Backdoor Roth IRA"],
+      ["roth", "Direct Roth IRA"],
+      ["traditional", "Traditional IRA"],
+    ]) +
+    field(r + "maxIra", "Maximize annual IRA contribution", "check") +
+    (!plan.retirement.maxIra
+      ? field(r + "ira", "Annual IRA contribution")
+      : "") +
+    (plan.retirement.iraMode === "backdoor"
+      ? field(
+          r + "iraPretaxBalance",
+          "Other pre-tax IRA balance",
+          "number",
+          "Starting Traditional IRA balances also enter the pro-rata calculation.",
+        ) + field(r + "iraBasis", "Existing nondeductible IRA basis")
+      : "");
+  const hsa =
+    electionField("hsa") +
+    field(h + "eligible", "HSA eligible", "check") +
+    (plan.hsa.eligible
+      ? field(h + "coverage", "HSA coverage", [
+          ["single", "Self-only"],
+          ["family", "Family"],
+        ]) +
+        (Profile.describe(scenario).last?.current.hsaEmployer != null
+          ? `<p class="cf-note">Employer HSA funding: ${money(Profile.describe(scenario).last.current.hsaEmployer)} per paycheck, from your upload.</p>`
+          : field(h + "employer", "Annual employer HSA contribution")) +
+        field(h + "eligibleMonths", "Eligible months")
+      : "");
+  const espp =
+    field(e + "enabled", "Participate in ESPP", "check") +
+    (plan.espp.enabled
+      ? field(e + "rate", "Payroll contribution", "percent") +
+        field(
+          e + "bonusEligible",
+          "Include bonus in eligible ESPP pay",
+          "check",
+        ) +
+        field(e + "start", "First offering start", "date") +
+        field(e + "end", "First offering end (optional)", "date") +
+        field(e + "periodMonths", "Months per offering") +
+        field(
+          e + "autoEnroll",
+          "Automatically enroll in subsequent offerings",
+          "check",
+        ) +
+        field(
+          e + "firstEnrollmentDate",
+          "First offering you participate in (optional)",
+          "date",
+        ) +
+        field(e + "discount", "Purchase discount", "percent") +
+        field(
+          e + "lookback",
+          "Use lower of offering and purchase price",
+          "check",
+        ) +
+        field(e + "offerPrice", "Offering share price") +
+        field(e + "purchasePrice", "Expected purchase-date share price") +
+        field(e + "shareCap", "Maximum shares per offering (0 means none)") +
+        field(
+          e + "annualPayrollCap",
+          "Employer annual payroll cap (0 means none)",
+        ) +
+        field(
+          e + "annualFmvLimit",
+          "Qualified-plan annual grant-date value limit",
+        ) +
+        field(e + "fractional", "Allow fractional shares", "check") +
+        field(e + "holdShares", "Hold purchased shares", "check") +
+        (!plan.espp.holdShares
+          ? field(e + "salePrice", "Expected sale price") +
+            field(e + "holdMonths", "Months until sale")
+          : "")
+      : "");
+  const fallback =
+    field(r + "max401k", "Maximize employee 401(k)", "check") +
+    (!plan.retirement.max401k
+      ? field(r + "traditional", "Annual Traditional 401(k) election")
+      : "") +
+    field(r + "roth", "Annual Roth 401(k) election") +
+    (plan.retirement.megaEnabled
+      ? field(r + "maxMega", "Maximize mega backdoor", "check") +
+        (!plan.retirement.maxMega
+          ? field(r + "mega", "Annual mega backdoor election")
+          : "")
+      : "") +
+    field(h + "maxContribution", "Maximize employee HSA", "check") +
+    (!plan.hsa.maxContribution
+      ? field(h + "employee", "Annual employee HSA contribution")
+      : "");
+  const grants = scenario.compensation.grants
+    .map((g, i) =>
+      group(
+        g.name || `Grant ${i + 1}`,
+        field(c + `grants.${i}.name`, "Grant name", "text") +
+          field(c + `grants.${i}.value`, "Total grant value") +
+          field(c + `grants.${i}.grantPrice`, "Grant-date share price") +
+          field(c + `grants.${i}.vestPrice`, "Assumed vest-date share price") +
+          field(c + `grants.${i}.start`, "Grant date", "date") +
+          field(c + `grants.${i}.months`, "Vesting duration (years)", "years") +
+          field(
+            c + `grants.${i}.evenVesting`,
+            "Even vesting schedule",
+            "check",
+          ) +
+          `<label class="profile-cell"><span>Annual allocations (%)</span><input data-grant-allocation="${i}" value="${EquitySchedule.allocations(
+            g,
+          )
+            .map((x) => Number(x.toFixed(6)))
+            .join(
+              " / ",
+            )}" ${g.evenVesting !== false ? "readonly" : ""} aria-label="Annual allocations for ${escape(g.name)}"><small>${g.evenVesting !== false ? "Calculated from the vesting duration." : "One percentage per grant year, separated by /. Must total 100%."}</small></label>` +
+          field(c + `grants.${i}.cliff`, "Cliff (months)") +
+          field(c + `grants.${i}.interval`, "Vesting interval (months)") +
+          field(c + `grants.${i}.saleMode`, "At vest", [
+            ["cover", "Sell to cover taxes"],
+            ["hold", "Hold all shares"],
+            ["sell", "Sell all shares"],
+          ]) +
+          field(c + `grants.${i}.repeat`, "Repeat grant annually", "check") +
+          (() => {
+            const v = Profile.grantPreview(g),
+              pace = EquitySchedule.pace(
+                g,
+                EquitySchedule.asOf(scenario.taxProfile.year),
+              );
+            return `<div class="grant-preview"><h3>Current earning pace: ${money(pace.monthlyMarket)}/month</h3><p class="cf-note">${pace.phase ? `Grant year ${pace.phase} · next change ${pace.nextChange}` : "Outside this grant’s earning period"}. Earning pace spreads the current grant-year allocation evenly; scheduled vests remain dated below.</p><h4>First vest · ${escape(v.date)}</h4>${table(["Grant duration", "Shares vesting", "Value at grant price", "Estimated market value"], [[`${v.years} years`, v.shares.toLocaleString("en-US", { maximumFractionDigits: 4 }), money(v.grantValue), money(v.marketValue)]])}<p class="cf-note">Pre-tax values for the first vest, not a monthly average. Market value uses your assumed vest price.</p></div>`;
+          })() +
+          `<button data-remove-grant="${i}">Remove grant</button>`,
+      ),
+    )
+    .join("");
+  const compensation =
+    field(c + "salary", "Annual base salary") +
+    field(c + "salaryGrowth", "Annual salary growth", "percent") +
+    field(c + "bonusPercent", "Bonus target", "percent") +
+    field(
+      c + "bonusMonth",
+      "Bonus month",
+      Array.from({ length: 12 }, (_, i) => [
+        i + 1,
+        new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
+      ]),
+    ) +
+    field(c + "frequency", "Pay frequency", [
+      ["biweekly", "Every two weeks"],
+      ["semimonthly", "Twice monthly"],
+      ["monthly", "Monthly"],
+      ["weekly", "Weekly"],
+    ]) +
+    field(c + "firstPayday", "Payday anchor", "date") +
+    field(c + "stockGrowth", "Annual company stock growth", "percent") +
+    `<div id="grant-timeline" class="grant-preview"></div>` +
+    grants +
+    '<button id="add-grant">Add RSU grant</button>';
+  const elections = Object.entries(scenario.uploads.elections)
+    .map(([key, v]) =>
+      field(
+        `uploads.elections.${key}.value`,
+        `${PaystubParser.labels[key]} (${v.mode === "percent" ? "percent of eligible wages" : "per paycheck"})`,
+        v.mode === "percent" ? "percent" : "number",
+      ),
+    )
+    .join("");
+  const uploads =
+    `<p class="cf-note">Upload regular paychecks. Review extracted amounts before applying. IRS and employer limits cap future deductions; YTD reconciles the current year.</p><label class="button">Read paystub PDFs<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label><p>${scenario.uploads.records.length} saved paycheck observations</p><div id="upload-status" role="status"></div><div id="upload-review"></div>` +
+    group(
+      "Current recurring elections",
+      elections ||
+        '<p class="cf-note">No uploaded elections yet. Annual fallback elections apply.</p>',
+    ) +
+    (scenario.uploads.records.length
+      ? ""
+      : group(
+          "Fallback elections before upload",
+          fallback +
+            Object.entries({
+              health: "Monthly health premium",
+              dental: "Monthly dental premium",
+              vision: "Monthly vision premium",
+              fsa: "Monthly FSA contribution",
+              otherPretax: "Other monthly pre-tax benefits",
+              otherPosttax: "Other monthly post-tax benefits",
+            })
+              .map(([key, label]) =>
+                field("employerPlan.benefits." + key, label),
+              )
+              .join(""),
+        )) +
+    group(
+      "Benefit elections from uploads",
+      table(
+        ["Benefit", "Category", "Amount per occurrence", "Schedule"],
+        PaystubParser.benefitPlans(scenario.uploads.records).map((b) => [
+          b.label,
+          PaystubParser.labels[b.category],
+          money(b.current),
+          b.schedule,
+        ]),
+      ),
+    ) +
+    group(
+      "Saved paycheck observations",
+      table(
+        ["Date", "Kind", "Net pay"],
+        scenario.uploads.records.map((x) => [x.date, x.kind, money(x.netPay)]),
+      ),
+    );
+  const balances = Object.entries({
+    cash: "Cash",
+    brokerage: "Taxable investments",
+    pretax401k: "Traditional 401(k)",
+    rothAccounts: "Roth accounts",
+    traditionalIRA: "Traditional IRA (included in backdoor pro-rata tax)",
+    hsa: "HSA",
+  })
+    .map(([key, label]) => field(p + "startingBalances." + key, label))
+    .join("");
+  const expenses = Object.keys(scenario.projection.monthlyExpenses)
+    .map((key) =>
+      field(p + "monthlyExpenses." + key, key[0].toUpperCase() + key.slice(1)),
+    )
+    .join("");
+  const projection =
+    field(p + "years", "Projection years") +
+    field(p + "retirementAge", "Retirement age") +
+    field(p + "inflation", "Annual inflation", "percent") +
+    field(p + "marketReturn", "Annual nominal investment return", "percent") +
+    field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
+    field(p + "socialSecurityStartAge", "Social Security start age") +
+    group("Starting balances", balances) +
+    group("Monthly living expenses", expenses);
+  const open = new Set(
+    [...$("setup").querySelectorAll("details[open]")].map(
+      (x) => x.querySelector("summary").textContent,
+    ),
+  );
+  $("setup").innerHTML =
+    `<div data-profile-step="0" class="profile-panel"><h2>First, the basics</h2><p class="cf-note">These establish the tax rules and contribution limits. More specific adjustments are optional.</p>${tax}</div>` +
+    `<div data-profile-step="1" class="profile-panel"><h2>Let your paycheck do the typing</h2><p>Choose your latest regular paycheck. Two consecutive checks help us identify your pay schedule.</p>${uploads}<details><summary>Enter compensation manually instead</summary>${
+      field(c + "salary", "Annual base salary") +
+      field(c + "frequency", "Pay frequency", [
+        ["biweekly", "Every two weeks"],
+        ["semimonthly", "Twice monthly"],
+        ["monthly", "Monthly"],
+        ["weekly", "Weekly"],
+      ]) +
+      field(c + "firstPayday", "A recent payday", "date")
+    }</details></div>` +
+    `<div data-profile-step="2" class="profile-panel"><h2>Anything else to include?</h2><p class="cf-note">Saved choices remain in place. Review the relevant sections; leave the rest for later.</p><div id="profile-questions"></div>` +
+    group("Employer retirement and personal IRA", retirement) +
+    group("HSA coverage and funding", hsa) +
+    group("ESPP plan and purchases", espp) +
+    group("Bonus, stock grants and pay schedule", compensation) +
+    group(
+      "Optional: lifetime assumptions and spending",
+      '<p class="cf-note">Enter expenses paid from unrestricted cash. Payroll premiums and FSA/commuter funding are already counted as benefit spending; exclude purchases funded by those deductions.</p>' +
+        projection,
+    ) +
+    `</div>`;
+  $("setup")
+    .querySelectorAll("details")
+    .forEach(
+      (x) => (x.open = open.has(x.querySelector("summary").textContent)),
+    );
+  $("setup")
+    .querySelectorAll(".field-grid")
+    .forEach((grid) => {
+      const cells = [...grid.children].filter((el) =>
+        el.classList.contains("profile-cell"),
+      );
+      cells.sort(
+        (a, b) =>
+          Number(b.classList.contains("state-review")) -
+          Number(a.classList.contains("state-review")),
+      );
+      grid.replaceChildren(
+        ...[...grid.children].map((el) =>
+          el.classList.contains("profile-cell") ? cells.shift() : el,
+        ),
+      );
     });
-
-    container.appendChild(div);
-  });
-}
-
-// ─── Event Listeners ──────────────────────────────────────────
-
-function setupEventListeners() {
-  // Panel toggles
-  document.querySelectorAll('.panel-header').forEach(header => {
-    header.addEventListener('click', () => {
-      const panelId = header.getAttribute('data-panel');
-      const content = document.getElementById(panelId);
-      if (content) {
-        content.classList.toggle('collapsed');
-        const icon = header.querySelector('.toggle-icon');
-        if (content.classList.contains('collapsed')) {
-          icon.style.transform = panelId === 'data-table-container' ? 'rotate(0deg)' : 'rotate(-90deg)';
-        } else {
-          icon.style.transform = panelId === 'data-table-container' ? 'rotate(90deg)' : 'rotate(0deg)';
-        }
-      }
+  $("setup")
+    .querySelectorAll("details")
+    .forEach((section) => {
+      const count = section.querySelectorAll(".state-review").length;
+      if (count) section.querySelector("summary").dataset.reviewCount = count;
     });
-  });
-
-  // Assumption sliders (defined at module scope in ASSUMPTION_SLIDERS).
-  ASSUMPTION_SLIDERS.forEach(s => {
-    const el = document.getElementById(s.id);
-    const disp = document.getElementById(s.displayId);
-    if (el) {
-      el.addEventListener('input', (e) => {
-        const val = parseFloat(e.target.value);
-        disp.innerText = s.format(val);
-        if (model && model.updateConfig) {
-          if (s.key.includes('.')) {
-            const parts = s.key.split('.');
-            model.updateConfig({ [parts[0]]: { [parts[1]]: s.raw ? val : val / 100 } });
-          } else {
-            model.updateConfig({ [s.key]: s.raw ? val : val / 100 });
-          }
-          runSimulation();
-        }
-      });
-    }
-  });
-
-  // Chart tab toggles (view selector)
-  document.querySelectorAll('#chart-tabs .tab-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      document.querySelectorAll('#chart-tabs .tab-btn').forEach(b => b.classList.remove('active'));
-      e.target.classList.add('active');
-      currentView = e.target.getAttribute('data-view');
-      updateChart();
-    });
-  });
-
-  // Time window toggles
-  document.querySelectorAll('#time-window-toggle .tab-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      document.querySelectorAll('#time-window-toggle .tab-btn').forEach(b => b.classList.remove('active'));
-      e.target.classList.add('active');
-      currentTimeWindow = e.target.getAttribute('data-window');
-      
-      const scrollContainer = document.getElementById('chart-scrollbar-container');
-      if (scrollContainer) scrollContainer.scrollLeft = 0;
-      
-      updateChart();
-    });
-  });
-
-  // Chart native scrollbar sync
-  const scrollContainer = document.getElementById('chart-scrollbar-container');
-  if (scrollContainer) {
-    scrollContainer.addEventListener('scroll', () => {
-      if (currentTimeWindow === 'full' || !currentResults || currentResults.length === 0) return;
-      
-      const years = parseInt(currentTimeWindow);
-      const totalPoints = currentResults.length;
-      const pointsInView = years + 1;
-      
-      const maxScrollLeft = scrollContainer.scrollWidth - scrollContainer.clientWidth;
-      let scrollPct = 0;
-      if (maxScrollLeft > 0) {
-        scrollPct = scrollContainer.scrollLeft / maxScrollLeft;
-      }
-      
-      const maxStartIndex = Math.max(0, totalPoints - pointsInView);
-      const startIndex = Math.max(0, Math.min(maxStartIndex, Math.round(scrollPct * maxStartIndex)));
-      const endIndex = Math.min(totalPoints - 1, startIndex + pointsInView - 1);
-      
-      chart.options.scales.x.min = chart.data.labels[startIndex];
-      chart.options.scales.x.max = chart.data.labels[endIndex];
-      chart.update('none');
-    });
-  }
-
-  // Nominal / today's-dollars toggle (affects chart, cards, and table)
-  document.querySelectorAll('#dollar-toggle .tab-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      document.querySelectorAll('#dollar-toggle .tab-btn').forEach(b => b.classList.remove('active'));
-      e.target.classList.add('active');
-      displayMode = e.target.getAttribute('data-mode');
-      updateChart();
-      updateTimelineSnapshot();
-      updateDataTable();
-      model.updateConfig({displayMode});
-      renderCompensation();
-      saveState();
-    });
-  });
-
-  // Timeline scrubber
-  const scrubber = document.getElementById('timeline-scrubber');
-  if (scrubber) {
-    scrubber.addEventListener('input', (e) => {
-      currentScrubberIndex = parseInt(e.target.value);
-      renderCompensation();
-      updateTimelineSnapshot();
-      if (chart) chart.draw(); // Just redraw chart to update the vertical line
-    });
-  }
-
-  // Data table controls
-  document.getElementById('show-all-years').addEventListener('change', updateDataTable);
-
-  // Event modal buttons
-  document.getElementById('btn-add-event').addEventListener('click', () => openEventModal());
-  document.getElementById('btn-cancel-event').addEventListener('click', closeEventModal);
-
-  document.getElementById('event-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    saveEvent();
-  });
-
-  document.getElementById('btn-delete-event').addEventListener('click', () => {
-    const id = document.getElementById('event-id').value;
-    if (id && model && model.removeEvent) {
-      model.removeEvent(parseInt(id));
-      closeEventModal();
-      runSimulation();
-    }
-  });
-
-  document.getElementById('event-template').addEventListener('change', (e) => {
-    applyTemplate(e.target.value);
-  });
-
-  document.getElementById('event-type').addEventListener('change', (e) => {
-    renderEffectFields(e.target.value);
-  });
-
-  // Scenario export / import / reset
-  document.getElementById('btn-export').addEventListener('click', exportScenario);
-  document.getElementById('import-file').addEventListener('change', (e) => {
-    if (e.target.files && e.target.files[0]) importScenario(e.target.files[0]);
-    e.target.value = ''; // allow re-importing the same file
-  });
-  document.getElementById('btn-reset').addEventListener('click', () => {
-    if (confirm('Reset all assumptions and events to defaults?')) resetScenario();
-  });
-}
-
-// ─── Template & Type Dropdowns ─────────────────────────────────
-
-function populateTemplateDropdown() {
-  const select = document.getElementById('event-template');
-  if (window.EVENT_TEMPLATES) {
-    Object.keys(window.EVENT_TEMPLATES).forEach(key => {
-      const tmpl = window.EVENT_TEMPLATES[key];
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.text = tmpl.name;
-      select.appendChild(opt);
-    });
-  }
-}
-
-function populateTypeDropdown() {
-  const select = document.getElementById('event-type');
-  const types = window.EVENT_TYPES || ['career', 'housing', 'family', 'health', 'purchase', 'market', 'windfall'];
-  types.forEach(type => {
-    const opt = document.createElement('option');
-    opt.value = type;
-    opt.text = type.charAt(0).toUpperCase() + type.slice(1);
-    select.appendChild(opt);
-  });
-}
-
-// ─── Event Modal ───────────────────────────────────────────────
-
-function openEventModal(eventId = null) {
-  const modal = document.getElementById('event-modal');
-  const form = document.getElementById('event-form');
-  const title = document.getElementById('modal-title');
-  const btnDelete = document.getElementById('btn-delete-event');
-  const startAge = getStartAge();
-
-  form.reset();
-  document.getElementById('effects-container').innerHTML = '';
-  document.getElementById('event-template').value = '';
-  currentTemplateReversal = null;
-  currentTemplateEffects = null;
-
-  if (eventId) {
-    title.innerText = 'Edit Life Event';
-    btnDelete.style.display = 'block';
-
-    const events = model.getEvents();
-    const event = events.find(e => e.id === eventId);
-    if (event) {
-      document.getElementById('event-id').value = event.id;
-      document.getElementById('event-name').value = event.name || '';
-      document.getElementById('event-year').value = (event.year || 0) + startAge;
-      document.getElementById('event-type').value = event.type || 'career';
-      document.getElementById('event-duration').value = event.duration || 0;
-      document.getElementById('event-description').value = event.description || '';
-
-      // Preserve reversal from the existing event for re-saving
-      if (event.reversal) currentTemplateReversal = event.reversal;
-      if (event.effects) currentTemplateEffects = JSON.parse(JSON.stringify(event.effects));
-
-      renderEffectFields(event.type, event.effects || {});
-    }
-  } else {
-    title.innerText = 'Add Life Event';
-    btnDelete.style.display = 'none';
-    document.getElementById('event-id').value = '';
-    document.getElementById('event-year').value = startAge + 2;
-    renderEffectFields(document.getElementById('event-type').value);
-  }
-
-  modal.style.display = 'flex';
-}
-
-function closeEventModal() {
-  document.getElementById('event-modal').style.display = 'none';
-  currentTemplateReversal = null;
-  currentTemplateEffects = null;
-}
-
-function applyTemplate(templateKey) {
-  if (!templateKey || !window.EVENT_TEMPLATES) {
-    currentTemplateReversal = null;
-    currentTemplateEffects = null;
-    renderEffectFields(document.getElementById('event-type').value);
-    return;
-  }
-  const tmpl = window.EVENT_TEMPLATES[templateKey];
-  if (!tmpl) return;
-
-  document.getElementById('event-name').value = tmpl.name || '';
-  document.getElementById('event-type').value = tmpl.type || 'career';
-  document.getElementById('event-description').value = tmpl.description || '';
-  document.getElementById('event-duration').value = tmpl.duration || 0;
-
-  currentTemplateReversal = tmpl.reversal ? JSON.parse(JSON.stringify(tmpl.reversal)) : null;
-  currentTemplateEffects = tmpl.effects ? JSON.parse(JSON.stringify(tmpl.effects)) : null;
-
-  renderEffectFields(tmpl.type, tmpl.effects || {});
-}
-
-// ─── Effect Fields (type-specific) ─────────────────────────────
-
-function pctDisplay(val) {
-  if (val === undefined || val === null) return '';
-  return (val * 100).toString();
-}
-
-function renderEffectFields(type, existingEffects = {}) {
-  const container = document.getElementById('effects-container');
-  let html = '';
-
-  if (type === 'career') {
-    const e = existingEffects;
-    const raisePct = e.salaryMultiplier !== undefined ? Math.round((e.salaryMultiplier - 1) * 1000) / 10 : '';
-    html = `
-      <div class="form-row">
-        <div class="form-group"><label>Raise (%)</label><input type="number" step="1" data-effect="salaryMultiplier" value="${raisePct}"></div>
-        <div class="form-group"><label>Base Salary (absolute)</label><input type="number" data-effect="baseSalary" value="${e.baseSalary || ''}"></div>
-      </div>
-      <div class="form-hint">Use Raise % for promotions (scales the salary at that age). Base Salary sets an exact figure, e.g. a job offer.</div>
-      <div class="form-row">
-        <div class="form-group"><label>Bonus Percent (%)</label><input type="number" step="0.1" data-effect="bonusPercent" value="${e.bonusPercent !== undefined ? pctDisplay(e.bonusPercent) : ''}"></div>
-        <div class="form-group"><label>RSU Annual Gross</label><input type="number" data-effect="rsuAnnualGross" value="${e.rsuAnnualGross || ''}"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>Signing Bonus</label><input type="number" data-effect="signingBonus" value="${e.signingBonus || ''}"></div>
-        <div class="form-group"><label>Severance</label><input type="number" data-effect="severance" value="${e.severance || ''}"></div>
-      </div>
-    `;
-  } else if (type === 'housing') {
-    const hp = existingEffects.homePurchase || {};
-    html = `
-      <div class="form-row">
-        <div class="form-group"><label>Purchase Price</label><input type="number" data-effect="hp_price" value="${hp.price || ''}"></div>
-        <div class="form-group"><label>Down Payment (%)</label><input type="number" step="0.1" data-effect="hp_downPercent" value="${hp.downPercent !== undefined ? pctDisplay(hp.downPercent) : ''}"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>Interest Rate (%)</label><input type="number" step="0.1" data-effect="hp_rate" value="${hp.rate !== undefined ? pctDisplay(hp.rate) : ''}"></div>
-        <div class="form-group"><label>Monthly HOA</label><input type="number" data-effect="hp_hoa" value="${hp.hoa || ''}"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>Property Tax Rate (%)</label><input type="number" step="0.01" data-effect="hp_propertyTaxRate" value="${hp.propertyTaxRate !== undefined ? pctDisplay(hp.propertyTaxRate) : ''}"></div>
-        <div class="form-group"><label>Your Ownership Share (%)</label><input type="number" step="1" data-effect="hp_yourShare" value="${hp.yourShare !== undefined ? pctDisplay(hp.yourShare) : '100'}"></div>
-      </div>
-    `;
-  } else if (type === 'family') {
-    const m = existingEffects.marriage || {};
-    const c = existingEffects.child || {};
-    html = `
-      <div class="form-row">
-        <div class="form-group"><label>Spouse Income</label><input type="number" data-effect="fam_spouseIncome" value="${m.spouseIncome || ''}"></div>
-        <div class="form-group"><label>Wedding Cost</label><input type="number" data-effect="fam_weddingCost" value="${m.weddingCost || ''}"></div>
-      </div>
-      <div class="form-group"><label>Child Annual Cost</label><input type="number" data-effect="fam_childAnnualCost" value="${c.annualCost || ''}"></div>
-    `;
-  } else if (type === 'purchase') {
-    html = `<div class="form-group"><label>One-Time Cost</label><input type="number" data-effect="oneTimeCost" value="${existingEffects.oneTimeCost || ''}"></div>`;
-  } else if (type === 'market') {
-    html = `<div class="form-group"><label>Market Return (%)</label><input type="number" step="0.1" data-effect="marketReturn" value="${existingEffects.marketReturn !== undefined ? pctDisplay(existingEffects.marketReturn) : ''}"></div>`;
-  } else if (type === 'windfall') {
-    html = `<div class="form-group"><label>One-Time Income</label><input type="number" data-effect="oneTimeIncome" value="${existingEffects.oneTimeIncome || ''}"></div>`;
-  } else if (type === 'health') {
-    html = `<div class="form-group"><label>One-Time Cost</label><input type="number" data-effect="oneTimeCost" value="${existingEffects.oneTimeCost || ''}"></div>`;
-  } else if (type === 'vehicle') {
-    const v = existingEffects.vehiclePurchase || {};
-    html = `
-      <div class="form-row">
-        <div class="form-group"><label>Car Price (Cash)</label><input type="number" data-effect="veh_price" id="veh-price-input" value="${v.price || ''}"></div>
-        <div class="form-group">
-          <label>Fuel Type</label>
-          <select data-effect="veh_fuelType" id="veh-fuel-toggle">
-            <option value="gas" ${v.fuelType === 'gas' ? 'selected' : ''}>Gas</option>
-            <option value="ev" ${v.fuelType === 'ev' ? 'selected' : ''}>EV</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>Monthly Insurance</label><input type="number" data-effect="veh_insurance" id="veh-insurance" value="${v.insurance !== undefined ? v.insurance : ''}"></div>
-        <div class="form-group"><label>Monthly Maintenance</label><input type="number" data-effect="veh_maintenance" id="veh-maintenance" value="${v.maintenance !== undefined ? v.maintenance : ''}"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>Monthly Fuel/Charging</label><input type="number" data-effect="veh_fuel" id="veh-fuel" value="${v.fuel !== undefined ? v.fuel : ''}"></div>
-      </div>
-      <div class="form-hint">Insurance is estimated at ~3% of car price annually. Maintenance ~1.5%. EV charging is typically ~60% cheaper than gas.</div>
-    `;
-    
-    // Auto-calculate on price/fuel change if empty
-    setTimeout(() => {
-      const priceInput = document.getElementById('veh-price-input');
-      const fuelToggle = document.getElementById('veh-fuel-toggle');
-      const insInput = document.getElementById('veh-insurance');
-      const maintInput = document.getElementById('veh-maintenance');
-      const fuelInput = document.getElementById('veh-fuel');
-      
-      const updateAutoCosts = () => {
-        const price = parseFloat(priceInput.value) || 0;
-        insInput.value = Math.round((price * 0.03) / 12);
-        maintInput.value = Math.round((price * 0.015) / 12);
-        fuelInput.value = fuelToggle.value === 'ev' ? 60 : 150;
+  $("setup")
+    .querySelectorAll("[data-confirm]")
+    .forEach((button) => {
+      button.onclick = () => {
+        const next = structuredClone(scenario);
+        Profile.confirm(next, button.dataset.confirm);
+        commit(next);
       };
-
-      if (priceInput) priceInput.addEventListener('change', updateAutoCosts);
-      if (fuelToggle) fuelToggle.addEventListener('change', updateAutoCosts);
-    }, 0);
-  }
-
-  container.innerHTML = html;
+    });
+  $("setup")
+    .querySelectorAll("[data-path]")
+    .forEach(
+      (el) =>
+        (el.onchange = () => {
+          const next = structuredClone(scenario),
+            kind = el.dataset.type;
+          const value =
+            kind === "check"
+              ? el.checked
+              : el.tagName === "SELECT" || ["date", "text"].includes(kind)
+                ? el.dataset.path === "compensation.bonusMonth"
+                  ? Number(el.value)
+                  : el.value
+                : el.value === ""
+                  ? null
+                  : (Number(el.value) * (kind === "years" ? 12 : 1)) /
+                    (kind === "percent" ? 100 : 1);
+          Profile.edit(next, el.dataset.path, value);
+          commit(next);
+        }),
+    );
+  GrantTimeline.render(
+    $("grant-timeline"),
+    scenario.compensation.grants,
+    EquitySchedule.asOf(scenario.taxProfile.year),
+    grantTimelineAnnual,
+    (annual) => {
+      grantTimelineAnnual = annual;
+      setup();
+    },
+  );
+  $("setup")
+    .querySelectorAll("[data-grant-allocation]")
+    .forEach((el) => {
+      el.oninput = () => el.setCustomValidity("");
+      el.onchange = () => {
+        const next = structuredClone(scenario),
+          index = Number(el.dataset.grantAllocation);
+        const values = el.value
+          .split("/")
+          .map((x) => (x.trim() === "" ? NaN : Number(x.trim())));
+        next.compensation.grants[index].annualAllocations = values;
+        try {
+          EquitySchedule.allocations(next.compensation.grants[index]);
+        } catch (error) {
+          el.setCustomValidity(error.message);
+          el.reportValidity();
+          return;
+        }
+        Profile.edit(
+          next,
+          `compensation.grants.${index}.annualAllocations`,
+          values,
+        );
+        commit(next);
+      };
+    });
+  $("add-grant").onclick = () => {
+    const next = structuredClone(scenario);
+    next.compensation.grants.push({
+      name: "New grant",
+      value: 0,
+      grantPrice: 100,
+      vestPrice: 100,
+      start: `${next.taxProfile.year}-01-01`,
+      months: 48,
+      cliff: 12,
+      interval: 3,
+      saleMode: "cover",
+      repeat: false,
+    });
+    commit(next);
+  };
+  $("setup")
+    .querySelectorAll("[data-remove-grant]")
+    .forEach(
+      (el) =>
+        (el.onclick = () => {
+          const next = structuredClone(scenario);
+          next.compensation.grants.splice(Number(el.dataset.removeGrant), 1);
+          commit(next);
+        }),
+    );
+  $("paystubs").onchange = readPaystubs;
+  renderProfile();
 }
-
-// ─── Save Event ────────────────────────────────────────────────
-
-function saveEvent() {
-  const id = document.getElementById('event-id').value;
-  const startAge = getStartAge();
-  const cfg = model.getConfig ? model.getConfig() : { projectionYears: 75 };
-  const endAge = startAge + cfg.projectionYears;
-  const inputAge = parseInt(document.getElementById('event-year').value) || startAge;
-  const duration = parseInt(document.getElementById('event-duration').value) || 0;
-
-  // Keep events inside the projection window so they actually take effect.
-  if (inputAge < startAge || inputAge > endAge) {
-    alert(`Event age must be between ${startAge} and ${endAge}.`);
+function commit(next) {
+  try {
+    const normalized = Scenario.normalize(next),
+      computed = Projection.calculate(normalized);
+    localStorage.setItem(KEY, Scenario.serialize(normalized));
+    scenario = normalized;
+    result = computed;
+    $("status").textContent = "";
+    setup();
+    render();
+  } catch (error) {
+    $("status").textContent = `Changes were not applied: ${error.message}`;
+    setup();
+  }
+}
+function render() {
+  const ready = Profile.hasIncome(scenario);
+  if (!ready && !["profile", "welcome"].includes(view)) view = "welcome";
+  if (ready && view === "welcome") view = "monthly";
+  for (const name of ["welcome", "profile", "monthly", "tax", "lifetime"])
+    $(name).hidden = name !== view;
+  document.querySelector('nav[aria-label="Views"]').hidden = view === "welcome";
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.disabled = button.dataset.view !== "profile" && !ready;
+    button.title = button.disabled
+      ? "Add income in Your profile to see results"
+      : "";
+    button.setAttribute("aria-pressed", String(button.dataset.view === view));
+  });
+  if (view === "welcome") {
+    $("status").textContent = "";
     return;
   }
-
-  const type = document.getElementById('event-type').value;
-
-  const eventObj = {
-    name: document.getElementById('event-name').value,
-    year: inputAge - startAge,
-    type: type,
-    duration: duration,
-    description: document.getElementById('event-description').value,
-    effects: {}
-  };
-
-  // Build effects based on event type
-  if (type === 'career') {
-    // Start with template effects (preserves 'employed: false' for layoffs, etc.)
-    if (currentTemplateEffects) {
-      eventObj.effects = { ...currentTemplateEffects };
+  if (view === "profile") {
+    renderProfile();
+    return;
+  }
+  const row = result.rows[1],
+    c = Scenario.engineInput(scenario),
+    month = Number($("period").value);
+  if (view === "monthly") {
+    const selected = month
+      ? MoneyFlow.forMonth(row.payroll, row.flow, month)
+      : result.ongoing;
+    CompactFlow.render(
+      $("flow"),
+      CompactFlow.build(selected.payroll, selected.flow, c),
+      money,
+    );
+    $("salary-context").innerHTML =
+      `<strong>Base salary rate: ${money(c.salary / 12)}/month</strong><span>${money(c.salary)}/year · ${escape(c.frequency)} payroll</span><span>${row.year} salary forecast: ${money(row.payroll.salary)}/year (${money(row.payroll.salary / 12)}/month average), plus ${money(row.payroll.bonus)} bonus.</span><small>Current earning pace as of ${escape(result.ongoing.payroll.earningPace.asOf)} uses your salary rate, each active grant’s current allocation year, and your current ESPP cycle, with annual limits and matching tax estimates. It is a normalized monthly rate, not a forecast of the next twelve months. Selected months and the tables below use the dated calendar forecast, including YTD history. Dollar displays use cents; percentages use one decimal place.</small>`;
+    $("months").innerHTML = table(
+      [
+        "Month",
+        "Salary",
+        "Bonus",
+        "RSUs vested",
+        "Cash tax withheld",
+        "RSU cover",
+        "Employee saving",
+        "ESPP funding",
+        "Net cash flow",
+      ],
+      row.flow.months.map((m) => [
+        `${row.year}-${String(m.month).padStart(2, "0")}`,
+        ...[
+          "salary",
+          "bonus",
+          "rsu",
+          "cashWithholding",
+          "rsuSellToCover",
+          "contributions",
+          "esppContributions",
+          "netCashFlow",
+        ].map((k) => money(m[k])),
+      ]),
+    );
+    $("checks").innerHTML = table(
+      [
+        "Date",
+        "Source",
+        "Salary",
+        "Bonus",
+        "Traditional",
+        "Roth",
+        "Mega",
+        "HSA",
+        "ESPP",
+        "Net pay",
+      ],
+      row.payroll.paychecks.map((r) => [
+        r.date,
+        r.source,
+        ...[
+          "salary",
+          "bonus",
+          "traditional",
+          "roth",
+          "mega",
+          "hsa",
+          "espp",
+          "netPay",
+        ].map((k) => money(r[k])),
+      ]),
+    );
+  } else if (view === "tax")
+    renderTaxExplorer(
+      $("tax-explorer"),
+      c,
+      result.ongoing.payroll,
+      result.ongoing.flow,
+    );
+  else renderProjection();
+  const warnings = [...new Set(row.payroll.warnings || [])];
+  if (warnings.length) $("status").textContent = warnings.join(" ");
+}
+function renderProjection() {
+  const rows = result.rows,
+    real = $("real").checked,
+    series = [
+      ["Cash", "#38bdf8", (b) => b.cash + b.esppPending],
+      ["Equity", "#fbbf24", (b) => b.brokerage + b.companyEquity],
+      [
+        "Retirement + HSA",
+        "#a78bfa",
+        (b) => b.pretax401k + b.rothAccounts + b.traditionalIRA + b.hsa,
+      ],
+    ];
+  const value = (r) => r.netWorth / (real ? r.inflationFactor : 1),
+    max = Math.max(1, ...rows.map(value)),
+    width = 900,
+    height = 330;
+  const x = (i) => 50 + (i * (width - 70)) / (rows.length - 1),
+    y = (v) => height - 30 - (v / max) * (height - 60);
+  let previous = rows.map(() => 0);
+  const areas = series
+    .map(([name, color, amount]) => {
+      const totals = rows.map(
+        (r, i) =>
+          previous[i] + amount(r.balances) / (real ? r.inflationFactor : 1),
+      );
+      const path = `M${totals.map((v, i) => `${x(i)},${y(v)}`).join(" L")} L${previous
+        .map((v, i) => `${x(i)},${y(v)}`)
+        .reverse()
+        .join(" L")} Z`;
+      previous = totals;
+      return `<path d="${path}" fill="${color}" opacity=".6"><title>${name}</title></path>`;
+    })
+    .join("");
+  $("projection-chart").innerHTML =
+    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Projected assets by class">${areas}<text x="50" y="18" fill="#e2e8f0">${escape(money(max))}</text><text x="50" y="325" fill="#94a3b8">Starting balances</text><text x="780" y="325" fill="#94a3b8">Age ${rows.at(-1).age}</text></svg><p>${series.map(([n, color]) => `<span style="color:${color};margin-right:18px">● ${n}</span>`).join("")}</p>`;
+  $("year").max = rows.length - 1;
+  const selected = rows[Math.min(Number($("year").value), rows.length - 1)],
+    factor = real ? selected.inflationFactor : 1;
+  $("balances").innerHTML =
+    `<h2>${selected.initial ? "Starting balances" : `End of ${selected.year}`} · Age ${selected.age}</h2>` +
+    table(
+      ["Asset", "Balance"],
+      Object.entries(selected.balances)
+        .map(([key, v]) => [
+          {
+            cash: "Cash",
+            brokerage: "Taxable investments",
+            pretax401k: "Traditional 401(k)",
+            rothAccounts: "Roth accounts",
+            traditionalIRA: "Traditional IRA",
+            hsa: "HSA",
+            companyEquity: "Company equity",
+            esppPending: "Pending ESPP cash",
+          }[key],
+          money(v / factor),
+        ])
+        .concat([
+          ["Total", money(selected.netWorth / factor)],
+          ["Unfunded expenses", money(selected.shortfall / factor)],
+        ]),
+    );
+}
+function download(text, name) {
+  const url = URL.createObjectURL(
+      new Blob([text], { type: "application/json" }),
+    ),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function readPaystubs(event) {
+  const status = $("upload-status");
+  status.textContent = "Reading locally…";
+  drafts = [];
+  try {
+    const files = [...event.target.files];
+    if (files.length > 12) throw new Error("Choose up to 12 PDFs.");
+    const pdfjs = await import("./node_modules/pdfjs-dist/build/pdf.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc =
+      "./node_modules/pdfjs-dist/build/pdf.worker.mjs";
+    for (const file of files) {
+      if (file.size > 15 * 1024 * 1024)
+        throw new Error("Each PDF must be smaller than 15 MB.");
+      const data = new Uint8Array(await file.arrayBuffer()),
+        id = [...new Uint8Array(await crypto.subtle.digest("SHA-256", data))]
+          .map((x) => x.toString(16).padStart(2, "0"))
+          .join("");
+      const loadingTask = pdfjs.getDocument({
+        data,
+        isEvalSupported: false,
+        enableXfa: false,
+        useSystemFonts: true,
+      });
+      try {
+        const doc = await loadingTask.promise;
+        if (doc.numPages > 12)
+          throw new Error("Each PDF must have 12 pages or fewer.");
+        const pages = [];
+        for (let page = 1; page <= doc.numPages; page++) {
+          const content = await (await doc.getPage(page)).getTextContent(),
+            lines = [];
+          for (const item of content.items) {
+            if (!item.str) continue;
+            const y = item.transform[5];
+            let line = lines.find((l) => Math.abs(l.y - y) < 2);
+            if (!line) {
+              line = { y, items: [] };
+              lines.push(line);
+            }
+            line.items.push(item);
+          }
+          pages.push({
+            page,
+            text: lines
+              .sort((a, b) => b.y - a.y)
+              .map((l) =>
+                l.items
+                  .sort((a, b) => a.transform[4] - b.transform[4])
+                  .map((i) => i.str)
+                  .join(" "),
+              )
+              .join("\n"),
+          });
+        }
+        const record = PaystubParser.parse(pages, scenario.uploads.records);
+        record.id = id;
+        drafts.push(record);
+      } finally {
+        await loadingTask.destroy();
+      }
     }
-    // Overlay form values
-    document.querySelectorAll('#effects-container input[data-effect]').forEach(input => {
-      const val = input.value;
-      if (val === '') return;
-      let numVal = parseFloat(val);
-      if (input.dataset.effect === 'bonusPercent') numVal = numVal / 100;
-      if (input.dataset.effect === 'salaryMultiplier') numVal = 1 + numVal / 100; // Raise % -> multiplier
-      eventObj.effects[input.dataset.effect] = numVal;
-    });
-  } else if (type === 'housing') {
-    const hp = {};
-    document.querySelectorAll('#effects-container input[data-effect]').forEach(input => {
-      const val = input.value;
-      if (val === '') return;
-      const key = input.dataset.effect.replace('hp_', '');
-      let numVal = parseFloat(val);
-      if (['downPercent', 'rate', 'propertyTaxRate', 'yourShare'].includes(key)) {
-        numVal = numVal / 100;
-      }
-      hp[key] = numVal;
-    });
-    eventObj.effects = { homePurchase: hp };
-  } else if (type === 'family') {
-    document.querySelectorAll('#effects-container input[data-effect]').forEach(input => {
-      const val = input.value;
-      if (val === '') return;
-      const numVal = parseFloat(val);
-      const key = input.dataset.effect;
-      if (key === 'fam_spouseIncome') {
-        if (!eventObj.effects.marriage) eventObj.effects.marriage = {};
-        eventObj.effects.marriage.spouseIncome = numVal;
-      } else if (key === 'fam_weddingCost') {
-        if (!eventObj.effects.marriage) eventObj.effects.marriage = {};
-        eventObj.effects.marriage.weddingCost = numVal;
-      } else if (key === 'fam_childAnnualCost') {
-        eventObj.effects.child = { annualCost: numVal };
-      }
-    });
-  } else if (type === 'market') {
-    document.querySelectorAll('#effects-container input[data-effect]').forEach(input => {
-      const val = input.value;
-      if (val === '') return;
-      let numVal = parseFloat(val);
-      if (input.dataset.effect === 'marketReturn') numVal = numVal / 100;
-      eventObj.effects[input.dataset.effect] = numVal;
-    });
-    // No manual reversal needed: the model snapshots the real prior value for
-    // any duration event and restores it when the effect expires.
-  } else if (type === 'vehicle') {
-    const v = {};
-    document.querySelectorAll('#effects-container input[data-effect], #effects-container select[data-effect]').forEach(input => {
-      const val = input.value;
-      if (val === '') return;
-      const key = input.dataset.effect.replace('veh_', '');
-      if (key === 'fuelType') {
-        v[key] = val;
-      } else {
-        v[key] = parseFloat(val);
-      }
-    });
-    eventObj.effects = { vehiclePurchase: v };
+    status.textContent =
+      "Review categories and printed totals before applying.";
+    reviewUploads();
+  } catch (error) {
+    status.textContent = error.message;
+    drafts = [];
+  }
+}
+function reviewUploads() {
+  const preview = Profile.describe({
+    ...scenario,
+    uploads: { ...scenario.uploads, records: drafts },
+  });
+  $("upload-review").innerHTML =
+    drafts
+      .map(
+        (r, i) =>
+          `<h3>Paycheck ${i + 1}</h3><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}</p><details ${PaystubParser.validate(r).valid ? "" : "open"}><summary>Review extracted amounts and categories</summary><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
+            .map(
+              (l, j) =>
+                `<tr><td>${escape(l.label)}</td><td><select data-mapping="${i}:${j}"><option value="">Choose</option>${Object.entries(
+                  PaystubParser.labels,
+                )
+                  .map(
+                    ([k, v]) =>
+                      `<option value="${k}" ${l.key === k ? "selected" : ""}>${escape(v)}</option>`,
+                  )
+                  .join("")}</select>${
+                  PaystubParser.benefitTypes[l.key]
+                    ? `<label>Repeats<select data-benefit-schedule="${i}:${j}">${Object.entries(
+                        {
+                          review: "Confirm schedule",
+                          paycheck: "Every paycheck",
+                          monthly: "First paycheck each month",
+                          once: "This payment only",
+                        },
+                      )
+                        .map(
+                          ([k, v]) =>
+                            `<option value="${k}" ${(l.schedule || (["commuter", "parking"].includes(l.key) ? "review" : "paycheck")) === k ? "selected" : ""}>${v}</option>`,
+                        )
+                        .join(
+                          "",
+                        )}</select></label><label>Employer annual cap (optional)<input type="number" min="0" step=".01" data-benefit-cap="${i}:${j}" value="${l.annualCap ?? ""}"></label>`
+                    : ""
+                }</td><td><input aria-label="Current ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:current" value="${l.current ?? ""}"></td><td><input aria-label="YTD ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:ytd" value="${l.ytd ?? ""}"></td></tr>`,
+            )
+            .join(
+              "",
+            )}</tbody></table></div></details><p>${PaystubParser.validate(r).errors.map(escape).join(" ") || "Amounts reconcile."}</p>`,
+      )
+      .join("") +
+    `<label class="check"><input id="apply-schedule" type="checkbox" checked>Fill salary and payday schedule${preview.schedule.confirmed ? " from check dates" : " using the selected pay frequency (confirm this in your profile)"}</label><button id="apply-upload">Apply reviewed paychecks</button>`;
+  $("upload-review")
+    .querySelectorAll("[data-benefit-cap]")
+    .forEach(
+      (el) =>
+        (el.onchange = () => {
+          const [i, j] = el.dataset.benefitCap.split(":");
+          drafts[i].lines[j].annualCap =
+            el.value === "" ? null : Number(el.value);
+          PaystubParser.rebuild(drafts[i]);
+          reviewUploads();
+        }),
+    );
+  $("upload-review")
+    .querySelectorAll("[data-benefit-schedule]")
+    .forEach(
+      (el) =>
+        (el.onchange = () => {
+          const [i, j] = el.dataset.benefitSchedule.split(":");
+          drafts[i].lines[j].schedule = el.value;
+          PaystubParser.rebuild(drafts[i]);
+          reviewUploads();
+        }),
+    );
+  $("upload-review")
+    .querySelectorAll("[data-mapping]")
+    .forEach(
+      (el) =>
+        (el.onchange = () => {
+          const [i, j] = el.dataset.mapping.split(":");
+          drafts[i].lines[j].key = el.value;
+          PaystubParser.rebuild(drafts[i]);
+          reviewUploads();
+        }),
+    );
+  $("upload-review")
+    .querySelectorAll("[data-review-date]")
+    .forEach(
+      (el) =>
+        (el.onchange = () => {
+          drafts[Number(el.dataset.reviewDate)].date = el.value;
+          reviewUploads();
+        }),
+    );
+  $("upload-review")
+    .querySelectorAll("[data-review-value]")
+    .forEach(
+      (el) =>
+        (el.onchange = () => {
+          const [i, j, key] = el.dataset.reviewValue.split(":");
+          drafts[i].lines[j][key] = el.value === "" ? null : Number(el.value);
+          PaystubParser.rebuild(drafts[i]);
+          reviewUploads();
+        }),
+    );
+  $("apply-upload").disabled =
+    !drafts.length || drafts.some((r) => !PaystubParser.validate(r).valid);
+  $("apply-upload").onclick = () => {
+    try {
+      if (
+        drafts.some(
+          (r) => Number(r.date.slice(0, 4)) !== scenario.taxProfile.year,
+        )
+      )
+        throw new Error(
+          "Set the starting tax year to the uploaded check year.",
+        );
+      const next = structuredClone(scenario),
+        records = PaystubParser.mergeRecords(next.uploads.records, drafts),
+        suggestion = PaystubParser.suggest(records, Scenario.engineInput(next));
+      const applied = Profile.applyUpload(
+        next,
+        records,
+        suggestion,
+        $("apply-schedule").checked,
+      );
+      profileStep = 2;
+      commit(applied.scenario);
+      if (applied.conflicts.length)
+        $("status").textContent =
+          "Upload applied. " + applied.conflicts.join(" ");
+      drafts = [];
+    } catch (error) {
+      $("upload-status").textContent = error.message;
+    }
+  };
+}
+$("export").onclick = () =>
+  download(Scenario.serialize(scenario), "net-worth-scenario.json");
+$("import").onchange = async (event) => {
+  try {
+    const raw = await event.target.files[0].text(),
+      imported = Scenario.migrate(JSON.parse(raw));
+    if (!localStorage.getItem(BACKUP)) localStorage.setItem(BACKUP, raw);
+    commit(imported.scenario);
+    if (imported.warnings.length)
+      $("status").textContent = imported.warnings.join(" ");
+  } catch (error) {
+    $("status").textContent = error.message;
+  }
+  event.target.value = "";
+};
+$("inspect").onclick = () => {
+  $("scenario-json").textContent = Scenario.serialize(scenario);
+  $("backup").hidden = !localStorage.getItem(BACKUP);
+  $("scenario-dialog").showModal();
+};
+$("close-inspect").onclick = () => $("scenario-dialog").close();
+$("backup").onclick = () =>
+  download(localStorage.getItem(BACKUP), "net-worth-original-scenario.json");
+document.querySelectorAll("[data-view]").forEach(
+  (button) =>
+    (button.onclick = () => {
+      view = button.dataset.view;
+      if (view === "profile") $("status").textContent = "";
+      for (const name of ["profile", "monthly", "tax", "lifetime"])
+        $(name).hidden = name !== view;
+      document
+        .querySelectorAll("[data-view]")
+        .forEach((b) => b.setAttribute("aria-pressed", String(b === button)));
+      render();
+    }),
+);
+for (let month = 1; month <= 12; month++)
+  $("period").add(
+    new Option(
+      new Date(2026, month - 1, 1).toLocaleString("en-US", { month: "long" }),
+      month,
+    ),
+  );
+$("period").onchange = render;
+$("year").oninput = renderProjection;
+$("real").onchange = renderProjection;
+let resizeTimer,
+  lastWidth = 0;
+new ResizeObserver((entries) => {
+  const width = entries[0].contentRect.width;
+  if (Math.abs(width - lastWidth) < 1) return;
+  lastWidth = width;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (result) render();
+  }, 100);
+}).observe(document.querySelector("main"));
+try {
+  const saved = localStorage.getItem(KEY),
+    legacy = localStorage.getItem("netWorthModel:v1");
+  let warnings = [];
+  if (saved) scenario = Scenario.normalize(JSON.parse(saved));
+  else if (legacy) {
+    if (legacy && !localStorage.getItem(BACKUP))
+      localStorage.setItem(BACKUP, legacy);
+    const migrated = Scenario.migrate(JSON.parse(legacy));
+    scenario = migrated.scenario;
+    warnings = migrated.warnings;
   } else {
-    // Flat effects: purchase, windfall, health
-    document.querySelectorAll('#effects-container input[data-effect]').forEach(input => {
-      const val = input.value;
-      if (val === '') return;
-      eventObj.effects[input.dataset.effect] = parseFloat(val);
-    });
+    scenario = Scenario.defaults();
+    scenario.compensation.salary = 0;
   }
-
-  // Attach reversal for duration-based events
-  if (duration > 0 && currentTemplateReversal) {
-    eventObj.reversal = currentTemplateReversal;
-  }
-
-  if (id) {
-    model.updateEvent(parseInt(id), eventObj);
-  } else {
-    model.addEvent(eventObj);
-  }
-
-  closeEventModal();
-  runSimulation();
+  view = Profile.initialView(scenario);
+  result = Projection.calculate(scenario);
+  setup();
+  render();
+  if (warnings.length) $("status").textContent = warnings.join(" ");
+} catch (error) {
+  $("status").textContent =
+    `Saved scenario could not be loaded: ${error.message}. Your original data has not been overwritten. Import a corrected scenario to continue.`;
 }
 
-// ─── Utility Functions ─────────────────────────────────────────
-
-function formatCurrency(value) {
-  if (value === undefined || value === null) return '$0';
-  const isNegative = value < 0;
-  const abs = Math.abs(value);
-  let formatted = '';
-
-  if (abs < 1000) {
-    formatted = Math.round(abs).toString();
-  } else if (abs < 1000000) {
-    formatted = (abs / 1000).toFixed(abs < 10000 ? 1 : 0) + 'K';
-  } else if (abs < 1000000000) {
-    formatted = (abs / 1000000).toFixed(1) + 'M';
-  } else {
-    formatted = (abs / 1000000000).toFixed(1) + 'B';
-  }
-
-  return (isNegative ? '-$' : '$') + formatted;
+function renderProfile() {
+  const profile = Profile.describe(scenario),
+    v = profile.last?.current || {};
+  document
+    .querySelectorAll("[data-profile-step]")
+    .forEach(
+      (el) => (el.hidden = Number(el.dataset.profileStep) !== profileStep),
+    );
+  document.querySelectorAll("[data-step]").forEach((el) => {
+    el.setAttribute(
+      "aria-current",
+      Number(el.dataset.step) === profileStep ? "step" : "false",
+    );
+  });
+  $("profile-back").hidden = profileStep === 0;
+  $("profile-next").disabled =
+    profileStep === 2 && !Profile.hasIncome(scenario);
+  $("profile-next").title = $("profile-next").disabled
+    ? "Upload a paystub or enter income to see your monthly picture"
+    : "";
+  $("profile-next").textContent =
+    profileStep === 2
+      ? "See my monthly picture"
+      : profileStep === 1
+        ? "Continue with what I have"
+        : "Continue to paychecks";
+  const date = profile.last?.date;
+  $("profile-summary").innerHTML =
+    profileStep === 0
+      ? ""
+      : profile.last
+        ? `<div class="profile-preview"><div><span class="source-tag">FROM YOUR PAYCHECK</span><h2>Your latest check, organized</h2><p>${escape(date)} · Actual amounts before living expenses and non-payroll activity</p></div><div class="profile-metrics"><div><span>Cash deposited</span><strong>${money(profile.snapshot.cash)}</strong></div><div><span>Retirement + HSA</span><strong>${money(profile.snapshot.retirement + profile.snapshot.hsa)}</strong></div><div><span>ESPP cash set aside</span><strong>${money(profile.snapshot.espp)}</strong></div></div><p class="cf-note">${profile.records} regular paycheck${profile.records === 1 ? "" : "s"} saved. ${profile.schedule.confirmed ? "Every " + (profile.schedule.frequency === "weekly" ? "week" : "two weeks") + " inferred from check dates." : "Pay frequency needs confirmation."} This preview does not annualize deductions past their limits.</p></div>`
+        : `<div class="profile-empty"><strong>A paycheck fills in most of your profile.</strong><p>Upload a text-based PDF to extract earnings, deductions, withholding and YTD totals. Your documents stay on this device.</p></div>`;
+  const questions = $("profile-questions");
+  if (questions)
+    questions.innerHTML = profile.questions.length
+      ? `<div class="profile-followups"><strong>A few things the documents cannot tell us</strong>${profile.questions.map((q) => `<button type="button" class="profile-question" data-question="${q.id}"><span>${escape(q.title)}</span><small>${escape(q.why)}</small><b aria-hidden="true">›</b></button>`).join("")}</div>`
+      : `<p class="cf-note">${profile.last ? "No additional payroll questions detected. Add any compensation or saving outside your regular paycheck below." : "You can enter compensation manually or return to the upload step."}</p>`;
+  const rows = [];
+  if (profile.last) {
+    rows.push([
+      "Regular gross pay",
+      money(v.salary),
+      "Latest regular paycheck",
+    ]);
+    rows.push([
+      "Pay frequency",
+      profile.schedule.frequency,
+      profile.schedule.confirmed
+        ? "Inferred from check dates"
+        : "Your setting, needs confirmation",
+    ]);
+    rows.push(["Payday anchor", profile.schedule.anchor, "Actual check date"]);
+    for (const key of [
+      "traditional",
+      "roth",
+      "mega",
+      "hsa",
+      "hsaEmployer",
+      "espp",
+      "health",
+      "federal",
+      "state",
+      "ss",
+      "medicare",
+      "sdi",
+    ])
+      if (v[key] != null) {
+        const rate =
+          ["traditional", "roth", "mega", "espp"].includes(key) && v.salary > 0
+            ? ` (${((v[key] / v.salary) * 100).toFixed(1)}% of base pay on this check)`
+            : "";
+        rows.push([
+          PaystubParser.labels[key] || key,
+          money(v[key]) + rate,
+          "Uploaded amount per paycheck",
+        ]);
+      }
+  } else
+    rows.push([
+      "Annual salary",
+      money(scenario.compensation.salary),
+      "Saved / manual setting",
+    ]);
+  const limits = TaxEngine.limits(
+    scenario.taxProfile.year,
+    scenario.taxProfile.settings,
+  );
+  rows.push(
+    [
+      "Employee 401(k) base limit",
+      money(limits.deferral),
+      "Tax year; eligible catch-up is applied by age",
+    ],
+    [
+      "IRA base limit",
+      money(limits.ira),
+      "Tax year; eligible compensation and age also apply",
+    ],
+  );
+  $("profile-facts").innerHTML = table(["Item", "Value", "Source"], rows);
+  document.querySelectorAll("[data-question]").forEach(
+    (button) =>
+      (button.onclick = () => {
+        const target = {
+          espp: "ESPP plan and purchases",
+          hsa: "HSA coverage and funding",
+          mega: "Employer retirement and personal IRA",
+          employer: "Employer retirement and personal IRA",
+          schedule: "Bonus, stock grants and pay schedule",
+          allowance: "Bonus, stock grants and pay schedule",
+        }[button.dataset.question];
+        const section = [...$("setup").querySelectorAll("details")].find(
+          (d) => d.querySelector("summary")?.textContent === target,
+        );
+        if (section) {
+          section.open = true;
+          section.scrollIntoView({ block: "start", behavior: "smooth" });
+        }
+      }),
+  );
 }
-
-function formatCurrencyFull(value) {
-  if (value === undefined || value === null) return '$0';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0
-  }).format(value);
-}
+document.querySelectorAll("[data-step]").forEach(
+  (button) =>
+    (button.onclick = () => {
+      profileStep = Number(button.dataset.step);
+      renderProfile();
+    }),
+);
+$("start-profile").onclick = () => {
+  ((profileStep = 0), (grantTimelineAnnual = false));
+  document.querySelector('[data-view="profile"]').click();
+};
+$("welcome-import").onclick = () => $("import").click();
+$("profile-back").onclick = () => {
+  profileStep = Math.max(0, profileStep - 1);
+  renderProfile();
+};
+$("profile-next").onclick = () => {
+  if (profileStep < 2) {
+    profileStep++;
+    renderProfile();
+    $("profile").scrollIntoView({ block: "start", behavior: "smooth" });
+  } else document.querySelector('[data-view="monthly"]').click();
+};

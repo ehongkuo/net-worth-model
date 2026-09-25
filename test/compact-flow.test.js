@@ -12,7 +12,7 @@ test('compact assets preserve existing cash, equity and retirement totals',()=>{
  assertClose(g.buckets[0].value,incoming('cash')+incoming('pending')+incoming('reserve'));
  assertClose(g.buckets[1].value,incoming('espp')+incoming('rsu'));
  assertClose(g.buckets[2].value,['retirement','mega','ira','hsa'].reduce((s,k)=>s+incoming(k),0));
- assertClose(g.esppCost,16500);assertClose(g.esppValue,16500/.85);
+ assertClose(g.esppCost,16500.12);assertClose(g.esppValue,16500.12/.85);
  assertClose(g.postRetirement,27500);
 });
 test('nonpurchase months show pending ESPP as projected equity and include only scheduled RSUs',()=>{
@@ -66,4 +66,26 @@ test('pending ESPP preview values 2000 at 14 purchase and 17 market without chan
  const purchase=F.forMonth(p,C.cashFlow(p),6),actual=Compact.build(purchase.payroll,purchase.flow,c);
  assertClose(actual.projectedEspp.cost,0);assertClose(actual.esppValue,actual.original.links.filter(l=>l.target==='account-espp').reduce((s,l)=>s+l.value,0));
  assert(Compact.layout(g,1000).nodes.some(n=>n.label==='Pre-tax contributions'));
+});
+test('salary source is payroll wages, never the balancing adjustment for other cash',()=>{
+ const c=C.merge(C.defaults(),{salary:165000,bonusPercent:.1}),p=C.calculate(c);
+ p.otherIncome=12000;
+ const f=C.cashFlow(p),g=Compact.build(p,f,c);
+ assertClose(g.base,165000); assertClose(g.bonus,16500);
+ assertClose(g.otherCash,12000);
+});
+test('uploaded YTD salary stays independent of bonus and uses seven remaining biweekly checks',()=>{
+ for(const bonusPercent of [0,.1]) {
+  const c=C.merge(C.defaults(),{salary:165000,bonusPercent,firstPayday:'2026-09-18',payroll:{records:[{date:'2026-09-18',kind:'regular',current:{salary:6346.15},ytd:{salary:95192.25}}]}});
+  const p=C.calculate(c),g=Compact.build(p,C.cashFlow(p),c);
+  assertClose(p.salary,95192.25+7*6346.15,.01);
+  assertClose(g.base,p.salary,.01); assertClose(g.bonus,165000*bonusPercent,.01);
+ }
+});
+test('six month cliff on a three year grant vests six of 36 months, revalued before tax',()=>{
+ const c=C.merge(C.defaults(),{grants:[{value:95000,months:36,cliff:6,interval:1,start:'2026-03-16',grantPrice:19.25,vestPrice:17,saleMode:'cover'}]}),p=C.calculate(c);
+ assertClose(p.rsuVests[0].shares,95000/36*6/19.25);
+ assertClose(p.rsuVests[0].value,95000/36*6/19.25*17);
+ const m=F.forMonth(p,C.cashFlow(p),9),g=Compact.build(m.payroll,m.flow,c);
+ assertClose(g.rsuBaseline,95000/6);
 });

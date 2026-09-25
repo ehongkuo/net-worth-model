@@ -17,3 +17,9 @@ This app is used for detailed personal financial projections and must also work 
 
 - Reuse http://127.0.0.1:5190 for this app. Run `npm start`; do not create a new preview port for each task. Restart the same server when backend code changes.
 - Preserve the owner's browser storage. Use a fresh isolated browser profile for automated input tests against the existing preview.
+
+## Scenario contract
+
+- Store independent inputs in the versioned scenario: tax profile, employer plan, compensation, reviewed uploads and lifetime assumptions. Do not persist calculated results or introduce another editable configuration beside it.
+- Monthly flow, tax and lifetime views consume the same projection result. Keep payroll timing and contribution caps in the dated calendar, and tax rules in the tax engine.
+- Preserve legacy input documents before migration. Export/import round trips must reproduce results, including uploaded observations and plan overrides.

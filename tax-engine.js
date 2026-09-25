@@ -23,12 +23,13 @@
       ira: round(7500, 500), iraCatchup: round(1100, 100),
       hsaSingle: round(4400, 50), hsaFamily: round(8750, 50), hsaCatchup: 1000,
       ssBase: Math.round(184500 * (1 + t.wageGrowth) ** n / 300) * 300,
+      healthFsa:round(3400,50), dependentCare:7500, commuterMonthly:round(340,5),
       espp: 25000, additionalMedicare: { single: 200000, married: 250000 },
       niit: { single: 200000, married: 250000 },
       federalDeduction: { single: 16100 * (1 + t.bracketGrowth) ** n, married: 32200 * (1 + t.bracketGrowth) ** n }
     };
     const adjusted=merge(l,t.overrides?.[year]||{});
-    for(const key of ['deferral','total401k','compensation','catchup','superCatchup','ira','iraCatchup','hsaSingle','hsaFamily','hsaCatchup','espp'])adjusted[key]=Math.min(l[key],positive(adjusted[key]));
+    for(const key of ['deferral','total401k','compensation','catchup','superCatchup','ira','iraCatchup','hsaSingle','hsaFamily','hsaCatchup','espp','healthFsa','dependentCare','commuterMonthly'])adjusted[key]=Math.min(l[key],positive(adjusted[key]));
     return adjusted;
   }
   function brackets(income, ends, rates, mult = 1) {
@@ -56,7 +57,7 @@
     const longGain = Math.max(0, Math.min(lt, net));
     const shortGain = Math.max(0, net - longGain);
     const fedAgi = wages + spouse + ordinary + positive(income.federalOnly) - pretax - payrollDed - hsa + shortGain + loss;
-    const caAgi = wages + spouse + ordinary - pretax - payrollDed + (t.state !== 'CA' || t.caHsaConforms ? -hsa : employerHsa) + shortGain + loss;
+    const caAgi = positive(income.stateBenefitAddback) + wages + spouse + ordinary - pretax - payrollDed + (t.state !== 'CA' || t.caHsaConforms ? -hsa : employerHsa) + shortGain + loss;
     const caEnds = [11079,26264,41452,57542,72724,371479,445771,742953].map(v => married ? v * 2 : v);
     const stateDed = Math.max((married ? 11412 : 5706) * ca, positive(t.stateDeduction), positive(income.stateItemized));
     const stateTaxable = Math.max(0, caAgi + longGain - stateDed);

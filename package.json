@@ -4,12 +4,11 @@
   "description": "Interactive lifetime net worth projection model",
   "scripts": {
     "test": "node test/run.js && node --test test-server/*.test.cjs",
-    "start": "node market-server.js"
+    "start": "node server.js"
   },
   "license": "MIT",
   "private": true,
   "dependencies": {
-    "pdfjs-dist": "^6.3.289",
-    "puppeteer": "^25.4.0"
+    "pdfjs-dist": "^6.3.289"
   }
 }

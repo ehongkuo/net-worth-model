@@ -28,15 +28,15 @@ test('tax audit: nonrefundable income tax credits cannot erase NIIT',()=>{
 test('tax audit: taxable ESPP sales create income once, after-tax principal never becomes taxable',()=>{
  const espp={enabled:true,rate:.1,holdShares:false,holdMonths:0,fractional:true,shareCap:0,offerPrice:100,purchasePrice:100,salePrice:100};
  const p=C.calculate(cfg({espp}));
- assertClose(p.espp.ordinary,12000/85*15,.001);
- assertClose(p.taxes.federal-17570,1800*.22+(12000/85*15-1800)*.24,.001);
- assertClose(p.taxFunding.esppSaleTax,1800*.22+(12000/85*15-1800)*.24,.001);
+ assertClose(p.espp.ordinary,(26*461.54)/85*15,.001);
+ assertClose(p.taxes.federal-17570,1800*.22+((26*461.54)/85*15-1800)*.24,.001);
+ assertClose(p.taxFunding.esppSaleTax,1800*.22+((26*461.54)/85*15-1800)*.24,.001);
 });
 test('tax audit: a held ESPP reserve is cash earmarked, not current tax or lost net worth',()=>{
  const espp={enabled:true,rate:.1,holdShares:true,fractional:true,shareCap:0,offerPrice:100,purchasePrice:100,salePrice:100,reserveFutureTax:true,reserveSaleMonths:0};
  const p=C.calculate(cfg({espp})),f=C.cashFlow(p),g=F.buildFlow(p,f);
  assertClose(p.taxes.federal,17570,.001);
- assertClose(f.futureTaxReserve,1800*.22+(12000/85*15-1800)*.24,.001);
+ assertClose(f.futureTaxReserve,1800*.22+((26*461.54)/85*15-1800)*.24,.001);
  assertClose(f.spendableCashFlow+f.futureTaxReserve,f.netCashFlow,.001);
  assert(g.nodes.find(n=>n.id==='future-tax-reserve')?.kind==='asset');
 });
@@ -56,17 +56,17 @@ test('tax audit: annual estimated payments reduce remaining liability, not total
 test('tax audit: federal W-4 method uses ordinary payroll withholding, not AMT or NIIT',()=>{
  const p=C.calculate(cfg({tax:{state:'none',withholdingMethod:'w4',w4Credits:2000,w4OtherIncome:10000,w4Deductions:5000}}));
  // 125,000 - 16,100 = 108,900; 17,966 + 3,200*24% - 2,000.
- assertClose(sum(p.months,'federal'),16734,.001);
+ assertClose(sum(p.months,'federal'),16733.98,.001);
 });
 test('tax audit: direct HSA deductions require a W-4 adjustment to affect paycheck withholding',()=>{
  const p=C.calculate(cfg({hsa:{employee:4000,payroll:false},tax:{state:'none',withholdingMethod:'w4'}}));
- assertClose(sum(p.months,'federal'),17570,.001);
+ assertClose(sum(p.months,'federal'),17570.02,.001);
  assertClose(p.taxes.federal,16690,.001);
 });
 test('tax audit: ESPP tax impact uses the final projection tax context',()=>{
  const p=C.calculate(cfg({espp:{enabled:true,rate:.1,holdShares:false,fractional:true,shareCap:0,offerPrice:100,purchasePrice:100,salePrice:100}}));
  const final=C.tax({...p.income,ordinary:p.income.ordinary+50000},2026,{state:'none'}),f=C.cashFlow(p,{taxes:final});
- assertClose(f.taxFunding.esppSaleTax,(12000/85*15)*.24,.001);
+ assertClose(f.taxFunding.esppSaleTax,((26*461.54)/85*15)*.24,.001);
 });
 test('tax audit: source allocation conserves every bracket and avoids negative slices',()=>{
  const T=require('../tax-engine'),rows=T.bracketRows(79900,[12400,50400,105700],[.1,.12,.22,.24]);
@@ -75,8 +75,9 @@ test('tax audit: source allocation conserves every bracket and avoids negative s
 });
 test('tax audit: W-4 household withholding includes an estimate for the spouse paycheck',()=>{
  const p=C.calculate(cfg({tax:{state:'none',filing:'married',spouseIncome:60000,withholdingMethod:'w4'}}));
+ // Cent rounding applies to each of the 26 primary checks.
  // Two MFJ W-4s, no multiple-jobs checkbox or credits: 10,040 + 2,840.
- assertClose(sum(p.months,'federal'),12880,.001);
+ assertClose(sum(p.months,'federal'),12879.90,.001);
 });
 test('tax audit: California schedule reconciles at its published baseline',()=>{
  const t=C.tax({wages:120000,pretax:24000},2026,{state:'CA',caGrowth2026:0});

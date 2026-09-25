@@ -1,5 +1,6 @@
 (function (root) {
   'use strict';
+  const EquitySchedule=typeof module!=='undefined'&&module.exports?require('./equity-schedule'):root.EquitySchedule;
   const TaxEngine=typeof module!=='undefined'&&module.exports?require('./tax-engine'):root.TaxEngine;
 
   const PayrollCalendar=typeof module!=='undefined'&&module.exports?require('./payroll-calendar'):root.PayrollCalendar;
@@ -42,7 +43,7 @@
         discount: 0.15, lookback: true, offerPrice: 100, purchasePrice: 100, salePrice: 100,
         periodMonths: 6, start: '2026-01-01', holdMonths: 0, shareCap: 0,
         annualFmvLimit: 25000, fractional: false, fee: 0 },
-      payroll: { enabled: false, useYtd: true, elections: {}, records: [] },
+      payroll: { enabled: true, useYtd: true, elections: {}, records: [] },
       forecastFromMonth: 1
     };
   }
@@ -102,8 +103,8 @@
         if (elapsed < cliff || (elapsed % interval !== 0 && elapsed !== cliff && elapsed !== length)) continue;
         const vestDate = addMonths(start, elapsed);
         const vestYear = Number(vestDate.slice(0,4));
-        const value = positive(grant.value) * (elapsed - vested) / length * (positive(grant.vestPrice) || positive(grant.grantPrice) || 100) / (positive(grant.grantPrice) || 100) * stockFactor(vestYear);
-        const vestShares=positive(grant.value)*(elapsed-vested)/length/(positive(grant.grantPrice)||100);
+        const value = positive(grant.value) * (EquitySchedule.cumulative(grant,elapsed)-EquitySchedule.cumulative(grant,vested)) * (positive(grant.vestPrice) || positive(grant.grantPrice) || 100) / (positive(grant.grantPrice) || 100) * stockFactor(vestYear);
+        const vestShares=positive(grant.value)*(EquitySchedule.cumulative(grant,elapsed)-EquitySchedule.cumulative(grant,vested))/(positive(grant.grantPrice)||100);
         vested = elapsed;
         if (vestYear < baseYear || vestYear > year || (options.stopYear && vestYear >= options.stopYear) || options.history?.[vestYear]?.employed === false || (vestYear === year && options.employed === false)) continue;
         if (rsuMode(grant)!=='sell') {
@@ -117,6 +118,21 @@
           rsuVests.push({grantIndex:grant.grantIndex,name:grant.name || 'RSU grant',date:vestDate,shares:vestShares,value,mode:rsuMode(grant)});
         }
       }
+    }
+    if(options.earningEspp){
+      const original=options.earningEspp;
+      const pace=options.payrollSchedule?EquitySchedule.esppPace(c,options.earningDate,PayrollCalendar.sum(options.payrollSchedule.rows,'espp')):original;
+      if(pace.active){
+        const dates=paydays(c,year),deductions=PayrollCalendar.splitCents(Math.round(pace.monthlyContribution*1200),dates.length);
+        dates.forEach((d,i)=>payrollDeductions[d]=deductions[i]/100);
+        const purchaseDate=`${year}-12-31`,grantDate=addMonths(purchaseDate,-pace.periodMonths),saleDate=addMonths(purchaseDate,positive(e.holdMonths));
+        const lot={grantDate,purchaseDate,shares:pace.monthlyShares*12,cost:pace.monthlyCost*12,grantPrice:pace.grantPrice,purchasePrice:pace.marketPrice,discount:pace.discount,saleDate:purchaseDate,assumedSaleDate:saleDate,refund:pace.monthlyRefund*12};
+        const sale=e.holdShares?{proceeds:0,ordinary:0,shortGain:0,longGain:0,held:true}:sellLot(lot,saleDate,e.salePrice,e.fee*12/pace.periodMonths);
+        if(!e.qualifiedPlan){sale.ordinary=0;sale.shortGain=e.holdShares?0:sale.proceeds-lot.cost-lot.shares*(pace.marketPrice-pace.price);sale.longGain=0;}
+        for(const m of months){m.esppContrib=pace.monthlyContribution;m.esppSalaryContrib=pace.monthlyContribution;m.esppRefund=pace.monthlyRefund;m.esppProceeds=sale.proceeds/12;m.ordinary=sale.ordinary/12;m.shortGain=sale.shortGain/12;m.longGain=sale.longGain/12;if(!e.qualifiedPlan)m.rsu+=pace.monthlyValue-pace.monthlyCost;}
+        lots.push({...lot,...sale});if(e.holdShares)stockAssets+=pace.monthlyValue*12;
+      }
+      return {months,stockAssets,openingAssets,lots,rsuVests,offerings,payrollDeductions};
     }
     if (e.enabled) {
       const period = Math.max(1, Math.round(e.periodMonths)), start = e.start || `${baseYear}-01-01`;
@@ -227,8 +243,8 @@
     let hsa = cap('Employee HSA', salary ? (h.maxContribution ? Math.max(0, hsaLimit - hsaEmployer - (prior ? h.prior : 0)) : h.employee * grow) : 0, hsaLimit - hsaEmployer - (prior ? h.prior : 0));
     let benefits = salary ? (positive(b.health) + positive(b.dental) + positive(b.vision) + positive(b.fsa) + positive(b.otherPretax)) * 12 : 0;
     let postBenefits = salary ? positive(b.otherPosttax) * 12 : 0;
-    let calendar=null;
-    if(c.payroll?.enabled){
+    let calendar;
+    {
       calendar=PayrollCalendar.build(c,year,{dates:paydays(c,year),salary,bonus,limits:l,employed:options.employed!==false,
         targets:{traditional,roth,mega,hsa,employer,hsaEmployer,health:benefits,post:postBenefits,esppByDate:eq.payrollDeductions}});
       ({salary,bonus,traditional,roth,mega,hsa,employer,hsaEmployer}=calendar.totals);
@@ -239,17 +255,18 @@
       for(let m=0;m<12;m++){
         const actualFunding=PayrollCalendar.sum(calendar.rows.filter(r=>Number(r.date.slice(5,7))===m+1),'espp');
         const unmatched=actualFunding-eq.months[m].esppContrib;
-        if(Math.abs(unmatched)>.01){eq.stockAssets+=unmatched;eq.months[m].esppContrib=actualFunding;warnings.push('Some recorded ESPP funding falls outside the configured offering dates and remains pending cash. Review enrollment.');}
+        if(Math.abs(unmatched)>.01){eq.stockAssets+=unmatched;eq.months[m].esppContrib=actualFunding;if(!options.earningEspp)warnings.push('Some recorded ESPP funding falls outside the configured offering dates and remains pending cash. Review enrollment.');}
       }
       calendar.totals.espp=PayrollCalendar.sum(calendar.rows,'espp');
       PayrollCalendar.withholding(calendar,c,year,TaxEngine,eq);
       warnings.push(...calendar.warnings);
     }
-    if (b.fsa > 0 && hsa > 0) warnings.push('HSA eligibility requires a compatible limited-purpose FSA; confirm your plan.');
+    if ((b.fsa > 0 || calendar.rows.some(row=>row.benefitDetails?.some(b=>b.category==='fsa'&&b.value>0))) && hsa > 0) warnings.push('HSA eligibility requires a compatible limited-purpose FSA; confirm your plan.');
     const other = Number(options.otherIncome ?? c.tax.otherIncome) || 0;
     const spouse = positive(options.spouseIncome ?? c.tax.spouseIncome);
     const conversionEarnings = mega * ((1 + Math.max(0, c.stockGrowth)) ** (r.conversionDelayMonths / 12) - 1);
-    const income = { wages: salary + bonus + rsuGross + (calendar?.totals.imputed||0) + positive(options.extraWages), spouse,
+    const dependentCare=calendar.rows.flatMap(r=>r.benefitDetails||[]).filter(b=>b.category==='dependentCare').reduce((n,b)=>n+b.value,0);
+    const income = { stateBenefitAddback:c.tax.state==='CA'?Math.max(0,dependentCare-5000):0,wages: salary + bonus + rsuGross + (calendar.totals.imputed) + (calendar.totals.taxableAllowance||0) + positive(options.extraWages), spouse,
       ordinary: other + sum(eq.months, 'ordinary') + conversionEarnings,
       shortGain: sum(eq.months, 'shortGain') - positive(options.capitalLossCarry ?? (year === c.taxYear ? c.tax.capitalLossCarry : 0)), longGain: sum(eq.months, 'longGain'),
       pretax: traditional, payrollDeduction: benefits, hsa, hsaPayroll: h.payroll ? hsa : 0, employerHsa: hsaEmployer };
@@ -269,60 +286,27 @@
     }
     const taxes = tax(income, year, c.tax);
     const employee = traditional + roth + mega + hsa + ira;
-    const payDates = paydays(c, year), monthly = [];
-    const salaryTax = tax({ wages: salary, spouse, ordinary: other, pretax: traditional * salary / Math.max(1, grossEligible),
-      payrollDeduction: benefits, hsa, hsaPayroll: h.payroll ? hsa : 0, employerHsa: hsaEmployer }, year, c.tax);
-    let cumWages = 0, supplemental = 0, cumSpouseWages = 0;
-    for (let m = 0; m < 12; m++) {
-      const checks = payDates.filter(d => Number(d.slice(5,7))-1 === m).length;
-      const fraction = checks / payDates.length;
-      const dated=calendar?.rows.filter(p=>Number(p.date.slice(5,7))===m+1);
-      const cs=key=>PayrollCalendar.sum(dated||[],key);
-      const equityTax=calendar?.equityTaxes.filter(e=>Number(e.date.slice(5,7))===m+1)||[];
-      const et=key=>sum(equityTax,key);
-      const base = calendar?cs('salary'):salary * fraction, bm = calendar?cs('bonus'):(m === c.bonusMonth - 1 ? bonus : 0), q = eq.months[m];
-      const mt=calendar?cs('traditional'):traditional*(eligible?(base+(r.bonusEligible?bm:0)+(r.rsuEligible?q.rsu:0))/grossEligible:0);
-      const mr=calendar?cs('roth'):roth*(eligible?(base+(r.bonusEligible?bm:0)+(r.rsuEligible?q.rsu:0))/grossEligible:0);
-      const mm=calendar?cs('mega'):mega*(eligible?(base+(r.bonusEligible?bm:0)+(r.rsuEligible?q.rsu:0))/grossEligible:0);
-      const allocation = eligible ? (base + (r.bonusEligible ? bm : 0) + (r.rsuEligible ? q.rsu : 0)) / (salary + (r.bonusEligible ? bonus : 0) + (r.rsuEligible ? rsuGross : 0)) : 0;
-      const retirement = calendar?mt+mr+mm:(traditional + roth + mega) * allocation;
-      const health = calendar?cs('health'):benefits*fraction, hs=calendar?cs('hsa'):hsa*fraction, post=calendar?cs('post'):postBenefits*fraction;
-      const payrollWages = Math.max(0, base + bm + q.rsu + cs('imputed') - health - (h.payroll ? hs : 0));
-      const ss = .062 * Math.max(0, Math.min(l.ssBase, cumWages + payrollWages) - Math.min(l.ssBase, cumWages));
-      const addl = .009 * (Math.max(0, cumWages + payrollWages - 200000) - Math.max(0, cumWages - 200000));
-      const spouseWages = spouse / 12;
-      const spouseFica = .062 * (Math.min(l.ssBase, cumSpouseWages + spouseWages) - Math.min(l.ssBase, cumSpouseWages)) + spouseWages*.0145 +
-        .009 * (Math.max(0,cumSpouseWages+spouseWages-200000)-Math.max(0,cumSpouseWages-200000));
-      const fica = calendar?cs('ss')+cs('medicare')+spouseFica+et('ss')+et('medicare'):ss + payrollWages * .0145 + addl + spouseFica;
-      const sdi = calendar ? cs('sdi')+(c.tax.state==='CA'?(q.rsu+spouseWages)*c.tax.caSdi:0) : c.tax.state === 'CA' ? Math.max(0, base + bm + q.rsu - health + hsaEmployer*fraction + spouseWages) * c.tax.caSdi : 0;
-      const baseFed = calendar ? cs('federal') : c.tax.salaryFederalRate === null ? (c.tax.withholdingMethod==='w4'?TaxEngine.federalWithholding(salary-traditional*salary/Math.max(1,grossEligible)-benefits-(h.payroll?hsa:0),year,c.tax):salaryTax.federal) * fraction : Math.max(0, base - traditional * allocation - health - hs) * c.tax.salaryFederalRate;
-      const baseState = calendar ? cs('state') : c.tax.salaryStateRate === null ? salaryTax.state * fraction : Math.max(0, base - traditional * allocation - health - (c.tax.state!=='CA' ? hs : 0)) * c.tax.salaryStateRate;
-      const bonusTaxable = calendar?0:Math.max(0, bm - (r.bonusEligible ? traditional * bm / Math.max(1, grossEligible) : 0));
-      const rsuTaxable = calendar?q.rsu:Math.max(0, q.rsu - (r.rsuEligible ? traditional * q.rsu / Math.max(1, grossEligible) : 0));
-      const supp = bonusTaxable + rsuTaxable;
-      const excess = Math.max(0, supplemental + supp - 1000000) - Math.max(0, supplemental - 1000000);
-      const fedSupplemental = bonusTaxable * c.tax.bonusFederalRate + rsuTaxable * c.tax.rsuFederalRate;
+    const monthly = [];
+    let cumSpouseWages=0;
+    for(let m=0;m<12;m++){
+      const dated=calendar.rows.filter(p=>Number(p.date.slice(5,7))===m+1),cs=key=>PayrollCalendar.sum(dated,key);
+      const equityTax=calendar.equityTaxes.filter(e=>Number(e.date.slice(5,7))===m+1),et=key=>sum(equityTax,key),q=eq.months[m];
+      const base=cs('salary'),bm=cs('bonus'),mt=cs('traditional'),mr=cs('roth'),mm=cs('mega'),retirement=mt+mr+mm,health=cs('health'),hs=cs('hsa'),post=cs('post');
+      const spouseWages=spouse/12;
+      const spouseFica=.062*(Math.min(l.ssBase,cumSpouseWages+spouseWages)-Math.min(l.ssBase,cumSpouseWages))+spouseWages*.0145+.009*(Math.max(0,cumSpouseWages+spouseWages-200000)-Math.max(0,cumSpouseWages-200000));
       const spouseFederal=c.tax.withholdingMethod==='w4'?(c.tax.spouseFederalWithholding==null?TaxEngine.federalWithholding(spouse,year,{...c.tax,w4Credits:0,w4OtherIncome:0,w4Deductions:0}):positive(c.tax.spouseFederalWithholding))/12:0;
-      const federal = baseFed + spouseFederal + (calendar?et('federal'):(supp ? fedSupplemental * (supp - excess) / supp + excess * .37 : 0)) + (calendar?0:c.tax.federalExtra * checks);
-      const state = c.tax.state === 'none' ? 0 : baseState + bonusTaxable * c.tax.bonusStateRate + rsuTaxable * c.tax.rsuStateRate + (calendar?0:c.tax.stateExtra * checks);
-      const withholding = federal + state + fica + sdi;
-      const noRsuWages=Math.max(0,payrollWages-q.rsu);
-      const rsuSs=calendar?et('ss'):.062*(Math.min(l.ssBase,cumWages+payrollWages)-Math.min(l.ssBase,cumWages+noRsuWages));
-      const rsuAddl=calendar?et('medicare')-q.rsu*.0145:.009*(Math.max(0,cumWages+payrollWages-200000)-Math.max(0,cumWages+noRsuWages-200000));
-      const rsuFederal=calendar?et('federal'):supp ? rsuTaxable*c.tax.rsuFederalRate*(supp-excess)/supp + excess*.37*rsuTaxable/supp : 0;
-      const rsuWithholding=rsuFederal+(c.tax.state==='none'?0:rsuTaxable*c.tax.rsuStateRate)+rsuSs+q.rsu*.0145+rsuAddl+(c.tax.state==='CA'?q.rsu*c.tax.caSdi:0);
+      const federal=cs('federal')+et('federal')+spouseFederal,state=cs('state')+et('state');
+      const fica=cs('ss')+cs('medicare')+et('ss')+et('medicare')+spouseFica,sdi=cs('sdi')+et('sdi')+(c.tax.state==='CA'?spouseWages*c.tax.caSdi:0);
+      const withholding=federal+state+fica+sdi,rsuWithholding=et('federal')+et('state')+et('ss')+et('medicare')+et('sdi');
       const rsuSellToCover=Math.min(q.rsuCoverEligible,Math.max(0,c.tax.rsuCoverRate==null?rsuWithholding*q.rsuCoverEligible/Math.max(1e-20,q.rsu):q.rsuCoverEligible*c.tax.rsuCoverRate));
-      const receipts = base + bm + cs('allowance') + q.rsuCash + q.esppProceeds + q.esppRefund + spouse / 12 + other / 12;
-      const bankCash = receipts - retirement - hs - ira / 12 - health - post - q.esppContrib - withholding + rsuSellToCover;
-      const regularShare = payrollWages ? Math.max(0, base - health - (h.payroll ? hs : 0)) / payrollWages : 0;
-      monthly.push({ month: m+1, checks: calendar?dated.length:(salary ? checks : 0), spouseIncome:spouse/12, otherIncome:other/12, salary: base, allowance:cs('allowance'), imputed:cs('imputed'), bonus: bm, rsu: q.rsu, rsuCash: q.rsuCash,
-        esppSaleProceeds:q.esppProceeds, esppRefund:q.esppRefund, payrollHsa:h.payroll?hs:0,
-        accountContributions:{traditional:mt,roth:mr,mega:mm,hsa:hs,ira:ira/12,employer:calendar?cs('employer'):employer*fraction,hsaEmployer:calendar?cs('hsaEmployer'):hsaEmployer*fraction,totalEmployee:retirement+hs+ira/12},
-        esppContributions: q.esppContrib, esppProceeds: q.esppProceeds + q.esppRefund,
-        contributions: retirement + hs + ira/12, benefits: health + post,
-        withholding, rsuWithholding, rsuPayrollTax:rsuSs+q.rsu*.0145+rsuAddl+(c.tax.state==='CA'?q.rsu*c.tax.caSdi:0), rsuSellToCover, cashWithholding:withholding-rsuSellToCover, federal, state, fica, sdi, bankCash,
-        regularCash: calendar?cs('netPay'):salary ? base - (traditional + roth + mega) * (eligible ? base / (salary + (r.bonusEligible ? bonus : 0) + (r.rsuEligible ? rsuGross : 0)) : 0) - hs - health - post - baseFed - baseState - (fica - spouseFica + sdi - (c.tax.state === 'CA' ? spouseWages * c.tax.caSdi : 0)) * regularShare - q.esppSalaryContrib - (c.tax.federalExtra + c.tax.stateExtra) * checks : 0 });
-      cumWages += payrollWages; cumSpouseWages += spouseWages; supplemental += supp;
+      const receipts=base+bm+(cs('allowance')+cs('taxableAllowance'))+q.rsuCash+q.esppProceeds+q.esppRefund+spouse/12+other/12;
+      const bankCash=receipts-retirement-hs-ira/12-health-post-q.esppContrib-withholding+rsuSellToCover;
+      monthly.push({month:m+1,checks:dated.length,spouseIncome:spouse/12,otherIncome:other/12,salary:base,allowance:(cs('allowance')+cs('taxableAllowance')),imputed:cs('imputed'),bonus:bm,rsu:q.rsu,rsuCash:q.rsuCash,
+        esppSaleProceeds:q.esppProceeds,esppRefund:q.esppRefund,payrollHsa:h.payroll?hs:0,
+        accountContributions:{traditional:mt,roth:mr,mega:mm,hsa:hs,ira:ira/12,employer:cs('employer'),hsaEmployer:cs('hsaEmployer'),totalEmployee:retirement+hs+ira/12},
+        esppContributions:q.esppContrib,esppProceeds:q.esppProceeds+q.esppRefund,contributions:retirement+hs+ira/12,benefits:health+post,pretaxBenefits:health,
+        withholding,rsuWithholding,rsuPayrollTax:et('ss')+et('medicare')+et('sdi'),rsuSellToCover,cashWithholding:withholding-rsuSellToCover,federal,state,fica,sdi,bankCash,regularCash:cs('netPay')});
+      cumSpouseWages+=spouseWages;
     }
     const rsuSellToCover=sum(monthly,'rsuSellToCover');
     coverHistory[year]=rsuSellToCover;
@@ -346,11 +330,10 @@
     if (taxes.lossCarryforward) warnings.push('Unused capital losses carry into later years in the lifetime projection.');
     if (c.tax.spouseIncome) warnings.push('Spouse wages affect household taxes. Use withholding overrides to reconcile both paychecks.');
     if (r.iraMode === 'backdoor') warnings.push('IRA pro-rata inputs are annual planning estimates; update year-end IRA balances before relying on conversion tax.');
-    if (c.legacyEsppGain && !c.espp.enabled) warnings.push('The previous fixed ESPP gain is no longer added automatically. Enable ESPP and enter the plan settings.');
-    return { year, paychecks:calendar?.rows||[], payrollCalendar:calendar, cashAllowance:calendar?.totals.allowance||0, imputedIncome:calendar?.totals.imputed||0, deductionSources:{
-      salary:calendar?traditional-calendar.rows.reduce((n,p)=>n+(r.bonusEligible?p.traditional*p.bonus/Math.max(1,p.salary+p.bonus):0),0)+benefits+hsa:traditional*(grossEligible?salary/grossEligible:0)+benefits+hsa,
-      bonus:calendar?calendar.rows.reduce((n,p)=>n+(r.bonusEligible?p.traditional*p.bonus/Math.max(1,p.salary+p.bonus):0),0):traditional*(grossEligible&&r.bonusEligible?bonus/grossEligible:0),
-      rsu:calendar?0:traditional*(grossEligible&&r.rsuEligible?rsuGross/grossEligible:0)
+    return { year, paychecks:calendar.rows, payrollCalendar:calendar, benefitDetails:calendar.rows.flatMap(row=>(row.benefitDetails||[]).map(b=>({...b,date:row.date}))),cashAllowance:calendar.totals.allowance+(calendar.totals.taxableAllowance||0), imputedIncome:calendar.totals.imputed, deductionSources:{
+      salary:traditional-calendar.rows.reduce((n,p)=>n+(r.bonusEligible?p.traditional*p.bonus/Math.max(1,p.salary+p.bonus):0),0)+benefits+hsa,
+      bonus:calendar.rows.reduce((n,p)=>n+(r.bonusEligible?p.traditional*p.bonus/Math.max(1,p.salary+p.bonus):0),0),
+      rsu:0
     }, taxFunding, futureTaxReserve, futureTaxIncome, limits: l, months: monthly, salary, bonus, rsuGross, rsuCash, rsuSellToCover, cashWithholding:withholding-rsuSellToCover, rsuVests:eq.rsuVests,
       gross: salary + bonus + rsuGross, otherIncome: other, income, taxes, withholding, bankCash, taxBalance,
       afterTaxCash: bankCash - taxBalance, regularMonthly: sum(monthly, 'regularCash') / 12,
@@ -363,9 +346,8 @@
     const taxes = options.taxes || payroll.taxes;
     const expenses = Number(options.expenses) || 0;
     const socialSecurity = Number(options.socialSecurity) || 0;
-    const eventIncome = Number(options.eventIncome) || 0;
     const otherIncome = payroll.otherIncome || 0;
-    const cashIn = payroll.salary + (payroll.cashAllowance||0) + payroll.bonus + payroll.rsuCash + payroll.income.spouse + otherIncome + payroll.espp.proceeds + payroll.espp.refunds + socialSecurity + eventIncome;
+    const cashIn = payroll.salary + (payroll.cashAllowance||0) + payroll.bonus + payroll.rsuCash + payroll.income.spouse + otherIncome + payroll.espp.proceeds + payroll.espp.refunds + socialSecurity;
     const cashOut = taxes.total - (payroll.rsuSellToCover || 0) + payroll.contributions.totalEmployee + payroll.benefits + payroll.espp.contributions + expenses;
     const taxFunding=TaxEngine.funding(taxes,payroll,payroll.taxFunding?.estimatedPayments);
     const taxBalance = taxFunding.remainingLiability;
@@ -376,28 +358,38 @@
       futureTaxReserve=Math.max(0,tax({...income,ordinary:(income.ordinary||0)+(future.ordinary||0),shortGain:(income.shortGain||0)+(future.shortGain||0),longGain:(income.longGain||0)+(future.longGain||0)},year,settings).total-taxes.total);
     }
     const months = payroll.months.map(month => {
-      const bankCash = month.bankCash + (socialSecurity + eventIncome - taxFunding.estimatedPayments) / 12;
+      const bankCash = month.bankCash + (socialSecurity - taxFunding.estimatedPayments) / 12;
       const livingExpenses = expenses / 12;
       const taxAdjustment = taxBalance / 12;
-      return { ...month, socialSecurity:socialSecurity/12, eventIncome:eventIncome/12,
+      return { ...month, socialSecurity:socialSecurity/12,
         bankCash, estimatedTaxPayments:taxFunding.estimatedPayments/12, futureTaxReserve:futureTaxReserve/12, livingExpenses, taxAdjustment, netCashFlow:bankCash-livingExpenses-taxAdjustment, spendableCashFlow:bankCash-livingExpenses-taxAdjustment-futureTaxReserve/12 };
     });
     const taxAttribution=taxes.audit?TaxEngine.attribute(taxes,payroll,taxFunding.estimatedPayments):null;
     return { cashIn, cashOut, taxAttribution, taxFunding, futureTaxReserve, spendableCashFlow:cashIn-cashOut-futureTaxReserve, netCashFlow:cashIn-cashOut, afterTaxCash:cashIn-cashOut+expenses,
-      taxes, taxBalance, expenses, socialSecurity, eventIncome, otherIncome, months };
+      taxes, taxBalance, expenses, socialSecurity, otherIncome, months };
   }
-  function fromLegacy(cfg) {
-    if (cfg.compensation?.version === 2) return merge(defaults(), cfg.compensation);
-    return merge(defaults(), { salary: cfg.baseSalary ?? 165000, age: cfg.age ?? 25, legacyEsppGain: cfg.esppAnnualGain || 0,
-      salaryGrowth: cfg.salaryGrowth ?? .03, bonusPercent: cfg.bonusPercent ?? .1,
-      tax: { spouseIncome: cfg.spouseIncome || 0, otherIncome: cfg.rentalIncome || 0 },
-      retirement: { traditional: cfg.pretax401k || 0, mega: cfg.megaBackdoor || 0,
-        megaEnabled: !!cfg.megaBackdoor, ira: cfg.rothIRA || 0, iraPretaxBalance: cfg.traditionalIRA || 0 },
-      hsa: { employee: cfg.hsaContrib || 0 },
-      grants: cfg.rsuAnnualGross ? [{ name: 'Existing annual RSU estimate', value: cfg.rsuAnnualGross,
-        grantPrice: 100, vestPrice:100, start: '2025-12-31', months: 12, cliff: 0, interval: 3, sell: true, repeat: true }] : [] });
+  function ongoing(input, options={}) {
+    const c=merge(defaults(),input),parser=typeof module!=='undefined'&&module.exports?require('./paystub-parser'):root.PaystubParser;
+    const baseline=parser.suggest(c.payroll.records||[],c);
+    c.payroll.elections={...c.payroll.elections,...baseline.elections,...Object.fromEntries(Object.entries(c.payroll.elections||{}).filter(([key,e])=>e.manual||e.sourceDate===baseline.elections?.[key]?.sourceDate))};
+    c.payroll.benefitPlans=parser.benefitPlans(c.payroll.records||[]);c.payroll.ongoing=true;
+    c.payroll.records=[];c.payroll.useYtd=false;
+    if(baseline.record){
+      const count={weekly:52,biweekly:26,semimonthly:24,monthly:12}[c.frequency];
+      if(!c.payroll.manualFields?.some(k=>k.startsWith('employerPlan.retirement.employer')||k.includes('match')))
+        c.retirement.employerAnnual=Math.max((baseline.record.current.employer||0)*count,...(input.payroll?.records||[]).filter(r=>Number(r.date.slice(0,4))===c.taxYear).map(r=>r.ytd?.employer||0));
+      if(baseline.record.current.hsaEmployer!=null)c.hsa.employer=baseline.record.current.hsaEmployer*count;
+    }
+    const date=EquitySchedule.asOf(c.taxYear,options.asOf);
+    const active=EquitySchedule.instances(c.grants,date).map(g=>({...g,pace:EquitySchedule.pace(g,date)})).filter(g=>g.pace.monthlyGrant>0);
+    c.grants=active.map(g=>({...g,value:g.pace.monthlyGrant*12,months:12,cliff:0,interval:1,evenVesting:true,repeat:false,start:`${c.taxYear-1}-12-31`}));
+    const esppPace=EquitySchedule.esppPace(c,date);
+    const result=calculate(c,c.taxYear,{...options,earningEspp:esppPace,earningDate:date});
+    result.rsuVests.forEach(v=>v.grantIndex=active[v.grantIndex].sourceIndex);
+    result.earningPace={asOf:date,grants:active.map(g=>({name:g.name,index:g.sourceIndex,...g.pace})),espp:esppPace};
+    return result;
   }
-  const api = { offeringDates, rsuMode, defaults, merge, limits, tax, calculate, cashFlow, fromLegacy, sellLot, paydays };
+  const api = { grantAllocations:EquitySchedule.allocations, ongoing, offeringDates, rsuMode, defaults, merge, limits, tax, calculate, cashFlow, sellLot, paydays };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.Compensation = api;
 })(typeof window !== 'undefined' ? window : globalThis);
