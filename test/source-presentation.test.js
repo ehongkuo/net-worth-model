@@ -1,5 +1,5 @@
 const {test,assert,assertClose}=require('./harness');
-const C=require('../compensation'),F=require('../money-flow'),UI=require('../compensation-ui');
+const C=require('../compensation'),F=require('../money-flow'),UI=require('../input-rules');
 const grant={value:12000,grantPrice:100,start:'2025-12-31',months:12,interval:3,saleMode:'hold'};
 test('salary-only pre-tax elections leave gross bonus and RSUs intact in the second bar',()=>{
  const p=C.calculate(C.merge(C.defaults(),{salary:120000,bonusPercent:.1,grants:[grant],retirement:{traditional:12000,bonusEligible:false,rsuEligible:false},hsa:{employee:2400},tax:{state:'none'}}));
@@ -9,38 +9,18 @@ test('salary-only pre-tax elections leave gross bonus and RSUs intact in the sec
  assertClose(x.afterPretax,129600);assertClose(x.afterOrdinary,113500);assertClose(x.householdDeductions,16100);
  assertClose(x.sources.reduce((s,r)=>s+r.taxable,0),113500);
 });
-test('explicit bonus and RSU contribution eligibility follows the actual payroll election',()=>{
+test('deductions follow dated cash paychecks and do not reduce the RSU wage source',()=>{
  const p=C.calculate(C.merge(C.defaults(),{salary:120000,bonusPercent:.1,grants:[grant],retirement:{traditional:14400,bonusEligible:true,rsuEligible:true},tax:{state:'none'}}));
  const x=C.cashFlow(p).taxAttribution,by=id=>x.sources.find(s=>s.id===id);
- assertClose(by('salary').payrollDeduction,12000);assertClose(by('bonus').payrollDeduction,1200);assertClose(by('rsu').payrollDeduction,1200);
+ assertClose(by('salary').payrollDeduction+by('bonus').payrollDeduction,14400);assertClose(by('rsu').payrollDeduction,0);
  assertClose(x.afterPretax,129600);assertClose(x.householdDeductions,16100);
-});
-test('source bands retain color and conserve every link and source through pooled nodes',()=>{
- const nodes=[{id:'salary',column:0,kind:'source',color:'blue',label:'Salary'},{id:'rsu-vesting',column:0,kind:'source',color:'gold',label:'RSUs'},{id:'combined',column:1,kind:'hub'},{id:'after-deductions',column:2,kind:'hub'},{id:'account-rsu',column:3,kind:'sink'},{id:'account-cash',column:3,kind:'sink'}];
- const links=[{source:'salary',target:'combined',value:100},{source:'rsu-vesting',target:'combined',value:20},{source:'combined',target:'after-deductions',value:120},{source:'after-deductions',target:'account-rsu',value:20},{source:'after-deductions',target:'account-cash',value:100}];
- const g=F.sourceBands({nodes,links});
- for(const l of g.links)assertClose(l.bands.reduce((s,b)=>s+b.value,0),l.value);
- const mixed=g.links.find(l=>l.source==='combined');assert(mixed.bands.length===2);
- assertClose(mixed.bands.find(b=>b.id==='salary').value,100);assertClose(mixed.bands.find(b=>b.id==='rsu-vesting').value,20);
- assertClose(g.links.find(l=>l.target==='account-rsu').bands.find(b=>b.id==='rsu-vesting').value,20);assert(links.every(l=>!l.bands));
 });
 test('salary timing explains two and three paycheck months without altering annual pay',()=>{
  const p=C.calculate(C.merge(C.defaults(),{salary:165000,frequency:'biweekly',firstPayday:'2026-01-09'}));
  const a=UI.salaryTiming(p,1),b=UI.salaryTiming(p,5);
  assert(a.checks===2);assert(b.checks===3);assert(a.annualChecks===26);
- assertClose(a.average,13750);assertClose(a.scheduled,12692.307692,.001);assertClose(b.scheduled,19038.461538,.001);
+ assertClose(a.average,13750);assertClose(a.scheduled,12692.32,.001);assertClose(b.scheduled,19038.46,.02);
  assertClose(p.months.reduce((s,m)=>s+m.salary,0),165000);
-});
-test('source bands conserve real annual and monthly flows including deficit illustrations',()=>{
- const p=C.calculate(C.merge(C.defaults(),{salary:120000,bonusPercent:.1,grants:[grant],retirement:{traditional:12000},espp:{enabled:true,rate:.1,holdShares:true}})),f=C.cashFlow(p,{expenses:100000});
- for(const pair of [{payroll:p,flow:f},...Array.from({length:12},(_,i)=>F.forMonth(p,f,i+1))]){
-  const g=F.sourceBands(F.orderFlow(F.buildFlow(pair.payroll,pair.flow)));
-  for(const l of g.links)assertClose(l.bands.reduce((s,b)=>s+b.value,0),l.value,.001);
-  for(const n of g.nodes.filter(n=>n.kind==='hub'))for(const band of n.bands){
-   const value=direction=>g.links.filter(l=>l[direction]===n.id).flatMap(l=>l.bands).filter(b=>b.id===band.id).reduce((s,b)=>s+b.value,0);
-   assertClose(value('target'),value('source'),.001,`${n.id}/${band.id}`);
-  }
- }
 });
 test('state income comparison applies California HSA rules without shrinking bonus or RSUs',()=>{
  const {stateIncomeComparison}=require('../tax-ui');

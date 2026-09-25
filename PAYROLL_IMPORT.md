@@ -1,42 +1,50 @@
-# Payroll setup and imports
+# Paystub import
 
-Open **Setup & limits** to configure tax eligibility, employer restrictions and funding, then review uploaded paychecks. **Paychecks** shows the dated forecast. Monthly cash flow and the lifetime projection use that calendar when enabled.
+Open **Your profile → Your paychecks** and select regular-paycheck PDFs. Extraction stays in the browser. Review the check date, category mappings, current amounts and YTD amounts. All printed totals must reconcile before Apply is enabled.
 
-## Limit precedence
+Applying an upload saves reviewed observations and updates recurring elections. Updating annual salary, pay frequency and payday anchor is a separate checkbox, selected initially. Two check dates can establish a weekly or biweekly schedule; otherwise the estimate uses the selected frequency and asks for confirmation. Recurring employer HSA funding follows the uploaded per-check amount. A YTD-only employer retirement match is not treated as a recurring payment. Grant schedules, IRA contributions and ESPP plan terms remain in Complete the picture.
 
-Published 2026 IRS limits anchor the model. Later years use the existing growth assumptions. Custom statutory overrides can lower a contribution limit, but cannot raise the baseline. Employer restrictions are separate configuration fields.
+The newest uncapped regular paycheck supplies the recurring election. Percentage deductions use eligible salary and bonus; fixed deductions remain per paycheck. A later upload replaces older rates. If a check has reached an annual cap, the last uncapped election is retained rather than treating a capped zero as a new election.
 
-- Traditional and designated Roth 401(k) contributions share employee deferral capacity.
-- After-tax workplace contributions use the smaller of remaining combined-plan capacity and the optional employer mega cap. Employer retirement funding is reserved before allocating this capacity. A blank mega cap adds no restriction; zero stops new after-tax contributions.
-- Employee HSA capacity reserves configured annual employer HSA funding and accounts for eligibility and prior contributions.
-- ESPP payroll caps limit deductions. The separate grant-date FMV allowance limits share purchases through the offering engine. It is not a $25,000 payroll-dollar cap.
+The forecast applies IRS limits first and tighter employer limits next. Employer HSA funding consumes the same statutory HSA allowance. Employer retirement additions consume the combined plan limit. Limits reset by calendar year.
 
-Imported elections continue at their observed pace until a cap is reached. The final contribution is partial if necessary. Existing annual elections remain available when an imported election is removed. Fixed-dollar elections remain fixed in future years; percentage elections follow eligible cash compensation.
+YTD is cumulative history, not another payment. The calendar reconciles unobserved earlier checks to YTD and labels them as history estimates. Uploading earlier paychecks replaces estimates with observations. The monthly view includes an expandable paycheck table for audit.
 
-## Calendar and actuals
+Federal withholding can use the uploaded federal taxable-wage rate. State withholding uses gross salary and bonus when a state taxable-wage basis is unavailable. Payroll taxes follow statutory rules; the tax engine separately calculates annual liability and the remaining settlement.
 
-The calendar uses integer cents for paycheck contributions and preserves imported values. Forecast withholding is recalculated after contribution changes. Salary and RSU events share the Social Security wage cap. Final annual tax liability remains separate from payroll withholding.
+The parser supports recognized text-based payroll tables, with manual category mapping. Unsupported layouts, scanned documents, unreconciled totals and negative adjustments require corrected inputs. Same-date conflicting observations are rejected; correct or remove the old observation in a scenario export before reimporting.
 
-YTD is a cumulative snapshot, not another payment. When YTD reconciliation is enabled, the engine distributes unobserved history over estimated earlier pay dates and labels those rows **History estimate**. Their monthly timing is not established by a recent paystub. Disable YTD reconciliation for a full-year run-rate experiment. Uploading older statements progressively replaces estimates with observed checks.
+Applying uploads fills observed plan participation and the ESPP rate. Recurring retirement and HSA elections appear in their plan sections; benefits and withholding remain visible in the paycheck-derived numbers. Source dates identify uploaded or inferred values. Explicit edits are retained across later uploads, with conflicts reported after Apply. Annual contribution overrides remain subject to IRS and plan limits.
 
-Uploaded checks match scheduled pay periods even when a bank deposit anchor differs from the printed check date. Future-dated documents are labeled scheduled. Weekly and biweekly schedules follow the anchor; semimonthly schedules use the 15th and month end. Bank holidays are not shifted automatically.
 
-The paycheck deposit excludes IRA transfers, direct HSA transfers, living expenses and separate equity transactions. Those remain in monthly cash flow. The paycheck page lists RSU vesting and ESPP purchases separately.
+## Benefit elections
 
-## PDF review and privacy
+Reviewed benefit entries preserve their printed label, category, current amount,
+YTD, recurrence and optional employer annual cap. Matching uses both payroll
+section and label. A later upload reuses that classification; a changed section
+requires review. Transit and parking require a schedule choice before import.
+Monthly deductions run on the first scheduled paycheck of each month. A zero on
+a later paycheck does not cancel a monthly election. Choose “This payment only”
+when a payment should not recur.
 
-PDF.js reads text in the browser using a locally served worker. The server does not receive documents. The first supported layout has earnings, employee taxes, pre-tax deductions, post-tax deductions, employer benefits, and current/YTD columns. Scanned PDFs and negative correction checks are explicitly rejected pending broader support.
+Coverage, services and restricted-benefit deductions appear as red spending.
+Retirement and HSA contributions keep their asset categories. Noncash coverage
+stays out of cash and asset totals; taxable imputed benefits affect wages only.
+Taxable cash allowances are separate from nontaxable reimbursements.
 
-Review shows the source label, mapped category, editable current/YTD values, source page, and check date. Gross-to-net and section totals must reconcile for both current and YTD before applying. Blank current cells are distinct from YTD-only balances. Unknown labels require a selection; mappings are saved with the scenario for reuse.
+Restricted funding is counted as spending when deducted. The expense budget must
+exclude purchases funded from those deductions. This release does not track
+individual restricted-account reimbursements or forfeitures.
 
-Imputed benefits enter taxable wages without creating cash or investment assets. Cash allowances default to the reviewed tax treatment; confirm their category. Employer medical coverage is preserved as a benefit observation and does not become an investment contribution.
+Older saved uploads retain their aggregate benefit amounts. Re-upload the source
+PDF to recover individual labels and schedules; the old scenario did not store
+that detail.
 
-Only normalized financial records and their source hash/page references are saved. Original PDFs, employee identifiers, addresses and bank details are not persisted. Records are part of the existing local scenario storage and JSON export. Undo restores the prior compensation configuration, including after reload; the original documents are not needed. Individual records can also be removed without reverting subsequent settings.
+## Ongoing versus dated forecasts
 
-Importing records is separate from applying inferred contribution elections or updating salary/frequency/anchor. Employer annual funding, grant schedules and plan participation remain under user control. Same-date conflicting regular statements require removing the old record before applying a correction.
-
-## Verification
-
-`npm test` includes independent expected values for caps, a partial final paycheck, HSA employer reservations, 27-paycheck years, YTD reconciliation, statutory ceilings, equity/payroll wage-base coordination, ESPP funding, direct HSA transfers, parser reconciliation, missing cells, duplicate imports and conflicting revisions.
-
-The supplied two-page regular paystub layout was also exercised end to end in an isolated browser. No personal source documents are included in the repository. No formatter or linter is configured; JavaScript syntax and `git diff --check` are checked separately.
+The ongoing monthly view and tax tab use a full-year estimate at current salary
+and elections. The same calculation engine reapplies annual limits and taxes.
+YTD does not reduce that salary rate. The calendar tables and lifetime projection
+retain the recorded current-year history and forecast remaining paychecks.
+Earlier dated rows reconstructed from YTD remain labeled `history-estimate`.
+They are estimates, not evidence of a hire date or individual historical checks.

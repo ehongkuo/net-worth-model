@@ -85,7 +85,7 @@ describe('compensation and cash flow', () => {
     assert(r.months.every(m => Number.isFinite(m.bankCash)));
   });
   test('legacy inputs survive migration and are not silently relabeled as employer match', () => {
-    const c = C.fromLegacy({ baseSalary: 123000, pretax401k: 31350, rsuAnnualGross: 20000, megaBackdoor: 24750, hsaContrib: 4296 });
+    const c = require('../scenario').engineInput(require('../scenario').migrate({config:{baseSalary:123000,pretax401k:31350,rsuAnnualGross:20000,megaBackdoor:24750,hsaContrib:4296}}).scenario);
     assertEqual(c.salary, 123000); assertEqual(c.retirement.traditional, 31350);
     assertEqual(c.retirement.employerAnnual, 0); assertEqual(c.grants[0].value, 20000);
   });
@@ -152,8 +152,8 @@ describe('cash flow display regressions', () => {
   });
   test('reconciliation uses effective income and final taxes, including retirement', () => {
     const r=C.calculate(config({salary:0}),2026,{otherIncome:12000,employed:false});
-    const f=C.cashFlow(r,{taxes:{...r.taxes,total:4000},expenses:36000,socialSecurity:40000,eventIncome:6000});
-    assertClose(f.cashIn,58000); assertClose(f.cashOut,40000); assertClose(f.netCashFlow,18000);
+    const f=C.cashFlow(r,{taxes:{...r.taxes,total:4000},expenses:36000,socialSecurity:40000});
+    assertClose(f.cashIn,52000); assertClose(f.cashOut,40000); assertClose(f.netCashFlow,12000);
     assertClose(f.months.reduce((n,m)=>n+m.netCashFlow,0),f.netCashFlow);
     assertClose(f.months.reduce((n,m)=>n+m.bankCash,0)-f.taxBalance,f.afterTaxCash);
   });

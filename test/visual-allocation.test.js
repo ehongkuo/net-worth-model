@@ -43,7 +43,7 @@ test('pre-tax benefits precede tax payments and are not charged again as final c
   const g=F.orderFlow(F.buildFlow(selected.payroll,selected.flow)),divisor=selected.payroll.periodMonth?12:1;
   assert(g.nodes.find(n=>n.id==='benefits-pretax').column===2);
   assertClose(g.links.find(l=>l.target==='benefits-pretax').value,1200/divisor);
-  assertClose(g.visualAllocation.costs,12600/divisor);balanced(g);
+  assertClose(g.visualAllocation.costs,12000/divisor);assertClose(g.links.filter(l=>l.target==='benefits-posttax').reduce((n,l)=>n+l.value,0),600/divisor);balanced(g);
  }
 });
 test('known annual example preserves tax and contribution amounts while allocating a cash deficit',()=>{

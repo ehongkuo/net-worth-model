@@ -46,14 +46,16 @@
     const employer=Math.min(positive(p.contributions.employer)+positive(p.contributions.hsaEmployer),positive(buckets[2].value-pretaxRetirement));
     const postRetirement=positive(buckets[2].value-pretaxRetirement-employer);
     const cashTax=sum(original.links.filter(l=>l.source==='after-deductions'&&l.target!=='after-tax'&&l.target!=='rsu-cover'));
+    const postBenefits=incoming('benefits-posttax');
     const benefits=incoming('benefits-pretax'),rsuCover=incoming('rsu-cover');
     const cashFinal=buckets[0].value,rsuRetained=account('rsu'),rsuCash=positive(p.rsuGross-rsuCover-rsuRetained);
     // Reconcile secondary receipts, refunds and prior ESPP cash without inventing new wages.
-    const cashBeforeDeductions=cashFinal+postRetirement+esppCost+cashTax+pretaxRetirement+benefits-rsuCash;
+    const cashBeforeDeductions=cashFinal+postBenefits+postRetirement+esppCost+cashTax+pretaxRetirement+benefits-rsuCash;
     const extraCash=cashBeforeDeductions-p.salary-p.bonus;
-    const cashParts=[{label:'Base salary',value:p.salary},{label:'Cash allowances',value:p.cashAllowance||0},{label:'Other cash / timing adjustments',value:extraCash-(p.cashAllowance||0)}].filter(r=>Math.abs(r.value)>.005);
+    const otherCash=extraCash-(p.cashAllowance||0);
+    const cashParts=[{label:'Base salary',value:p.salary},{label:'Cash allowances',value:p.cashAllowance||0}].filter(r=>Math.abs(r.value)>.005);
     buckets[2].parts=[{label:'Traditional 401(k)',value:incoming('traditional')},{label:'Roth 401(k)',value:positive(account('retirement')-incoming('traditional')-positive(p.contributions.employer))},{label:'Employer retirement',value:Math.min(account('retirement'),positive(p.contributions.employer))},{label:'Mega backdoor Roth',value:account('mega')},{label:'Regular IRA / backdoor Roth',value:account('ira')},{label:'HSA (employee + employer)',value:account('hsa')}].filter(r=>r.value>0);
-    return {payroll:p,config:c,buckets,projectedEspp,rsuBaseline,rsuGross:p.rsuGross,rsuCover,rsuRetained,rsuCash,esppCost,esppValue,pretaxRetirement,postRetirement,employer,cashTax,benefits,cashBeforeDeductions,cashFinal,cashParts,base:p.salary+extraCash,bonus:p.bonus,periodMonth:p.periodMonth,year:p.year,discount:c.espp.discount,expense:original.visualAllocation.costs,shortfall:original.visualAllocation.shortfall,summary:original.summary,original};
+    return {payroll:p,config:c,buckets,projectedEspp,rsuBaseline,rsuGross:p.rsuGross,rsuCover,rsuRetained,rsuCash,esppCost,esppValue,pretaxRetirement,postRetirement,employer,cashTax,benefits,postBenefits,cashBeforeDeductions,cashFinal,cashParts,base:p.salary+(p.cashAllowance||0),otherCash,bonus:p.bonus,periodMonth:p.periodMonth,year:p.year,discount:c.espp.discount,expense:original.visualAllocation.costs,shortfall:original.visualAllocation.shortfall,summary:original.summary,original};
   }
   function ribbon(x1,x2,y1,y2,h1,h2){const d=(x2-x1)*.45;return `M${x1},${y1} C${x1+d},${y1} ${x2-d},${y2} ${x2},${y2} L${x2},${y2+h2} C${x2-d},${y2+h2} ${x1+d},${y1+h1} ${x1},${y1+h1} Z`;}
   function layout(g,width){
@@ -61,24 +63,40 @@
     const scale=260/total,x=column=>18+column*(width-170)/5,links=[],nodes=[];
     const node=(id,label,column,y,value,kind,parts=[],extra={})=>{const n={id,label,x:x(column),y,value,h:positive(value)*scale,kind,parts,...extra};nodes.push(n);return n;};
     const link=(a,b,input,output,kind,detail,offsetA=0,offsetB=0)=>{if(Math.max(input,output)>.005)links.push({a,b,input:positive(input),output:positive(output),kind,detail,y1:a.y+offsetA*scale,y2:b.y+offsetB*scale});};
-    const sourceBase=node('base',Math.abs(g.base-(g.cashParts.find(p=>p.label==='Base salary')?.value||0))>.01?'Salary + other cash':'Base salary',0,86,positive(g.base),'cash',g.cashParts);
+    const sourceBase=node('base',Math.abs(g.base-(g.cashParts.find(p=>p.label==='Base salary')?.value||0))>.01?'Salary + cash allowances':'Base salary',0,86,positive(g.base),'cash',g.cashParts);
     const sourceBonus=node('bonus','Bonus',0,86+positive(g.base)*scale+48,g.bonus,'cash');
+    const other=node('other','Other cash / timing',0,sourceBonus.y+sourceBonus.h+48,positive(g.otherCash),'cash',[{label:'Other cash / timing adjustments',value:g.otherCash}]);
     const gross=node('gross','Gross cash pay',1,86,positive(g.cashBeforeDeductions),'cash',g.cashParts);
     link(sourceBase,gross,positive(g.base),positive(g.base),'cash','Salary, allowances and other cash receipts');
     link(sourceBonus,gross,g.bonus,g.bonus,'cash','Bonus',0,positive(g.base));
+    link(other,gross,positive(g.otherCash),positive(g.otherCash),'cash','Other receipts and timing adjustments, separate from salary',0,positive(g.base)+g.bonus);
     const cash1Value=positive(g.cashBeforeDeductions-g.pretaxRetirement-g.benefits),cash2Value=positive(cash1Value-g.cashTax)+g.rsuCash;
     const cash1=node('cash1','Cash after deductions',2,86,cash1Value,'cash');
     const cash2=node('cash2','Cash after taxes',3,86,cash2Value,'cash');
-    const preY=Math.max(330,86+Math.max(cash1Value,cash2Value)*scale+g.cashTax*scale+110);
+    const preY=Math.max(330,86+Math.max(cash1Value,cash2Value)*scale+g.cashTax*scale+110+g.benefits*scale);
     const pre=node('pretax','Pre-tax contributions',2,preY,g.pretaxRetirement,'retirement',[{label:'Traditional 401(k)',value:sum(g.original.links.filter(l=>l.target==='traditional'))},{label:'Payroll HSA',value:sum(g.original.links.filter(l=>l.target==='hsa'))}]);
     const prePass=node('prepass','',3,preY,g.pretaxRetirement,'retirement',[],{hidden:true});
-    link(gross,cash1,positive(g.cashBeforeDeductions-g.pretaxRetirement),cash1Value,'cash',`Payroll benefits paid: ${g.benefits}`,0,0);
+    link(gross,cash1,cash1Value,cash1Value,'cash','Cash after pre-tax contributions and benefits',0,0);
+    const benefitParts=post=>{
+      const grouped=new Map();
+      for(const b of g.payroll.benefitDetails||[]){
+        if(g.periodMonth&&Number(b.date.slice(5,7))!==g.periodMonth)continue;
+        const allowed=post?['post','restrictedPost']:['health','fsa','dependentCare','commuter','parking'];
+        if(allowed.includes(b.category))grouped.set(b.label,(grouped.get(b.label)||0)+b.value);
+      }
+      const expected=post?g.postBenefits:g.benefits,remainder=expected-[...grouped.values()].reduce((n,v)=>n+v,0);
+      if(remainder>.01)grouped.set('Other benefits / historical amounts',remainder);
+      return [...grouped].map(([label,value])=>({label,value}));
+    };
+    const preBenefits=node('pre-benefits','Pre-tax benefits spending',2,preY-65-g.benefits*scale,g.benefits,'tax',benefitParts(false));
+    link(gross,preBenefits,g.benefits,g.benefits,'tax','Coverage, services and restricted benefit funding',cash1Value);
+
     link(gross,pre,g.pretaxRetirement,g.pretaxRetirement,'retirement','Pre-tax retirement / HSA contributions',positive(g.cashBeforeDeductions-g.pretaxRetirement));
     link(pre,prePass,g.pretaxRetirement,g.pretaxRetirement,'retirement','Pre-tax contributions retained');
     link(cash1,cash2,positive(cash2Value-g.rsuCash),positive(cash2Value-g.rsuCash),'cash','Cash after payroll taxes and planning tax settlement');
     const tax=node('tax','Cash taxes',3,86+cash2Value*scale+54,g.cashTax,'tax',g.original.nodes.filter(n=>/^(withholding|tax-payments|tax-reserve)/.test(n.id)).map(n=>({label:n.label,value:sum(g.original.links.filter(l=>l.target===n.id))})));
     link(cash1,tax,g.cashTax,g.cashTax,'tax','Cash withholding, estimated payments and additional tax reserve',positive(cash2Value-g.rsuCash));
-    const rsuY=Math.max(460,preY+g.pretaxRetirement*scale+65,sourceBonus.y+sourceBonus.h+52);
+    const rsuY=Math.max(460,preY+g.pretaxRetirement*scale+65,(g.otherCash>.005?other.y+other.h:sourceBonus.y+sourceBonus.h)+52);
     const rsu0=node('rsu0','RSUs at grant value',0,rsuY,g.rsuBaseline,'equity');
     const rsu1=node('rsu1','Gross RSU value',2,rsuY,g.rsuGross,'equity');
     const rsu2=node('rsu2','RSUs after withholding',3,rsuY,g.rsuRetained,'equity');
@@ -89,6 +107,8 @@
     link(rsu1,cash2,g.rsuCash,g.rsuCash,'cash','RSU cash proceeds or illustrative funding of a cash shortfall',g.rsuRetained,positive(cash2Value-g.rsuCash));
     let assetY=86;
     const assetNodes=g.buckets.map(b=>{const n=node(b.id,b.label,4,assetY,b.value,b.id,b.parts,{bucket:b});assetY+=n.h+72;return n;});
+    const postBenefits=node('post-benefits','Post-tax benefits spending',4,assetY,g.postBenefits,'tax',benefitParts(true));
+    link(cash2,postBenefits,g.postBenefits,g.postBenefits,'tax','Post-tax coverage, services and restricted benefit funding',g.cashFinal+g.esppCost+g.postRetirement);
     link(cash2,assetNodes[0],g.cashFinal,g.cashFinal,'cash','Cash before expenses');
     link(cash2,assetNodes[1],g.esppCost,g.esppValue,'equity',g.projectedEspp.cost?'ESPP deductions valued as a hypothetical purchase at configured prices; pending funds are not owned shares':'After-tax ESPP purchase cost grows to market value; the difference is unrealized while held',g.cashFinal);
     link(rsu2,assetNodes[1],g.rsuRetained,g.rsuRetained,'equity','Retained RSU market value',0,g.esppValue);
@@ -96,7 +116,7 @@
     link(prePass,assetNodes[2],g.pretaxRetirement,g.pretaxRetirement+g.employer,'retirement','Pre-tax contributions plus employer funding',0,g.postRetirement);
     const costs=node('expenses','Expenses',5,86,g.buckets.reduce((s,b)=>s+b.used,0),'tax',g.original.visualAllocation.costBreakdown);
     let offset=0;assetNodes.forEach((n,i)=>{link(n,costs,g.buckets[i].used,g.buckets[i].used,'tax','Illustrative spending: cash, then equity, then retirement',0,offset);offset+=g.buckets[i].used;});
-    return {nodes,links,scale,width,height:Math.max(560,cover.y+cover.h+35,assetY+5)};
+    return {nodes,links,scale,width,height:Math.max(560,postBenefits.y+postBenefits.h+40,cover.y+cover.h+35,assetY+5)};
   }
   function details(g,scene,{node:n,link:l}){
     const p=g.payroll,c=g.config,checks=(p.paychecks||[]).filter(r=>!p.periodMonth||Number(r.date.slice(5,7))===p.periodMonth);
@@ -120,7 +140,8 @@
     if(l){
       const isEspp=l.a.id==='cash2'&&l.b.id==='equity';
       const remainder=['cash1','cash2','cash'].includes(l.b.id)&&l.a.kind==='cash';
-      if(l.b.id==='tax')rows=taxRows().concat(row('Total cash taxes',l.output,'',null,'',true));
+      if(['pre-benefits','post-benefits'].includes(l.b.id))rows=parts(l.b.parts).concat(row('Total benefits spending',l.output,'',null,'',true));
+      else if(l.b.id==='tax')rows=taxRows().concat(row('Total cash taxes',l.output,'',null,'',true));
       else if(isEspp)rows=valueRows(l.input,l.output,'ESPP purchase / projected funding','Eligible gross pay',eligible('espp'));
       else if(remainder){
         rows=[row('Starting funds',l.a.value,l.a.label,l.a.value,'starting')];
@@ -165,7 +186,7 @@
   }
   function render(container,g,format){
     if(!container.clientWidth)return [];
-    const divisor=g.periodMonth?1:12,amount=v=>format(v/divisor),period=g.periodMonth?`${g.year}-${String(g.periodMonth).padStart(2,'0')}`:'monthly average (amortized)';
+    const divisor=g.periodMonth?1:12,amount=v=>format(v/divisor),period=g.periodMonth?`${g.year}-${String(g.periodMonth).padStart(2,'0')}`:'current earning pace (amortized)';
     const scene=layout(g,Math.max(700,container.clientWidth)),{width,height,scale}=scene;
     const explain=(input,output)=>g.periodMonth?`${format(input)} → ${format(output)} in ${period}`:`${format(input)} / year → ${format(output)} / year; ÷ 12 = ${amount(input)} → ${amount(output)} / month`;
     const paths=scene.links.map((l,i)=>{
@@ -181,7 +202,7 @@
     const panel=container.querySelector('.compact-detail');
     const pendingNote=g.projectedEspp.cost?` Pending ESPP preview: ${amount(g.projectedEspp.cost)} withheld, approximately ${(g.projectedEspp.shares/divisor).toFixed(4)} share equivalents, projected value ${amount(g.projectedEspp.value)}. This assumes a purchase at configured prices before final share limits and rounding. Actual cash, purchase timing and balances are unchanged. Preview values are not additional income and must not be added to later purchase totals.`:'';
     if(pendingNote)panel.append(document.createTextNode(pendingNote));
-    const table=(rows,denominator=divisor)=>`<div class="table-scroll"><table class="data-table"><thead><tr><th>Component</th><th>Based on</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${rows.map(r=>`<tr class="${r.total?'detail-total':''}"><td>${escape(r.component)}${r.note?`<small>${escape(r.note)}</small>`:''}</td><td>${r.basisAmount!=null?escape(format(r.basisAmount/denominator))+' ':''}${escape(r.basis)}</td><td>${r.rate==null?'-':`${(r.rate*100).toFixed(2)}% ${escape(r.rateKind)}`}${r.elected!=null?`<small>${(r.elected*100).toFixed(2)}% election</small>`:''}</td><td>${escape(format(r.amount/(r.unscaled?1:denominator)))} ${escape(r.unit||'')}</td></tr>`).join('')}</tbody></table></div>`;
+    const table=(rows,denominator=divisor)=>`<div class="table-scroll"><table class="data-table"><thead><tr><th>Component</th><th>Based on</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${rows.map(r=>`<tr class="${r.total?'detail-total':''}"><td>${escape(r.component)}${r.note?`<small>${escape(r.note)}</small>`:''}</td><td>${r.basisAmount!=null?escape(format(r.basisAmount/denominator))+' ':''}${escape(r.basis)}</td><td>${r.rate==null?'-':`${(r.rate*100).toFixed(1)}% ${escape(r.rateKind)}`}${r.elected!=null?`<small>${(r.elected*100).toFixed(1)}% election</small>`:''}</td><td>${escape(format(r.amount/(r.unscaled?1:denominator)))} ${escape(r.unit||'')}</td></tr>`).join('')}</tbody></table></div>`;
     const highlight=(n,l)=>{
       container.classList.add('has-flow-selection');
       container.querySelectorAll('[data-compact-flow]').forEach(el=>{const edge=scene.links[Number(el.dataset.compactFlow)],active=l?edge===l:edge.a===n||edge.b===n;el.classList.toggle('is-selected',active);el.setAttribute('aria-pressed',String(active));});

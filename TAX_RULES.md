@@ -1,6 +1,6 @@
 # Compensation and tax rules
 
-The browser uses `tax-engine.js` for tax-year limits, annual tax liability, bracket allocations, federal W-4 withholding and payment reconciliation. `compensation.js` calculates compensation, account contributions and payroll transactions against that engine. `tax-ui.js` explains the same result used in the monthly flow. `model.js` consumes the same results in the lifetime projection. Its original calculation path remains available for older programmatic callers without a compensation configuration.
+The browser uses `tax-engine.js` for tax-year limits, annual tax liability, bracket allocations, federal W-4 withholding and payment reconciliation. `compensation.js` calculates compensation, account contributions and payroll transactions against that engine. `tax-ui.js` explains the same result used in the monthly flow. `projection.js` computes the shared annual results from the versioned scenario. The monthly, tax and lifetime views consume those same results.
 
 ## Published baseline
 
@@ -139,3 +139,17 @@ California's income bars exclude federal-only income, include employer HSA fundi
 Sankey colors describe the current category: blue cash (including bonuses), gold equity (RSUs and ESPP), purple retirement/HSA, and red taxes/costs. Bands change category at account or tax destinations. Pooled ribbons can contain several categories; adjacent segments of the same category merge without changing values. The source allocation underneath remains illustrative and does not establish a new sale or withholding election. Closed filled curves replace thick strokes.
 
 The cash overview uses after-tax cash before living costs, living costs, and their difference before hypothetical asset use. Asset additions use the underlying flow before visual expense allocation. Current-month salary follows the scheduled paycheck count; the average uses annual salary divided by 12. Both views preserve annual salary.
+
+
+## Payroll benefit limits
+
+2026 healthcare FSA salary reductions use $3,400; transit and parking each use
+$340 per month. Future indexed values use the scenario's limit-growth assumption.
+Dependent-care exclusions use $7,500 federally, constrained by household earned
+income in the supported filing profiles. California retains $5,000; the model
+adds the federal excess back to California income. Eligibility is assumed when a
+reviewed deduction is classified in one of these categories. Employer caps may
+reduce the statutory amount. Recorded payroll amounts are preserved.
+
+Sources: [IRS Publication 15-B](https://www.irs.gov/publications/p15b) and
+[FTB federal conformity, section 70404](https://www.ftb.ca.gov/about-ftb/data-reports-plans/summary-of-federal-income-tax-changes/index.html).

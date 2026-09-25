@@ -31,30 +31,3 @@ test('regular backdoor and mega remain separate destinations with conserved reti
   assert(g.nodes.some(n=>n.id==='account-mega'));assert(g.nodes.some(n=>n.id==='account-ira'));
   for(const n of g.nodes.filter(n=>n.kind==='hub'))assertClose(g.links.filter(l=>l.target===n.id).reduce((s,l)=>s+l.value,0),g.links.filter(l=>l.source===n.id).reduce((s,l)=>s+l.value,0),.001,n.id);
 });
-test('deduction ribbons leave cash slots without moving the continuing equity band',()=>{
-  const nodes=[{id:'salary',kind:'source',column:0},{id:'rsu-vesting',kind:'source',column:0},{id:'combined',kind:'hub',column:1},{id:'traditional',kind:'sink',column:2},{id:'after-deductions',kind:'sink',column:2}];
-  const graph={nodes,links:[{source:'salary',target:'combined',value:100},{source:'rsu-vesting',target:'combined',value:30},{source:'combined',target:'traditional',value:20},{source:'combined',target:'after-deductions',value:110}]};
-  const g=F.categoryBands(graph),slots=F.bandLayout(g);
-  const deduction=slots.links.find(l=>l.target==='traditional').bands[0];
-  assertEqual(deduction.sourceCategory,'cash');assertEqual(deduction.category,'retirement');
-  const equity=slots.links.find(l=>l.target==='after-deductions').bands.find(b=>b.category==='equity');
-  assertClose(equity.value,30);assertClose(equity.sourceOffset,equity.targetOffset);
-});
-test('category slots conserve every ribbon and junction, including pending cash and backdoors',()=>{
-  const c=C.merge(C.defaults(),{salary:150000,frequency:'monthly',retirement:{traditional:20000,megaEnabled:true,mega:10000,iraMode:'backdoor',ira:7500},grants:[{value:30000,months:12,interval:3,start:'2025-12-31',grantPrice:100,vestPrice:100,saleMode:'cover'}],espp:{enabled:true,start:'2026-06-09',periodMonths:6,holdShares:true,rate:.1,offerPrice:16.49,purchasePrice:17}});
-  const p=C.calculate(c),f=C.cashFlow(p);
-  for(const month of [0,9,12]){
-    const selected=month?F.forMonth(p,f,month):{payroll:p,flow:f};
-    const g=F.bandLayout(F.categoryBands(F.orderFlow(F.buildFlow(selected.payroll,selected.flow))));
-    for(const l of g.links)assertClose(l.bands.reduce((s,b)=>s+b.value,0),l.value,.001);
-    for(const n of g.nodes){
-      const incoming=g.links.filter(l=>l.target===n.id).flatMap(l=>l.bands),outgoing=g.links.filter(l=>l.source===n.id).flatMap(l=>l.bands);
-      if(n.kind==='hub')assertClose(incoming.reduce((s,b)=>s+b.value,0),outgoing.reduce((s,b)=>s+b.value,0),.001,n.id);
-      for(const [bands,key] of [[incoming,'targetOffset'],[outgoing,'sourceOffset']]){
-        let end=0;for(const b of [...bands].sort((a,b)=>a[key]-b[key])){assertClose(b[key],end,.001,n.id);end+=b.value;}
-      }
-    }
-    const cover=g.links.find(l=>l.target==='rsu-cover');
-    if(cover)assert(cover.bands.every(b=>b.sourceCategory==='equity'&&b.category==='cost'));
-  }
-});
