@@ -72,6 +72,9 @@ test("every warning reaches something each view renders", () => {
     const n = UI.forView(warnings, view);
     const shown = [...n.attention, ...UI.INLINE[view].flatMap((k) => n[k])];
     for (const w of warnings) assert(shown.includes(w), `${view} drops: ${w}`);
-    assert(new Set(shown).size === shown.length, `${view} shows a warning twice`);
+    assert(
+      new Set(shown).size === shown.length,
+      `${view} shows a warning twice`,
+    );
   }
 });

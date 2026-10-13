@@ -302,7 +302,7 @@
       },
       ...pick(g, grantKeys),
     }));
-    for(const grant of scenario.compensation.grants) C.grantAllocations(grant);
+    for (const grant of scenario.compensation.grants) C.grantAllocations(grant);
     for (const [key, value] of Object.entries(u.elections || {}))
       if (
         [

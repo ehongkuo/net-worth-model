@@ -1,6 +1,12 @@
-const {describe,test,assert,assertClose,assertEqual}=require('./harness');
-const P=require('../paystub-parser');
-const fixture=`Pay Period Begin Pay Period End Check Date
+const {
+  describe,
+  test,
+  assert,
+  assertClose,
+  assertEqual,
+} = require("./harness");
+const P = require("../paystub-parser");
+const fixture = `Pay Period Begin Pay Period End Check Date
 08/24/2026 09/06/2026 09/04/2026
 Current and YTD Totals
 Current 0.00 6,386.15 1,408.52 1,660.65 1,903.86 1,413.12
@@ -33,28 +39,46 @@ Taxable Wages
 OASDI - Taxable Wages 6,151.15 86,364.02
 Medicare - Taxable Wages 6,151.15 86,364.02
 Federal Withholding - Taxable Wages 4,945.38 70,689.01`;
-describe('paystub review parser',()=>{
-  test('extracts check date, blank current cells, and reconciles a complete payroll',()=>{
-    const r=P.parse([{page:1,text:fixture}]);
-    assertEqual(r.date,'2026-09-04');assertClose(r.current.salary,6346.15);
-    assertClose(r.current.imputed,7.75);assertClose(r.ytd.imputed,177.75);
-    assertClose(r.current.employer,0);assertClose(r.ytd.employer,1500);
-    assertClose(r.netPay,1413.12);assert(P.validate(r).valid);
-    assert(r.lines.some(l=>l.label==='Gym Membership'&&l.current===null));
+describe("paystub review parser", () => {
+  test("extracts check date, blank current cells, and reconciles a complete payroll", () => {
+    const r = P.parse([{ page: 1, text: fixture }]);
+    assertEqual(r.date, "2026-09-04");
+    assertClose(r.current.salary, 6346.15);
+    assertClose(r.current.imputed, 7.75);
+    assertClose(r.ytd.imputed, 177.75);
+    assertClose(r.current.employer, 0);
+    assertClose(r.ytd.employer, 1500);
+    assertClose(r.netPay, 1413.12);
+    assert(P.validate(r).valid);
+    assert(
+      r.lines.some((l) => l.label === "Gym Membership" && l.current === null),
+    );
   });
-  test('unknown labels require mapping and wrong totals cannot be accepted',()=>{
-    const r=P.parse([{page:1,text:fixture.replace('Medical 24.00','Mystery 24.00')}]);
+  test("unknown labels require mapping and wrong totals cannot be accepted", () => {
+    const r = P.parse([
+      { page: 1, text: fixture.replace("Medical 24.00", "Mystery 24.00") },
+    ]);
     assert(!P.validate(r).valid);
-    r.lines.find(l=>l.label==='Mystery').key='health';P.rebuild(r);assert(P.validate(r).valid);
-    r.netPay+=10;assert(!P.validate(r).valid);
+    r.lines.find((l) => l.label === "Mystery").key = "health";
+    P.rebuild(r);
+    assert(P.validate(r).valid);
+    r.netPay += 10;
+    assert(!P.validate(r).valid);
   });
-  test('deduplicates normalized checks without relying on filenames',()=>{
-    const a=P.parse([{page:1,text:fixture}]);a.id='one';
-    assertEqual(P.mergeRecords([a],[{...a,id:'two'}]).length,1);
+  test("deduplicates normalized checks without relying on filenames", () => {
+    const a = P.parse([{ page: 1, text: fixture }]);
+    a.id = "one";
+    assertEqual(P.mergeRecords([a], [{ ...a, id: "two" }]).length, 1);
   });
-  test('a corrected check requires explicit replacement',()=>{
-    const a=P.parse([{page:1,text:fixture}]);a.id='one';
-    let rejected=false;try{P.mergeRecords([a],[{...a,id:'two',netPay:1000}]);}catch{rejected=true;}
+  test("a corrected check requires explicit replacement", () => {
+    const a = P.parse([{ page: 1, text: fixture }]);
+    a.id = "one";
+    let rejected = false;
+    try {
+      P.mergeRecords([a], [{ ...a, id: "two", netPay: 1000 }]);
+    } catch {
+      rejected = true;
+    }
     assert(rejected);
   });
 });

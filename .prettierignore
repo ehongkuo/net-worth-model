@@ -1,0 +1,5 @@
+node_modules/
+development-defaults.js
+package-lock.json
+*.md
+*.png
