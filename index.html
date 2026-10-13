@@ -12,18 +12,26 @@
         <strong>Net worth model</strong
         ><span class="muted">Your scenario, three views</span>
       </div>
-      <div class="toolbar">
-        <button id="export">Export scenario</button
-        ><label class="button"
-          >Import scenario<input
-            id="import"
-            type="file"
-            accept=".json"
-            hidden /></label
-        ><button id="inspect">Inspect scenario</button>
-      </div>
+      <details class="scenario-menu">
+        <summary>Scenario</summary>
+        <div class="toolbar">
+          <button id="export">Export scenario</button
+          ><label class="button"
+            >Import scenario<input
+              id="import"
+              type="file"
+              accept=".json"
+              hidden
+          /></label>
+          <details>
+            <summary>Advanced</summary>
+            <button id="inspect">Inspect scenario</button>
+          </details>
+        </div>
+      </details>
     </header>
     <p id="status" role="status"></p>
+    <div id="attention" aria-live="polite" hidden></div>
     <div class="workspace">
       <main>
         <nav aria-label="Views">
@@ -65,17 +73,15 @@
         <section id="profile" hidden>
           <div class="profile-heading">
             <p class="eyebrow">YOUR FINANCIAL PROFILE</p>
-            <h1>A clear picture, one step at a time.</h1>
-            <p>
-              Start with your tax information and a paycheck. We’ll do the math
-              and help you fill in the gaps.
-            </p>
+            <h1>Your profile</h1>
+            <p>Tax information, paychecks and plan details.</p>
           </div>
           <div class="profile-steps" aria-label="Setup steps">
             <button data-step="0">1 <span>About you</span></button
             ><button data-step="1">2 <span>Your paychecks</span></button
             ><button data-step="2">3 <span>Complete the picture</span></button>
           </div>
+          <div id="profile-overview"></div>
           <div id="profile-summary"></div>
           <div id="setup" aria-label="Scenario setup"></div>
           <div class="profile-actions">
@@ -92,22 +98,27 @@
           <div class="toolbar">
             <h1>Monthly flow</h1>
             <select id="period" aria-label="Monthly flow period">
-              <option value="0">Current earning pace (amortized)</option>
+              <option value="0">Earning pace (monthly average)</option>
             </select>
           </div>
           <div id="salary-context" class="salary-context"></div>
           <div id="flow"></div>
           <details>
-            <summary>Month-by-month reconciliation</summary>
+            <summary>Monthly schedule</summary>
             <div id="months" class="table-scroll"></div>
           </details>
           <details>
-            <summary>Paycheck observations and forecasts</summary>
+            <summary>Paychecks</summary>
+            <div id="history-notes"></div>
             <div id="checks" class="table-scroll"></div>
           </details>
         </section>
         <section id="tax" hidden>
-          <h1>Tax model</h1><p class="cf-note">Full-year estimate at current compensation and elections, matching the current earning-pace view. The calendar forecast and lifetime projection retain recorded YTD history.</p>
+          <h1>Tax model</h1>
+          <p class="view-subtitle">
+            Annual estimate at your current earning pace
+          </p>
+          <div id="tax-notes"></div>
           <div id="tax-explorer"></div>
         </section>
         <section id="lifetime" hidden>
@@ -150,6 +161,7 @@
     <script src="development-defaults.js"></script>
     <script src="input-rules.js"></script>
     <script src="profile.js"></script>
+    <script src="presentation.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

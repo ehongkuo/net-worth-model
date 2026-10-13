@@ -7,6 +7,7 @@ const files = new Set([
   "index.html",
   "style.css",
   "app.js",
+  "presentation.js",
   "input-rules.js",
   "profile.js",
   "scenario.js",
