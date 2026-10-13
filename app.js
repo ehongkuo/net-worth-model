@@ -74,6 +74,11 @@ function field(path, label, type = "number", hint = "") {
 }
 const group = (title, body, open = false) =>
   `<details ${open ? "open" : ""}><summary>${escape(title)}</summary><div class="field-grid">${body}</div></details>`;
+// Keeps a toggle beside the inputs it controls under a call-site title.
+const choices = (title, body) =>
+  body
+    ? `<fieldset class="choice-group"><legend>${escape(title)}</legend>${body}</fieldset>`
+    : "";
 const compactGroup = (title, body) =>
   `<section class="paycheck-group"><h3>${escape(title)}</h3><div class="field-grid">${body}</div></section>`;
 function setup() {
@@ -125,10 +130,13 @@ function setup() {
           ["annual-estimate", "Estimated annual tax"],
           ["w4", "W-4 payroll method"],
         ]) +
-        field(t + "settings.w4Credits", "W-4 annual credits") +
-        field(t + "settings.w4OtherIncome", "W-4 other income") +
-        field(t + "settings.w4Deductions", "W-4 deductions") +
-        field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check") +
+        choices(
+          "W-4 payroll withholding",
+          field(t + "settings.w4Credits", "W-4 annual credits") +
+            field(t + "settings.w4OtherIncome", "W-4 other income") +
+            field(t + "settings.w4Deductions", "W-4 deductions") +
+            field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check"),
+        ) +
         field(
           t + "settings.caGrowth2026",
           "California 2026 bracket adjustment",
@@ -166,107 +174,142 @@ function setup() {
       "Employer pays this portion of matched contributions",
       "percent",
     ) +
-    field(r + "megaEnabled", "After-tax retirement contributions", "check") +
-    (plan.retirement.megaEnabled
-      ? field(
-          r + "megaAnnualCap",
-          "Employer annual mega backdoor cap",
-          "number",
-          "Blank means no employer cap beyond IRS limits.",
-        )
-      : "") +
-    field(r + "iraMode", "IRA strategy", [
-      ["backdoor", "Backdoor Roth IRA"],
-      ["roth", "Direct Roth IRA"],
-      ["traditional", "Traditional IRA"],
-    ]) +
-    field(r + "maxIra", "Maximize annual IRA contribution", "check") +
-    (!plan.retirement.maxIra
-      ? field(r + "ira", "Annual IRA contribution")
-      : "") +
-    (plan.retirement.iraMode === "backdoor"
-      ? field(
-          r + "iraPretaxBalance",
-          "Other pre-tax IRA balance",
-          "number",
-          "Starting Traditional IRA balances also enter the pro-rata calculation.",
-        ) + field(r + "iraBasis", "Existing nondeductible IRA basis")
-      : "");
+    choices(
+      "After-tax 401(k)",
+      field(r + "megaEnabled", "After-tax retirement contributions", "check") +
+        (plan.retirement.megaEnabled
+          ? field(
+              r + "megaAnnualCap",
+              "Employer annual mega backdoor cap",
+              "number",
+              "Blank means no employer cap beyond IRS limits.",
+            )
+          : ""),
+    ) +
+    choices(
+      "IRA contributions",
+      field(r + "iraMode", "IRA strategy", [
+        ["backdoor", "Backdoor Roth IRA"],
+        ["roth", "Direct Roth IRA"],
+        ["traditional", "Traditional IRA"],
+      ]) +
+        field(r + "maxIra", "Maximize annual IRA contribution", "check") +
+        (!plan.retirement.maxIra
+          ? field(r + "ira", "Annual IRA contribution")
+          : "") +
+        (plan.retirement.iraMode === "backdoor"
+          ? field(
+              r + "iraPretaxBalance",
+              "Other pre-tax IRA balance",
+              "number",
+              "Starting Traditional IRA balances also enter the pro-rata calculation.",
+            ) + field(r + "iraBasis", "Existing nondeductible IRA basis")
+          : ""),
+    );
   const hsa =
     electionField("hsa") +
-    field(h + "eligible", "HSA eligible", "check") +
-    (plan.hsa.eligible
-      ? field(h + "coverage", "HSA coverage", [
-          ["single", "Self-only"],
-          ["family", "Family"],
-        ]) +
-        (Profile.describe(scenario).last?.current.hsaEmployer != null
-          ? `<p class="cf-note">Employer HSA funding: ${money(Profile.describe(scenario).last.current.hsaEmployer)} per paycheck, from your upload.</p>`
-          : field(h + "employer", "Annual employer HSA contribution")) +
-        field(h + "eligibleMonths", "Eligible months")
-      : "");
+    choices(
+      "HSA eligibility & funding",
+      field(h + "eligible", "HSA eligible", "check") +
+        (plan.hsa.eligible
+          ? field(h + "coverage", "HSA coverage", [
+              ["single", "Self-only"],
+              ["family", "Family"],
+            ]) +
+            (Profile.describe(scenario).last?.current.hsaEmployer != null
+              ? `<p class="cf-note">Employer HSA funding: ${money(Profile.describe(scenario).last.current.hsaEmployer)} per paycheck, from your upload.</p>`
+              : field(h + "employer", "Annual employer HSA contribution")) +
+            field(h + "eligibleMonths", "Eligible months")
+          : ""),
+    );
   const espp =
-    field(e + "enabled", "Participate in ESPP", "check") +
+    choices(
+      "Participation",
+      field(e + "enabled", "Participate in ESPP", "check") +
+        (plan.espp.enabled
+          ? field(e + "rate", "Payroll contribution", "percent") +
+            field(
+              e + "bonusEligible",
+              "Include bonus in eligible ESPP pay",
+              "check",
+            )
+          : ""),
+    ) +
     (plan.espp.enabled
-      ? field(e + "rate", "Payroll contribution", "percent") +
-        field(
-          e + "bonusEligible",
-          "Include bonus in eligible ESPP pay",
-          "check",
+      ? choices(
+          "Offerings",
+          field(e + "start", "First offering start", "date") +
+            field(e + "end", "First offering end (optional)", "date") +
+            field(e + "periodMonths", "Months per offering") +
+            field(
+              e + "autoEnroll",
+              "Automatically enroll in subsequent offerings",
+              "check",
+            ) +
+            field(
+              e + "firstEnrollmentDate",
+              "First offering you participate in (optional)",
+              "date",
+            ),
         ) +
-        field(e + "start", "First offering start", "date") +
-        field(e + "end", "First offering end (optional)", "date") +
-        field(e + "periodMonths", "Months per offering") +
-        field(
-          e + "autoEnroll",
-          "Automatically enroll in subsequent offerings",
-          "check",
+        choices(
+          "Purchase rules",
+          field(e + "discount", "Purchase discount", "percent") +
+            field(
+              e + "lookback",
+              "Use lower of offering and purchase price",
+              "check",
+            ) +
+            field(e + "offerPrice", "Offering share price") +
+            field(e + "purchasePrice", "Expected purchase-date share price") +
+            field(
+              e + "shareCap",
+              "Maximum shares per offering (0 means none)",
+            ) +
+            field(
+              e + "annualPayrollCap",
+              "Employer annual payroll cap (0 means none)",
+            ) +
+            field(
+              e + "annualFmvLimit",
+              "Qualified-plan annual grant-date value limit",
+            ) +
+            field(e + "fractional", "Allow fractional shares", "check"),
         ) +
-        field(
-          e + "firstEnrollmentDate",
-          "First offering you participate in (optional)",
-          "date",
-        ) +
-        field(e + "discount", "Purchase discount", "percent") +
-        field(
-          e + "lookback",
-          "Use lower of offering and purchase price",
-          "check",
-        ) +
-        field(e + "offerPrice", "Offering share price") +
-        field(e + "purchasePrice", "Expected purchase-date share price") +
-        field(e + "shareCap", "Maximum shares per offering (0 means none)") +
-        field(
-          e + "annualPayrollCap",
-          "Employer annual payroll cap (0 means none)",
-        ) +
-        field(
-          e + "annualFmvLimit",
-          "Qualified-plan annual grant-date value limit",
-        ) +
-        field(e + "fractional", "Allow fractional shares", "check") +
-        field(e + "holdShares", "Hold purchased shares", "check") +
-        (!plan.espp.holdShares
-          ? field(e + "salePrice", "Expected sale price") +
-            field(e + "holdMonths", "Months until sale")
-          : "")
+        choices(
+          "After purchase",
+          field(e + "holdShares", "Hold purchased shares", "check") +
+            (!plan.espp.holdShares
+              ? field(e + "salePrice", "Expected sale price") +
+                field(e + "holdMonths", "Months until sale")
+              : ""),
+        )
       : "");
   const fallback =
-    field(r + "max401k", "Maximize employee 401(k)", "check") +
-    (!plan.retirement.max401k
-      ? field(r + "traditional", "Annual Traditional 401(k) election")
-      : "") +
-    field(r + "roth", "Annual Roth 401(k) election") +
+    choices(
+      "401(k) elections",
+      field(r + "max401k", "Maximize employee 401(k)", "check") +
+        (!plan.retirement.max401k
+          ? field(r + "traditional", "Annual Traditional 401(k) election")
+          : "") +
+        field(r + "roth", "Annual Roth 401(k) election"),
+    ) +
     (plan.retirement.megaEnabled
-      ? field(r + "maxMega", "Maximize mega backdoor", "check") +
-        (!plan.retirement.maxMega
-          ? field(r + "mega", "Annual mega backdoor election")
-          : "")
+      ? choices(
+          "Mega backdoor election",
+          field(r + "maxMega", "Maximize mega backdoor", "check") +
+            (!plan.retirement.maxMega
+              ? field(r + "mega", "Annual mega backdoor election")
+              : ""),
+        )
       : "") +
-    field(h + "maxContribution", "Maximize employee HSA", "check") +
-    (!plan.hsa.maxContribution
-      ? field(h + "employee", "Annual employee HSA contribution")
-      : "");
+    choices(
+      "HSA election",
+      field(h + "maxContribution", "Maximize employee HSA", "check") +
+        (!plan.hsa.maxContribution
+          ? field(h + "employee", "Annual employee HSA contribution")
+          : ""),
+    );
   const grants = scenario.compensation.grants
     .map((g, i) =>
       group(
@@ -275,28 +318,35 @@ function setup() {
           field(c + `grants.${i}.value`, "Total grant value") +
           field(c + `grants.${i}.grantPrice`, "Grant-date share price") +
           field(c + `grants.${i}.vestPrice`, "Assumed vest-date share price") +
-          field(c + `grants.${i}.start`, "Grant date", "date") +
-          field(c + `grants.${i}.months`, "Vesting duration (years)", "years") +
-          field(
-            c + `grants.${i}.evenVesting`,
-            "Even vesting schedule",
-            "check",
+          choices(
+            "Vesting schedule",
+            field(c + `grants.${i}.start`, "Grant date", "date") +
+              field(
+                c + `grants.${i}.months`,
+                "Vesting duration (years)",
+                "years",
+              ) +
+              field(
+                c + `grants.${i}.evenVesting`,
+                "Even vesting schedule",
+                "check",
+              ) +
+              `<label class="profile-cell"><span>Annual allocations (%)</span><input data-grant-allocation="${i}" value="${EquitySchedule.allocations(
+                g,
+              )
+                .map((x) => Number(x.toFixed(6)))
+                .join(
+                  " / ",
+                )}" ${g.evenVesting !== false ? "readonly" : ""} aria-label="Annual allocations for ${escape(g.name)}"><small>${g.evenVesting !== false ? "Calculated from the vesting duration." : "One percentage per grant year, separated by /. Must total 100%."}</small></label>` +
+              field(c + `grants.${i}.cliff`, "Cliff (months)") +
+              field(c + `grants.${i}.interval`, "Vesting interval (months)") +
+              field(c + `grants.${i}.repeat`, "Repeat grant annually", "check"),
           ) +
-          `<label class="profile-cell"><span>Annual allocations (%)</span><input data-grant-allocation="${i}" value="${EquitySchedule.allocations(
-            g,
-          )
-            .map((x) => Number(x.toFixed(6)))
-            .join(
-              " / ",
-            )}" ${g.evenVesting !== false ? "readonly" : ""} aria-label="Annual allocations for ${escape(g.name)}"><small>${g.evenVesting !== false ? "Calculated from the vesting duration." : "One percentage per grant year, separated by /. Must total 100%."}</small></label>` +
-          field(c + `grants.${i}.cliff`, "Cliff (months)") +
-          field(c + `grants.${i}.interval`, "Vesting interval (months)") +
           field(c + `grants.${i}.saleMode`, "At vest", [
             ["cover", "Sell to cover taxes"],
             ["hold", "Hold all shares"],
             ["sell", "Sell all shares"],
           ]) +
-          field(c + `grants.${i}.repeat`, "Repeat grant annually", "check") +
           (() => {
             const v = Profile.grantPreview(g),
               pace = EquitySchedule.pace(
@@ -480,39 +530,6 @@ function setup() {
     .forEach((section) => {
       const count = section.querySelectorAll(".state-review").length;
       if (count) section.querySelector("summary").dataset.reviewCount = count;
-    });
-  $("setup")
-    .querySelectorAll(".field-grid")
-    .forEach((grid) => {
-      const choices = [...grid.children].filter(
-        (cell) =>
-          cell.classList.contains("profile-cell") &&
-          cell.querySelector('[data-type="check"]'),
-      );
-      if (!choices.length) return;
-      const groups = new Map();
-      for (const cell of choices) {
-        const path = cell.querySelector('[data-type="check"]').dataset.path;
-        const title = path.startsWith("employerPlan.espp.")
-          ? "ESPP participation & purchase rules"
-          : path.startsWith("employerPlan.hsa.")
-            ? "HSA eligibility & funding"
-            : path.startsWith("compensation.grants.")
-              ? "Vesting options"
-              : path.startsWith("taxProfile.")
-                ? "Payroll tax options"
-                : "Retirement contribution options";
-        if (!groups.has(title)) {
-          const group = document.createElement("fieldset"),
-            legend = document.createElement("legend");
-          group.className = "choice-group";
-          legend.textContent = title;
-          group.append(legend);
-          groups.set(title, group);
-        }
-        groups.get(title).append(cell);
-      }
-      grid.prepend(...groups.values());
     });
   $("setup")
     .querySelectorAll("[data-confirm]")
