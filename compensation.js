@@ -1349,24 +1349,34 @@
   // After-tax outcome of selling the current ESPP purchase at three horizons:
   // at purchase, after one year (still disqualifying unless the offering is old
   // enough), and once the sale qualifies. Each sale's tax is the increase in the
-  // household's full-year tax when that sale is added to this year's income, so
-  // brackets, NIIT and California's treatment of gains all apply.
-  function esppSaleComparison(input, taxes, asOf) {
+  // household's full-year tax when that sale is added to this year's income with
+  // the model's own ESPP sales removed, so brackets, NIIT and California's
+  // treatment of gains apply without counting this lot twice.
+  // The lot comes from the calendar ledger (the purchase the engine models,
+  // including uploaded contributions and the annual FMV limit); `lots` are the
+  // current year's ledger lots, and later purchase years are computed on demand.
+  function esppSaleComparison(input, payroll, { asOf, lots = [] } = {}) {
     const c = merge(defaults(), input),
       e = c.espp,
-      audit = taxes?.audit;
+      audit = payroll?.taxes?.audit;
     if (!e.enabled || !audit) return null;
     const pace = EquitySchedule.esppPace(c, asOf);
-    const shares = pace.active ? pace.monthlyShares * pace.periodMonths : 0;
-    if (!shares) return null;
+    if (!pace.active) return null;
+    const { purchaseDate } = offeringDates(e, pace.start);
+    const ledger =
+      lots.find((l) => l.grantDate === pace.start) ||
+      calculate(c, Number(purchaseDate.slice(0, 4))).espp.lots.find(
+        (l) => l.grantDate === pace.start,
+      );
+    if (!ledger?.shares) return null;
     const lot = {
-      grantDate: pace.start,
-      purchaseDate: pace.end,
-      shares,
-      cost: shares * pace.price,
-      grantPrice: pace.grantPrice,
-      purchasePrice: pace.marketPrice,
-      discount: pace.discount,
+      grantDate: ledger.grantDate,
+      purchaseDate: ledger.purchaseDate,
+      shares: ledger.shares,
+      cost: ledger.cost,
+      grantPrice: ledger.grantPrice,
+      purchasePrice: ledger.purchasePrice,
+      discount: ledger.discount,
     };
     const dayAfter = (s) => iso(new Date(date(s).getTime() + 86400000));
     const longTerm = dayAfter(addMonths(lot.purchaseDate, 12));
@@ -1374,25 +1384,32 @@
       dayAfter(addMonths(lot.grantDate, 24)),
       longTerm,
     ].sort()[1];
-    const baseTax = TaxEngine.calculate(
-      audit.income,
-      audit.year,
-      audit.settings,
-    ).total;
+    const own = payroll.espp || {};
+    const base = {
+      ...audit.income,
+      ordinary: (audit.income.ordinary || 0) - (own.ordinary || 0),
+      shortGain: (audit.income.shortGain || 0) - (own.shortGain || 0),
+      longGain: (audit.income.longGain || 0) - (own.longGain || 0),
+    };
+    const baseTax = TaxEngine.calculate(base, audit.year, audit.settings).total;
+    const qualifiedPlan = e.qualifiedPlan !== false;
+    // Non-qualified: the spread was already taxed as wages, so profit is measured
+    // against purchase-date value rather than cash cost.
+    const basis = qualifiedPlan ? lot.cost : lot.shares * lot.purchasePrice;
     const futurePrice = positive(e.salePrice) || lot.purchasePrice;
     const scenarios = [
       ["now", "Sell at purchase", lot.purchaseDate, lot.purchasePrice],
       ["year", "Hold 1 year", longTerm, futurePrice],
       ["qualify", "Hold to qualify", qualifying, futurePrice],
     ].map(([id, label, saleDate, price]) => {
-      const sale = sellLot(lot, saleDate, price, e.fee, e.qualifiedPlan);
+      const sale = sellLot(lot, saleDate, price, e.fee, qualifiedPlan);
       const tax =
         TaxEngine.calculate(
           {
-            ...audit.income,
-            ordinary: (audit.income.ordinary || 0) + sale.ordinary,
-            shortGain: (audit.income.shortGain || 0) + sale.shortGain,
-            longGain: (audit.income.longGain || 0) + sale.longGain,
+            ...base,
+            ordinary: base.ordinary + sale.ordinary,
+            shortGain: base.shortGain + sale.shortGain,
+            longGain: base.longGain + sale.longGain,
           },
           audit.year,
           audit.settings,
@@ -1406,16 +1423,15 @@
         ...sale,
         tax,
         afterTax,
-        profit: afterTax - lot.cost,
+        profit: afterTax - basis,
       };
     });
-    const best = scenarios.reduce((a, b) => (b.afterTax > a.afterTax ? b : a));
-    return {
-      lot,
-      scenarios,
-      best: best.id,
-      qualifiedPlan: e.qualifiedPlan !== false,
-    };
+    const cash = scenarios.map((v) => v.afterTax);
+    const best =
+      Math.max(...cash) - Math.min(...cash) < 0.01
+        ? null
+        : scenarios.reduce((a, b) => (b.afterTax > a.afterTax ? b : a)).id;
+    return { lot, scenarios, best, qualifiedPlan };
   }
   const api = {
     grantAllocations: EquitySchedule.allocations,

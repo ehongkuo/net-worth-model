@@ -742,11 +742,10 @@ function render() {
       result.ongoing.flow,
     );
     renderEsppComparison(
-      Compensation.esppSaleComparison(
-        c,
-        result.ongoing.flow.taxes,
-        result.ongoing.payroll.earningPace.asOf,
-      ),
+      Compensation.esppSaleComparison(c, result.ongoing.payroll, {
+        asOf: result.ongoing.payroll.earningPace.asOf,
+        lots: row.payroll.espp.lots,
+      }),
     );
   } else renderProjection();
   const payroll =
@@ -778,10 +777,16 @@ function renderEsppComparison(x) {
     row("Capital gain", gain),
     row("Added tax this year", (v) => money(v.tax)),
     row("After-tax cash", (v) => money(v.afterTax)),
-    row("Profit over cost", (v) => money(v.profit)),
+    row(
+      x.qualifiedPlan ? "Profit over cost" : "Profit over purchase value",
+      (v) => money(v.profit),
+    ),
   ];
-  const best = s.find((v) => v.id === x.best);
-  host.innerHTML = `<section class="espp-compare"><h2>ESPP sale timing</h2><p class="view-subtitle">Current purchase: ${x.lot.shares.toLocaleString("en-US", { maximumFractionDigits: 4 })} shares bought ${escape(x.lot.purchaseDate)} for ${money(x.lot.cost)}. Highest after-tax cash: <strong>${escape(best.label)}</strong>.</p><div class="table-scroll"><table class="data-table"><thead><tr><th></th>${s.map((v) => `<th${v.id === x.best ? ' class="espp-best"' : ""}>${escape(v.label)}</th>`).join("")}</tr></thead><tbody>${rows
+  const best = s.find((v) => v.id === x.best),
+    verdict = best
+      ? `Highest after-tax cash: <strong>${escape(best.label)}</strong>.`
+      : "After-tax cash is the same at every horizon.";
+  host.innerHTML = `<section class="espp-compare"><h2>ESPP sale timing</h2><p class="view-subtitle">Current purchase: ${x.lot.shares.toLocaleString("en-US", { maximumFractionDigits: 4 })} shares bought ${escape(x.lot.purchaseDate)} for ${money(x.lot.cost)}. ${verdict}</p><div class="table-scroll"><table class="data-table"><thead><tr><th></th>${s.map((v) => `<th${v.id === x.best ? ' class="espp-best"' : ""}>${escape(v.label)}</th>`).join("")}</tr></thead><tbody>${rows
     .map(
       (r) =>
         `<tr><th>${escape(r[0])}</th>${r
@@ -794,7 +799,7 @@ function renderEsppComparison(x) {
     )
     .join(
       "",
-    )}</tbody></table></div><details class="context-help"><summary>How this is calculated</summary><p>Selling at purchase uses the purchase-date price. Holding uses your assumed ESPP sale price, so the difference also reflects that price assumption.</p><p>Each column's tax is the increase in this year's full household tax estimate when that sale is added, at this year's brackets.</p><p>${x.qualifiedPlan ? "Qualified (Section 423) plan. A sale qualifies more than two years after the offering starts and more than one year after purchase. Earlier sales are disqualifying: the purchase-date discount is ordinary income even if the price falls." : "Non-qualified plan. The purchase discount is taxed as wages when you buy, so it is the same in every column and not shown. Only the later gain or loss differs."}</p></details></section>`;
+    )}</tbody></table></div><details class="context-help"><summary>How this is calculated</summary><p>Selling at purchase uses the purchase-date price. Holding uses your assumed ESPP sale price, so the difference also reflects that price assumption.</p><p>Each column's tax is the increase in this year's full household tax estimate when that sale is added, at this year's brackets, even when the sale falls in a later year. Losses beyond the $3,000 annual deduction carry forward and are not credited here. The columns ignore the time value of money and the risk that the price changes while you hold.</p><p>${x.qualifiedPlan ? "Qualified (Section 423) plan. A sale qualifies more than two years after the offering starts and more than one year after purchase. Earlier sales are disqualifying: the purchase-date discount is ordinary income even if the price falls." : "Non-qualified plan. The purchase discount is taxed as wages when you buy, so it is the same in every column and not shown. Only the later gain or loss differs."}</p></details></section>`;
 }
 function renderProjection() {
   const rows = result.rows,
