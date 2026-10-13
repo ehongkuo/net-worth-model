@@ -417,7 +417,7 @@
               options.payrollSchedule?.rows.find((r) => r.date === payday)
                 ?.source !== "uploaded" &&
               e.stopAtAnnualLimit &&
-              (usage[cy] || 0) >= positive(e.annualFmvLimit) - 0.000001
+              (usage[cy] || 0) >= EquitySchedule.esppFmvLimit(e, cy) - 0.000001
             )
               continue;
             const salaryPart = (annual / checks.length) * rate;
@@ -470,7 +470,12 @@
           stockAssets += cash;
           continue;
         }
-        // Calendar ledger: FMV room is tracked per purchase year across offerings.
+        // Calendar ledger: FMV room is tracked per purchase year, shared by all
+        // offerings. This is a conservative simplification of Reg. 1.423-2(i): it
+        // never allows more than the regulation, but it can allow less when an
+        // offering spans a year whose $25,000 went unused (e.g. a first Nov-May
+        // offering, or offerings longer than 12 months), because unused room is
+        // not carried forward within the option.
         const {
           shares,
           price,
@@ -478,6 +483,7 @@
           refund,
           grantPrice: gp,
           marketPrice: pp,
+          discount,
         } = EquitySchedule.esppPurchase(e, {
           cash,
           offerPrice: election.offerPrice ?? e.offerPrice,
@@ -494,7 +500,7 @@
           cost,
           grantPrice: gp,
           purchasePrice: pp,
-          discount: e.discount,
+          discount,
           saleDate,
           refund,
         };
@@ -626,6 +632,10 @@
       r.max401k ? r.roth : r.roth * grow,
       employeeRoom - traditional,
     );
+    if (c.espp.enabled && c.espp.qualifiedPlan && c.espp.discount > 0.15)
+      warnings.push(
+        "ESPP discount above 15% is not allowed for a qualified (Section 423) plan; review the plan type.",
+      );
     if (
       catchup &&
       (r.priorYearWages || (r.max401k ? salary / (1 + c.salaryGrowth) : 0)) >

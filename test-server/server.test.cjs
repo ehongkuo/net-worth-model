@@ -25,6 +25,10 @@ test("local preview serves the scenario app and rejects private files and remove
       );
     }
     assert(html.indexOf('src="util.js"') < html.indexOf('src="tax-engine.js"'));
+    assert(
+      html.indexOf('src="tax-engine.js"') <
+        html.indexOf('src="equity-schedule.js"'),
+    );
     assert(!html.includes("market-ui"));
     for (const path of [
       "/.env",

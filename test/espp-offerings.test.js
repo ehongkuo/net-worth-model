@@ -288,3 +288,26 @@ test("clearing an offering override restores the plan baseline", () => {
   );
   assert(restored.espp.enrollments["2026-06-09"].offerPrice === undefined);
 });
+
+test("stopAtAnnualLimit uses the statutory limit when the plan leaves it unset", () => {
+  const p = C.calculate(
+    C.merge(C.defaults(), {
+      salary: 1000000,
+      frequency: "monthly",
+      firstPayday: "2026-01-15",
+      espp: {
+        ...plan,
+        annualFmvLimit: null,
+        stopAtAnnualLimit: true,
+        fractional: true,
+        rate: 0.15,
+        offerPrice: 13,
+        purchasePrice: 15,
+      },
+    }),
+    2026,
+  );
+  assert(p.espp.contributions > 0);
+  const shares = p.espp.lots.reduce((n, l) => n + l.shares, 0);
+  assert(shares > 0 && shares * 13 <= 25000 + 0.01);
+});

@@ -123,3 +123,34 @@ test("FMV limit is the statutory $25,000 unless the plan sets a lower one", () =
   assert(esppFmvLimit({ annualFmvLimit: 10000 }, 2030) === 10000);
   assert(esppFmvLimit({ annualFmvLimit: 40000 }, 2030) === 25000);
 });
+
+test("fee only reduces the capital gain when the gain is below the offering discount", () => {
+  // Gross gain 200.05 < discount 247.05, so ordinary income is the gross gain.
+  check(sellLot(lot, "2026-07-01", 16, 10), {
+    proceeds: 1590,
+    ordinary: 200.05,
+    longGain: -10,
+  });
+});
+test("holding-period boundaries are strict", () => {
+  // Exactly one year after purchase is still short-term.
+  check(sellLot(lot, "2025-06-30", 20), { shortGain: 200, longGain: 0 });
+  // Exactly two years after the offering starts is still disqualifying.
+  const late = { ...lot, purchaseDate: "2024-12-31" };
+  check(sellLot(late, "2026-01-01", 20), { qualified: false });
+  check(sellLot(late, "2026-01-02", 20), { qualified: true });
+});
+test("non-qualified sale at a loss is a capital loss against purchase-date FMV", () => {
+  check(sellLot(lot, "2024-09-30", 15, 0, false), {
+    ordinary: 0,
+    shortGain: -300,
+  });
+});
+test("a qualified plan with a discount above 15% is flagged", () => {
+  const C = require("../compensation");
+  const p = C.calculate(
+    C.merge(C.defaults(), { espp: { enabled: true, discount: 0.2 } }),
+    2026,
+  );
+  assert(p.warnings.some((w) => w.startsWith("ESPP discount above 15%")));
+});
