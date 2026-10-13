@@ -4,18 +4,7 @@
     typeof module !== "undefined" && module.exports
       ? require("./util")
       : root.Util;
-  const { positive, clamp } = Util;
-  function merge(a, b) {
-    const out = { ...a };
-    for (const [k, v] of Object.entries(b || {})) {
-      if (["__proto__", "constructor", "prototype"].includes(k)) continue;
-      out[k] =
-        v && typeof v === "object" && !Array.isArray(v)
-          ? merge(a?.[k] || {}, v)
-          : v;
-    }
-    return out;
-  }
+  const { positive, clamp, merge } = Util;
   function defaults() {
     return {
       filing: "single",

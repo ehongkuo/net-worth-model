@@ -15,6 +15,16 @@ test("local preview serves the scenario app and rejects private files and remove
       assert(html.includes(file));
       assert.equal((await fetch(base + "/" + file)).status, 200);
     }
+    // Every script the page references must be served, or the app fails to boot.
+    for (const [, src] of html.matchAll(/<script src="([^"]+)"/g)) {
+      if (src === "development-defaults.js") continue; // personal, gitignored
+      assert.equal(
+        (await fetch(base + "/" + src)).status,
+        200,
+        `${src} is not served`,
+      );
+    }
+    assert(html.indexOf('src="util.js"') < html.indexOf('src="tax-engine.js"'));
     assert(!html.includes("market-ui"));
     for (const path of [
       "/.env",

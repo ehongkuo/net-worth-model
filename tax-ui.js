@@ -106,7 +106,10 @@ function renderTaxExplorer(container, config, payroll, flow) {
       (el) => el.dataset.taxDetail,
     ),
   );
-  const { money, escape: safe } = Util;
+  const { money, escape: safe } =
+    typeof module !== "undefined" && module.exports
+      ? require("./util")
+      : globalThis.Util;
   const compact = (n) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",

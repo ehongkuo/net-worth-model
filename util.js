@@ -38,8 +38,22 @@
     );
     return isoDate(d);
   }
+  // Deep merge of plain objects (arrays replace). Skips prototype-polluting keys
+  // because merged input can come from imported scenario files.
+  function merge(a, b) {
+    const out = { ...a };
+    for (const [key, value] of Object.entries(b || {})) {
+      if (["__proto__", "constructor", "prototype"].includes(key)) continue;
+      out[key] =
+        value && typeof value === "object" && !Array.isArray(value)
+          ? merge(a?.[key] || {}, value)
+          : value;
+    }
+    return out;
+  }
   const api = {
     escape,
+    merge,
     money,
     positive,
     clamp,

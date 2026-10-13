@@ -32,3 +32,11 @@ test("positive and clamp coerce bad input to zero", () => {
       Util.clamp("x", 0, 1) === 0,
   );
 });
+test("merge deep-merges objects, replaces arrays and ignores prototype keys", () => {
+  const out = Util.merge(
+    { a: { b: 1, c: 2 }, list: [1, 2] },
+    JSON.parse('{"a":{"c":3},"list":[9],"__proto__":{"polluted":true}}'),
+  );
+  assert(out.a.b === 1 && out.a.c === 3 && out.list.length === 1);
+  assert({}.polluted === undefined && out.polluted === undefined);
+});
