@@ -1346,8 +1346,80 @@
     };
     return result;
   }
+  // After-tax outcome of selling the current ESPP purchase at three horizons:
+  // at purchase, after one year (still disqualifying unless the offering is old
+  // enough), and once the sale qualifies. Each sale's tax is the increase in the
+  // household's full-year tax when that sale is added to this year's income, so
+  // brackets, NIIT and California's treatment of gains all apply.
+  function esppSaleComparison(input, taxes, asOf) {
+    const c = merge(defaults(), input),
+      e = c.espp,
+      audit = taxes?.audit;
+    if (!e.enabled || !audit) return null;
+    const pace = EquitySchedule.esppPace(c, asOf);
+    const shares = pace.active ? pace.monthlyShares * pace.periodMonths : 0;
+    if (!shares) return null;
+    const lot = {
+      grantDate: pace.start,
+      purchaseDate: pace.end,
+      shares,
+      cost: shares * pace.price,
+      grantPrice: pace.grantPrice,
+      purchasePrice: pace.marketPrice,
+      discount: pace.discount,
+    };
+    const dayAfter = (s) => iso(new Date(date(s).getTime() + 86400000));
+    const longTerm = dayAfter(addMonths(lot.purchaseDate, 12));
+    const qualifying = [
+      dayAfter(addMonths(lot.grantDate, 24)),
+      longTerm,
+    ].sort()[1];
+    const baseTax = TaxEngine.calculate(
+      audit.income,
+      audit.year,
+      audit.settings,
+    ).total;
+    const futurePrice = positive(e.salePrice) || lot.purchasePrice;
+    const scenarios = [
+      ["now", "Sell at purchase", lot.purchaseDate, lot.purchasePrice],
+      ["year", "Hold 1 year", longTerm, futurePrice],
+      ["qualify", "Hold to qualify", qualifying, futurePrice],
+    ].map(([id, label, saleDate, price]) => {
+      const sale = sellLot(lot, saleDate, price, e.fee, e.qualifiedPlan);
+      const tax =
+        TaxEngine.calculate(
+          {
+            ...audit.income,
+            ordinary: (audit.income.ordinary || 0) + sale.ordinary,
+            shortGain: (audit.income.shortGain || 0) + sale.shortGain,
+            longGain: (audit.income.longGain || 0) + sale.longGain,
+          },
+          audit.year,
+          audit.settings,
+        ).total - baseTax;
+      const afterTax = sale.proceeds - tax;
+      return {
+        id,
+        label,
+        saleDate,
+        price,
+        ...sale,
+        tax,
+        afterTax,
+        profit: afterTax - lot.cost,
+      };
+    });
+    const best = scenarios.reduce((a, b) => (b.afterTax > a.afterTax ? b : a));
+    return {
+      lot,
+      scenarios,
+      best: best.id,
+      qualifiedPlan: e.qualifiedPlan !== false,
+    };
+  }
   const api = {
     grantAllocations: EquitySchedule.allocations,
+    esppSaleComparison,
     ongoing,
     offeringDates,
     rsuMode,
