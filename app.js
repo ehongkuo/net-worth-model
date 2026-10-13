@@ -341,7 +341,7 @@ function setup() {
       ["monthly", "Monthly"],
       ["weekly", "Weekly"],
     ]) +
-    field(c + "firstPayday", "Payday anchor", "date") +
+    field(c + "firstPayday", "A recent payday", "date") +
     field(c + "stockGrowth", "Annual company stock growth", "percent") +
     `<div id="grant-timeline" class="grant-preview"></div>` +
     grants +
@@ -678,7 +678,14 @@ function render() {
     const notes = Presentation.notices(selected.payroll.warnings);
     $("salary-context").innerHTML =
       `<span class="context-chip">${month ? `Scheduled · ${row.year}` : `As of ${escape(selected.payroll.earningPace.asOf)}`}</span><details class="context-help"><summary>How this view works</summary><p>${month ? "Scheduled paychecks, vesting and purchases for this month." : "Your current salary, grant-year allocations and ESPP cycle averaged monthly, with annual contribution limits."}</p><p>Asset additions are new funding before expenses. Spending follows cash, equity, then retirement; additional sale taxes are not modeled.</p>${notes.assumptions.map((n) => `<p>${escape(n)}</p>`).join("")}</details>`;
-    const history = Presentation.notices(row.payroll.warnings).history;
+    // Include the selected payroll's history notes too: the attention list reads
+    // from it, and history notes are excluded there on this view.
+    const history = [
+      ...new Set([
+        ...Presentation.notices(row.payroll.warnings).history,
+        ...Presentation.notices(selected.payroll.warnings).history,
+      ]),
+    ];
     $("history-notes").innerHTML = history.length
       ? `<details class="context-help"><summary>Estimated history</summary>${history.map((n) => `<p>${escape(n)}</p>`).join("")}</details>`
       : "";
@@ -740,7 +747,7 @@ function render() {
     const notes = Presentation.notices(result.ongoing.payroll.warnings),
       rules = [...notes.tax, ...notes.assumptions];
     $("tax-notes").innerHTML = rules.length
-      ? `<details class="context-help"><summary>Rules and assumptions</summary>${rules.map((n) => `<p>${escape(n)}</p>`).join("")}</details>`
+      ? `<details class="context-help"><summary>Model notes</summary>${rules.map((n) => `<p>${escape(n)}</p>`).join("")}</details>`
       : "";
     renderTaxExplorer(
       $("tax-explorer"),
