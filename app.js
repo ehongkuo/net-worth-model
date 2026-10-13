@@ -59,17 +59,22 @@ function field(path, label, type = "number", hint = "") {
       : election?.sourceDate
         ? `From ${election.sourceDate} paycheck. ${election.mode === "percent" ? "Inferred from base salary plus bonus when configured eligible." : "Observed amount per paycheck."}`
         : "";
-  hint = [hint, provenance].filter(Boolean).join(" ");
+  const sourceInfo = provenance
+    ? `<details class="field-source"><summary>Source</summary>${escape(provenance)}</details>`
+    : "";
   const value = get(scenario, path),
     attrs = `data-path="${path}" data-type="${type}"`;
   const state = Profile.fieldState(scenario, path);
-  const badge = `<span class="field-status">${escape(state.label)}</span>`;
+  const badge =
+    state.kind === "review"
+      ? `<span class="field-status">${escape(state.label)}</span>`
+      : "";
   const approve =
     state.kind === "review" && state.label !== "Needs input"
       ? `<button type="button" class="confirm-field" data-confirm="${path}" aria-label="Confirm ${escape(label)}">Confirm assumption</button>`
       : "";
   if (type === "check")
-    return `<div class="profile-cell state-${state.kind}"><label class="check">${badge}<input ${attrs} type="checkbox" ${value ? "checked" : ""}>${escape(label)}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${approve}</div>`;
+    return `<div class="profile-cell state-${state.kind}"><label class="check">${badge}<input ${attrs} type="checkbox" ${value ? "checked" : ""}>${escape(label)}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${sourceInfo}${approve}</div>`;
   const choices = Array.isArray(type) ? type : null;
   const control = choices
     ? `<select ${attrs}>${choices
@@ -79,10 +84,12 @@ function field(path, label, type = "number", hint = "") {
         })
         .join("")}</select>`
     : `<input ${attrs} type="${["date", "text"].includes(type) ? type : "number"}" step="any" value="${escape(Profile.displayValue(value, type === "number" && /(?:^taxProfile\.(?:year|age)$|\.(?:years|retirementAge|socialSecurityStartAge|eligibleMonths|periodMonths|holdMonths|cliff|interval|shareCap)$)/.test(path) ? "count" : type))}">`;
-  return `<div class="profile-cell state-${state.kind}"><label class="field">${badge}<span>${escape(label)}${type === "percent" ? " (%)" : ""}</span>${control}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${approve}</div>`;
+  return `<div class="profile-cell state-${state.kind}"><label class="field">${badge}<span>${escape(label)}${type === "percent" ? " (%)" : ""}</span>${control}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${sourceInfo}${approve}</div>`;
 }
 const group = (title, body, open = false) =>
   `<details ${open ? "open" : ""}><summary>${escape(title)}</summary><div class="field-grid">${body}</div></details>`;
+const compactGroup = (title, body) =>
+  `<section class="paycheck-group"><h3>${escape(title)}</h3><div class="field-grid">${body}</div></section>`;
 function setup() {
   fieldConfig = Scenario.engineInput(scenario);
   const t = "taxProfile.",
@@ -310,7 +317,7 @@ function setup() {
                 g,
                 EquitySchedule.asOf(scenario.taxProfile.year),
               );
-            return `<div class="grant-preview"><h3>Current earning pace: ${money(pace.monthlyMarket)}/month</h3><p class="cf-note">${pace.phase ? `Grant year ${pace.phase} · next change ${pace.nextChange}` : "Outside this grant’s earning period"}. Earning pace spreads the current grant-year allocation evenly; scheduled vests remain dated below.</p><h4>First vest · ${escape(v.date)}</h4>${table(["Grant duration", "Shares vesting", "Value at grant price", "Estimated market value"], [[`${v.years} years`, v.shares.toLocaleString("en-US", { maximumFractionDigits: 4 }), money(v.grantValue), money(v.marketValue)]])}<p class="cf-note">Pre-tax values for the first vest, not a monthly average. Market value uses your assumed vest price.</p></div>`;
+            return `<div class="grant-preview"><h3>Current earning pace: ${money(pace.monthlyMarket)}/month</h3><p class="cf-note">${pace.phase ? `Grant year ${pace.phase} · next change ${pace.nextChange}` : "Outside this grant’s earning period"}. Earning pace spreads the current grant-year allocation evenly; scheduled vests remain dated below.</p><details><summary>First vest · ${escape(v.date)}</summary>${table(["Grant duration", "Shares vesting", "Value at grant price", "Estimated market value"], [[`${v.years} years`, v.shares.toLocaleString("en-US", { maximumFractionDigits: 4 }), money(v.grantValue), money(v.marketValue)]])}<p class="cf-note">Pre-tax values for the first vest, not a monthly average. Market value uses your assumed vest price.</p></details></div>`;
           })() +
           `<button data-remove-grant="${i}">Remove grant</button>`,
       ),
@@ -349,16 +356,23 @@ function setup() {
     )
     .join("");
   const uploads =
-    `<p class="cf-note">Upload regular paychecks. Review extracted amounts before applying. IRS and employer limits cap future deductions; YTD reconciles the current year.</p><label class="button">Read paystub PDFs<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label><p>${scenario.uploads.records.length} saved paycheck observations</p><div id="upload-status" role="status"></div><div id="upload-review"></div>` +
-    group(
-      "Current recurring elections",
-      elections ||
-        '<p class="cf-note">No uploaded elections yet. Annual fallback elections apply.</p>',
+    `<p class="cf-note">Review extracted amounts before saving. Documents stay on this device.</p><label class="button">Read paystub PDFs<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label><p>${scenario.uploads.records.length} saved paycheck observations</p><div id="upload-status" role="status"></div><div id="upload-review"></div>` +
+    compactGroup(
+      "Salary & pay schedule",
+      field(c + "salary", "Annual base salary") +
+        field(c + "frequency", "Pay frequency", [
+          ["biweekly", "Every two weeks"],
+          ["semimonthly", "Twice monthly"],
+          ["monthly", "Monthly"],
+          ["weekly", "Weekly"],
+        ]) +
+        field(c + "firstPayday", "A recent payday", "date"),
     ) +
+    (elections ? compactGroup("Recurring contributions", elections) : "") +
     (scenario.uploads.records.length
       ? ""
-      : group(
-          "Fallback elections before upload",
+      : compactGroup(
+          "Contributions & benefits without a paystub",
           fallback +
             Object.entries({
               health: "Monthly health premium",
@@ -373,25 +387,33 @@ function setup() {
               )
               .join(""),
         )) +
-    group(
-      "Benefit elections from uploads",
-      table(
-        ["Benefit", "Category", "Amount per occurrence", "Schedule"],
-        PaystubParser.benefitPlans(scenario.uploads.records).map((b) => [
-          b.label,
-          PaystubParser.labels[b.category],
-          money(b.current),
-          b.schedule,
-        ]),
-      ),
-    ) +
-    group(
-      "Saved paycheck observations",
-      table(
-        ["Date", "Kind", "Net pay"],
-        scenario.uploads.records.map((x) => [x.date, x.kind, money(x.netPay)]),
-      ),
-    );
+    (PaystubParser.benefitPlans(scenario.uploads.records).length
+      ? compactGroup(
+          "Benefits from paychecks",
+          table(
+            ["Benefit", "Category", "Amount per occurrence", "Schedule"],
+            PaystubParser.benefitPlans(scenario.uploads.records).map((b) => [
+              b.label,
+              PaystubParser.labels[b.category],
+              money(b.current),
+              b.schedule,
+            ]),
+          ),
+        )
+      : "") +
+    (scenario.uploads.records.length
+      ? compactGroup(
+          "Saved paychecks",
+          table(
+            ["Date", "Kind", "Net pay"],
+            scenario.uploads.records.map((x) => [
+              x.date,
+              x.kind,
+              money(x.netPay),
+            ]),
+          ),
+        )
+      : "");
   const balances = Object.entries({
     cash: "Cash",
     brokerage: "Taxable investments",
@@ -416,34 +438,37 @@ function setup() {
     field(p + "socialSecurityStartAge", "Social Security start age") +
     group("Starting balances", balances) +
     group("Monthly living expenses", expenses);
+  const review = Profile.describe(scenario).questions;
+  const section = (id, title, body, questionIds = []) => {
+    const notes = review.filter((q) => questionIds.includes(q.id));
+    return `<section class="plan-section" id="plan-${id}"><div class="plan-section-heading"><h3>${escape(title)}</h3>${notes.length ? '<span class="context-chip">Review plan details</span>' : ""}</div>${notes.map((q) => `<p class="plan-review-note">${escape(q.why)}</p>`).join("")}<div class="field-grid">${body}</div></section>`;
+  };
   const open = new Set(
     [...$("setup").querySelectorAll("details[open]")].map(
       (x) => x.querySelector("summary").textContent,
     ),
   );
   $("setup").innerHTML =
-    `<div data-profile-step="0" class="profile-panel"><h2>First, the basics</h2><p class="cf-note">These establish the tax rules and contribution limits. More specific adjustments are optional.</p>${tax}</div>` +
-    `<div data-profile-step="1" class="profile-panel"><h2>Let your paycheck do the typing</h2><p>Choose your latest regular paycheck. Two consecutive checks help us identify your pay schedule.</p>${uploads}<details><summary>Enter compensation manually instead</summary>${
-      field(c + "salary", "Annual base salary") +
-      field(c + "frequency", "Pay frequency", [
-        ["biweekly", "Every two weeks"],
-        ["semimonthly", "Twice monthly"],
-        ["monthly", "Monthly"],
-        ["weekly", "Weekly"],
-      ]) +
-      field(c + "firstPayday", "A recent payday", "date")
-    }</details></div>` +
-    `<div data-profile-step="2" class="profile-panel"><h2>Anything else to include?</h2><p class="cf-note">Saved choices remain in place. Review the relevant sections; leave the rest for later.</p><div id="profile-questions"></div>` +
-    group("Employer retirement and personal IRA", retirement) +
-    group("HSA coverage and funding", hsa) +
-    group("ESPP plan and purchases", espp) +
-    group("Bonus, stock grants and pay schedule", compensation) +
-    group(
-      "Optional: lifetime assumptions and spending",
-      '<p class="cf-note">Enter expenses paid from unrestricted cash. Payroll premiums and FSA/commuter funding are already counted as benefit spending; exclude purchases funded by those deductions.</p>' +
+    `<div data-profile-step="0" class="profile-panel"><h2>Tax profile</h2><p class="cf-note"></p>${tax}</div>` +
+    `<div data-profile-step="1" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck. Two consecutive checks help us identify your pay schedule.</p>${uploads}</div>` +
+    `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
+    section("retirement", "Retirement & IRA", retirement, [
+      "mega",
+      "employer",
+    ]) +
+    section("hsa", "HSA", hsa, ["hsa"]) +
+    section("espp", "ESPP", espp, ["espp"]) +
+    section("compensation", "Pay & stock grants", compensation, [
+      "schedule",
+      "allowance",
+    ]) +
+    section(
+      "projection",
+      "Lifetime & spending",
+      '<p class="cf-note">Expenses exclude benefits already deducted from pay.</p>' +
         projection,
     ) +
-    `</div>`;
+    `</div></div>`;
   $("setup")
     .querySelectorAll("details")
     .forEach(
@@ -471,6 +496,39 @@ function setup() {
     .forEach((section) => {
       const count = section.querySelectorAll(".state-review").length;
       if (count) section.querySelector("summary").dataset.reviewCount = count;
+    });
+  $("setup")
+    .querySelectorAll(".field-grid")
+    .forEach((grid) => {
+      const choices = [...grid.children].filter(
+        (cell) =>
+          cell.classList.contains("profile-cell") &&
+          cell.querySelector('[data-type="check"]'),
+      );
+      if (!choices.length) return;
+      const groups = new Map();
+      for (const cell of choices) {
+        const path = cell.querySelector('[data-type="check"]').dataset.path;
+        const title = path.startsWith("employerPlan.espp.")
+          ? "ESPP participation & purchase rules"
+          : path.startsWith("employerPlan.hsa.")
+            ? "HSA eligibility & funding"
+            : path.startsWith("compensation.grants.")
+              ? "Vesting options"
+              : path.startsWith("taxProfile.")
+                ? "Payroll tax options"
+                : "Retirement contribution options";
+        if (!groups.has(title)) {
+          const group = document.createElement("fieldset"),
+            legend = document.createElement("legend");
+          group.className = "choice-group";
+          legend.textContent = title;
+          group.append(legend);
+          groups.set(title, group);
+        }
+        groups.get(title).append(cell);
+      }
+      grid.prepend(...groups.values());
     });
   $("setup")
     .querySelectorAll("[data-confirm]")
@@ -585,6 +643,8 @@ function commit(next) {
 }
 function render() {
   const ready = Profile.hasIncome(scenario);
+  $("attention").replaceChildren();
+  $("attention").hidden = true;
   if (!ready && !["profile", "welcome"].includes(view)) view = "welcome";
   if (ready && view === "welcome") view = "monthly";
   for (const name of ["welcome", "profile", "monthly", "tax", "lifetime"])
@@ -617,8 +677,13 @@ function render() {
       CompactFlow.build(selected.payroll, selected.flow, c),
       money,
     );
+    const notes = Presentation.notices(selected.payroll.warnings);
     $("salary-context").innerHTML =
-      `<strong>Base salary rate: ${money(c.salary / 12)}/month</strong><span>${money(c.salary)}/year · ${escape(c.frequency)} payroll</span><span>${row.year} salary forecast: ${money(row.payroll.salary)}/year (${money(row.payroll.salary / 12)}/month average), plus ${money(row.payroll.bonus)} bonus.</span><small>Current earning pace as of ${escape(result.ongoing.payroll.earningPace.asOf)} uses your salary rate, each active grant’s current allocation year, and your current ESPP cycle, with annual limits and matching tax estimates. It is a normalized monthly rate, not a forecast of the next twelve months. Selected months and the tables below use the dated calendar forecast, including YTD history. Dollar displays use cents; percentages use one decimal place.</small>`;
+      `<span class="context-chip">${month ? `Scheduled · ${row.year}` : `As of ${escape(selected.payroll.earningPace.asOf)}`}</span><details class="context-help"><summary>How this view works</summary><p>${month ? "Scheduled paychecks, vesting and purchases for this month." : "Your current salary, grant-year allocations and ESPP cycle averaged monthly, with annual contribution limits."}</p><p>Asset additions are new funding before expenses. Spending follows cash, equity, then retirement; additional sale taxes are not modeled.</p>${notes.assumptions.map((n) => `<p>${escape(n)}</p>`).join("")}</details>`;
+    const history = Presentation.notices(row.payroll.warnings).history;
+    $("history-notes").innerHTML = history.length
+      ? `<details class="context-help"><summary>Estimated history</summary>${history.map((n) => `<p>${escape(n)}</p>`).join("")}</details>`
+      : "";
     $("months").innerHTML = table(
       [
         "Month",
@@ -681,8 +746,15 @@ function render() {
       result.ongoing.flow,
     );
   else renderProjection();
-  const warnings = [...new Set(row.payroll.warnings || [])];
-  if (warnings.length) $("status").textContent = warnings.join(" ");
+  const payroll =
+    view === "lifetime" || (view === "monthly" && month)
+      ? row.payroll
+      : result.ongoing.payroll;
+  const alerts = Presentation.notices(payroll.warnings).alerts;
+  $("attention").hidden = !alerts.length;
+  $("attention").innerHTML = alerts.length
+    ? `<details class="attention-list"><summary>${alerts.length} item${alerts.length === 1 ? "" : "s"} to review</summary><ul>${alerts.map((n) => `<li>${escape(n)}</li>`).join("")}</ul></details>`
+    : "";
 }
 function renderProjection() {
   const rows = result.rows,
@@ -724,9 +796,11 @@ function renderProjection() {
     factor = real ? selected.inflationFactor : 1;
   $("balances").innerHTML =
     `<h2>${selected.initial ? "Starting balances" : `End of ${selected.year}`} · Age ${selected.age}</h2>` +
+    `<div class="asset-summary">${series.map(([name, color, amount]) => `<div style="--asset-color:${color}"><span>${escape(name)}</span><strong>${money(amount(selected.balances) / factor)}</strong></div>`).join("")}<div><span>Total</span><strong>${money(selected.netWorth / factor)}</strong></div></div>${selected.shortfall > 0 ? `<p class="inline-alert">Unfunded expenses: ${money(selected.shortfall / factor)}</p>` : ""}<details><summary>Account balances</summary>` +
     table(
       ["Asset", "Balance"],
       Object.entries(selected.balances)
+        .filter(([, value]) => Math.abs(value) > 0.005)
         .map(([key, v]) => [
           {
             cash: "Cash",
@@ -740,11 +814,9 @@ function renderProjection() {
           }[key],
           money(v / factor),
         ])
-        .concat([
-          ["Total", money(selected.netWorth / factor)],
-          ["Unfunded expenses", money(selected.shortfall / factor)],
-        ]),
-    );
+        .concat([["Total", money(selected.netWorth / factor)]]),
+    ) +
+    "</details>";
 }
 function download(text, name) {
   const url = URL.createObjectURL(
@@ -1064,18 +1136,24 @@ function renderProfile() {
       : profileStep === 1
         ? "Continue with what I have"
         : "Continue to paychecks";
+  if (Profile.hasIncome(scenario)) {
+    const { payroll, flow } = result.ongoing;
+    const graph = CompactFlow.build(
+      payroll,
+      flow,
+      Scenario.engineInput(scenario),
+    );
+    const cards = Presentation.overview(payroll, flow, graph.buckets);
+    $("profile-overview").innerHTML =
+      `<div class="overview-heading"><span>Monthly earning pace</span><small>Asset additions before expenses</small></div><div class="profile-overview-grid">${cards.map((c) => `<div class="overview-metric metric-${c.kind}" title="${escape(c.note)}"><span>${escape(c.label)}</span><strong>${money(c.value)}</strong></div>`).join("")}</div>`;
+  } else $("profile-overview").innerHTML = "";
   const date = profile.last?.date;
   $("profile-summary").innerHTML =
-    profileStep === 0
+    profileStep !== 1
       ? ""
       : profile.last
-        ? `<div class="profile-preview"><div><span class="source-tag">FROM YOUR PAYCHECK</span><h2>Your latest check, organized</h2><p>${escape(date)} · Actual amounts before living expenses and non-payroll activity</p></div><div class="profile-metrics"><div><span>Cash deposited</span><strong>${money(profile.snapshot.cash)}</strong></div><div><span>Retirement + HSA</span><strong>${money(profile.snapshot.retirement + profile.snapshot.hsa)}</strong></div><div><span>ESPP cash set aside</span><strong>${money(profile.snapshot.espp)}</strong></div></div><p class="cf-note">${profile.records} regular paycheck${profile.records === 1 ? "" : "s"} saved. ${profile.schedule.confirmed ? "Every " + (profile.schedule.frequency === "weekly" ? "week" : "two weeks") + " inferred from check dates." : "Pay frequency needs confirmation."} This preview does not annualize deductions past their limits.</p></div>`
+        ? `<div class="profile-preview"><div><h2>Latest paycheck</h2><p>${escape(date)}</p></div><div class="profile-metrics"><div><span>Cash deposited</span><strong>${money(profile.snapshot.cash)}</strong></div><div><span>Retirement + HSA</span><strong>${money(profile.snapshot.retirement + profile.snapshot.hsa)}</strong></div><div><span>ESPP cash set aside</span><strong>${money(profile.snapshot.espp)}</strong></div></div><p class="cf-note">${profile.records} paycheck${profile.records === 1 ? "" : "s"} saved · ${profile.schedule.confirmed ? "Every " + (profile.schedule.frequency === "weekly" ? "week" : "two weeks") + " inferred from check dates." : "Pay frequency needs confirmation."}</p></div>`
         : `<div class="profile-empty"><strong>A paycheck fills in most of your profile.</strong><p>Upload a text-based PDF to extract earnings, deductions, withholding and YTD totals. Your documents stay on this device.</p></div>`;
-  const questions = $("profile-questions");
-  if (questions)
-    questions.innerHTML = profile.questions.length
-      ? `<div class="profile-followups"><strong>A few things the documents cannot tell us</strong>${profile.questions.map((q) => `<button type="button" class="profile-question" data-question="${q.id}"><span>${escape(q.title)}</span><small>${escape(q.why)}</small><b aria-hidden="true">›</b></button>`).join("")}</div>`
-      : `<p class="cf-note">${profile.last ? "No additional payroll questions detected. Add any compensation or saving outside your regular paycheck below." : "You can enter compensation manually or return to the upload step."}</p>`;
   const rows = [];
   if (profile.last) {
     rows.push([
@@ -1139,26 +1217,6 @@ function renderProfile() {
     ],
   );
   $("profile-facts").innerHTML = table(["Item", "Value", "Source"], rows);
-  document.querySelectorAll("[data-question]").forEach(
-    (button) =>
-      (button.onclick = () => {
-        const target = {
-          espp: "ESPP plan and purchases",
-          hsa: "HSA coverage and funding",
-          mega: "Employer retirement and personal IRA",
-          employer: "Employer retirement and personal IRA",
-          schedule: "Bonus, stock grants and pay schedule",
-          allowance: "Bonus, stock grants and pay schedule",
-        }[button.dataset.question];
-        const section = [...$("setup").querySelectorAll("details")].find(
-          (d) => d.querySelector("summary")?.textContent === target,
-        );
-        if (section) {
-          section.open = true;
-          section.scrollIntoView({ block: "start", behavior: "smooth" });
-        }
-      }),
-  );
 }
 document.querySelectorAll("[data-step]").forEach(
   (button) =>
