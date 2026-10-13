@@ -181,13 +181,11 @@
     for (let i = 0; i < 1200 && addMonths(start, period) <= date; i++)
       start = addMonths(start, period);
     const election = e.enrollments?.[start] || {};
-    if (
-      !(
-        election.enrolled ??
-        ((e.autoEnroll ?? true) &&
-          (!e.firstEnrollmentDate || start >= e.firstEnrollmentDate))
-      )
-    )
+    if (!(
+      election.enrolled ??
+      ((e.autoEnroll ?? true) &&
+        (!e.firstEnrollmentDate || start >= e.firstEnrollmentDate))
+    ))
       return zero;
     const rate = Math.min(
         e.maxRate ?? 1,

@@ -167,11 +167,7 @@
           if (target === "current") result.netPay = values[4];
           continue;
         }
-        if (
-          !section ||
-          !numbers.length ||
-          /^Total:|^Description|^©/.test(line)
-        )
+        if (!section || !numbers.length || /^Total:|^Description|^©/.test(line))
           continue;
         const label = line
           .slice(0, numbers[0].index)

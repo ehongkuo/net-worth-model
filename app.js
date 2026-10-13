@@ -1236,7 +1236,7 @@ document.querySelectorAll("[data-step]").forEach(
     }),
 );
 $("start-profile").onclick = () => {
-  (profileStep = 0), (grantTimelineAnnual = false);
+  ((profileStep = 0), (grantTimelineAnnual = false));
   document.querySelector('[data-view="profile"]').click();
 };
 const scenarioMenu = document.querySelector(".scenario-menu");
