@@ -1,7 +1,10 @@
 (function (root) {
   "use strict";
-  const positive = (v) => Math.max(0, Number(v) || 0);
-  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || 0));
+  const Util =
+    typeof module !== "undefined" && module.exports
+      ? require("./util")
+      : root.Util;
+  const { positive, clamp } = Util;
   function merge(a, b) {
     const out = { ...a };
     for (const [k, v] of Object.entries(b || {})) {

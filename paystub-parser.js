@@ -47,12 +47,12 @@
   Object.entries(benefitTypes).forEach(
     ([key, type]) => (labels[key] = type.label),
   );
-  const money = (s) =>
+  const parseMoney = (s) =>
     Number(String(s).replace(/[$,()]/g, "")) *
     (String(s).includes("(") ? -1 : 1);
   const total = (o, keys) =>
     Math.round(keys.reduce((n, k) => n + (o[k] || 0), 0) * 100) / 100;
-  const iso = (s) => {
+  const usDateToIso = (s) => {
     const [m, d, y] = s.split("/");
     return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
   };
@@ -131,7 +131,7 @@
         if (dates?.length >= 3 && !result.date) {
           [result.periodStart, result.periodEnd, result.date] = dates
             .slice(-3)
-            .map(iso);
+            .map(usDateToIso);
         }
         if (
           [
@@ -156,7 +156,7 @@
         }
         const numbers = [...line.matchAll(/-?\$?\(?\d[\d,]*\.\d{2}\)?/g)];
         if (/^(Current|YTD)\s/.test(line) && numbers.length >= 6) {
-          const values = numbers.slice(-5).map((m) => money(m[0]));
+          const values = numbers.slice(-5).map((m) => parseMoney(m[0]));
           const target = line.startsWith("Current") ? "current" : "ytd";
           result.summary[target] = Object.fromEntries(
             ["gross", "pretax", "taxes", "posttax", "net"].map((k, i) => [
@@ -174,7 +174,7 @@
           .replace(/\d{2}\/\d{2}\/\d{4}.*$/, "")
           .trim();
         if (!label || /^\d{2}\/|^Page/.test(label)) continue;
-        const values = numbers.slice(-2).map((m) => money(m[0]));
+        const values = numbers.slice(-2).map((m) => parseMoney(m[0]));
         result.lines.push({
           label,
           section,

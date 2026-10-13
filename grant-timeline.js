@@ -8,20 +8,7 @@
     "#fb7185",
     "#fb923c",
   ];
-  const escape = (value) =>
-    String(value).replace(
-      /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[c],
-    );
-  const money = (value) =>
-    value.toLocaleString("en-US", { style: "currency", currency: "USD" });
+  const { escape, money } = root.Util;
   function render(host, grants, date, annual, onChange) {
     if (!host) return;
     if (!grants.length) {

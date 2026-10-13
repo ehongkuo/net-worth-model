@@ -1,21 +1,10 @@
 (function (root) {
   "use strict";
-  const positive = (x) => Math.max(0, Number(x) || 0);
-  function addMonths(s, n) {
-    const d = new Date(s + "T12:00:00Z"),
-      day = d.getUTCDate();
-    d.setUTCDate(1);
-    d.setUTCMonth(d.getUTCMonth() + n);
-    d.setUTCDate(
-      Math.min(
-        day,
-        new Date(
-          Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0),
-        ).getUTCDate(),
-      ),
-    );
-    return d.toISOString().slice(0, 10);
-  }
+  const Util =
+    typeof module !== "undefined" && module.exports
+      ? require("./util")
+      : root.Util;
+  const { positive, addMonths } = Util;
   function asOf(year, date) {
     if (date) return date;
     const today = new Date(),

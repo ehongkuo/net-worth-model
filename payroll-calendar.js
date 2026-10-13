@@ -2,7 +2,11 @@
   "use strict";
   const cents = (v) => Math.round((Number(v) || 0) * 100);
   const amount = (v) => v / 100;
-  const positive = (v) => Math.max(0, Number(v) || 0);
+  const Util =
+    typeof module !== "undefined" && module.exports
+      ? require("./util")
+      : root.Util;
+  const { positive } = Util;
   const fields = [
     "salary",
     "bonus",
