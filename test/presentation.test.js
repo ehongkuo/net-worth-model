@@ -59,7 +59,7 @@ test("profile overview preserves negative cash and handles zero activity", () =>
   assert(cards.find((c) => c.id === "cash").value === -100);
   assert(cards.filter((c) => c.id !== "cash").every((c) => c.value === 0));
 });
-test("every warning reaches something each view renders", () => {
+test("every warning reaches something each view renders, exactly once", () => {
   const UI = require("../presentation");
   const warnings = [
     "Earlier paycheck dates and amounts are estimates reconciled to the latest available YTD fields, not uploaded actuals.",
@@ -70,11 +70,39 @@ test("every warning reaches something each view renders", () => {
   ];
   for (const view of Object.keys(UI.INLINE)) {
     const n = UI.forView(warnings, view);
-    const shown = [...n.attention, ...UI.INLINE[view].flatMap((k) => n[k])];
+    const shown = [
+      ...n.attention,
+      ...n.notes,
+      ...UI.INLINE[view].flatMap((k) => n[k]),
+    ];
     for (const w of warnings) assert(shown.includes(w), `${view} drops: ${w}`);
     assert(
       new Set(shown).size === shown.length,
       `${view} shows a warning twice`,
     );
   }
+});
+test("attention banner holds only actionable alerts on every view", () => {
+  const UI = require("../presentation");
+  const methodology = [
+    "California income tax uses 2025 FTB tables projected to 2026 with the editable CA adjustment.",
+    "IRA pro-rata inputs are annual planning estimates; update year-end IRA balances before relying on conversion tax.",
+    "Traditional 401(k) capped at 24,500.",
+    "Earlier paycheck dates and amounts are estimates reconciled to the latest available YTD fields, not uploaded actuals.",
+  ];
+  const alert =
+    "Contributions and deductions exceed cash wages; review paycheck funding.";
+  for (const view of ["monthly", "tax", "lifetime"]) {
+    const n = UI.forView([...methodology, alert], view);
+    assert(
+      n.attention.length === 1 && n.attention[0] === alert,
+      `${view} attention: ${n.attention.join(" | ")}`,
+    );
+    assert(UI.forView(methodology, view).attention.length === 0);
+  }
+  // Methodology notes stay visible in the model notes where not shown inline.
+  const lifetime = UI.forView(methodology, "lifetime");
+  assert(lifetime.notes.length === methodology.length);
+  const monthly = UI.forView(methodology, "monthly");
+  assert(monthly.notes.length === 3 && monthly.history.length === 1);
 });

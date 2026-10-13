@@ -81,7 +81,11 @@ const choices = (title, body) =>
     : "";
 const compactGroup = (title, body) =>
   `<section class="paycheck-group"><h3>${escape(title)}</h3><div class="field-grid">${body}</div></section>`;
+// Re-renders the profile form; keeps keyboard focus on the same field.
 function setup() {
+  Util.preserveFocus($("setup"), renderSetup);
+}
+function renderSetup() {
   fieldConfig = Scenario.engineInput(scenario);
   const t = "taxProfile.",
     r = "employerPlan.retirement.",
@@ -544,23 +548,24 @@ function setup() {
     .querySelectorAll("[data-path]")
     .forEach(
       (el) =>
-        (el.onchange = () => {
-          const next = structuredClone(scenario),
-            kind = el.dataset.type;
-          const value =
-            kind === "check"
-              ? el.checked
-              : el.tagName === "SELECT" || ["date", "text"].includes(kind)
-                ? el.dataset.path === "compensation.bonusMonth"
-                  ? Number(el.value)
-                  : el.value
-                : el.value === ""
-                  ? null
-                  : (Number(el.value) * (kind === "years" ? 12 : 1)) /
-                    (kind === "percent" ? 100 : 1);
-          Profile.edit(next, el.dataset.path, value);
-          commit(next);
-        }),
+        (el.onchange = () =>
+          deferUntilFocusMoves(() => {
+            const next = structuredClone(scenario),
+              kind = el.dataset.type;
+            const value =
+              kind === "check"
+                ? el.checked
+                : el.tagName === "SELECT" || ["date", "text"].includes(kind)
+                  ? el.dataset.path === "compensation.bonusMonth"
+                    ? Number(el.value)
+                    : el.value
+                  : el.value === ""
+                    ? null
+                    : (Number(el.value) * (kind === "years" ? 12 : 1)) /
+                      (kind === "percent" ? 100 : 1);
+            Profile.edit(next, el.dataset.path, value);
+            commit(next);
+          })),
     );
   GrantTimeline.render(
     $("grant-timeline"),
@@ -576,27 +581,28 @@ function setup() {
     .querySelectorAll("[data-grant-allocation]")
     .forEach((el) => {
       el.oninput = () => el.setCustomValidity("");
-      el.onchange = () => {
-        const next = structuredClone(scenario),
-          index = Number(el.dataset.grantAllocation);
-        const values = el.value
-          .split("/")
-          .map((x) => (x.trim() === "" ? NaN : Number(x.trim())));
-        next.compensation.grants[index].annualAllocations = values;
-        try {
-          EquitySchedule.allocations(next.compensation.grants[index]);
-        } catch (error) {
-          el.setCustomValidity(error.message);
-          el.reportValidity();
-          return;
-        }
-        Profile.edit(
-          next,
-          `compensation.grants.${index}.annualAllocations`,
-          values,
-        );
-        commit(next);
-      };
+      el.onchange = () =>
+        deferUntilFocusMoves(() => {
+          const next = structuredClone(scenario),
+            index = Number(el.dataset.grantAllocation);
+          const values = el.value
+            .split("/")
+            .map((x) => (x.trim() === "" ? NaN : Number(x.trim())));
+          next.compensation.grants[index].annualAllocations = values;
+          try {
+            EquitySchedule.allocations(next.compensation.grants[index]);
+          } catch (error) {
+            el.setCustomValidity(error.message);
+            el.reportValidity();
+            return;
+          }
+          Profile.edit(
+            next,
+            `compensation.grants.${index}.annualAllocations`,
+            values,
+          );
+          commit(next);
+        });
     });
   $("add-grant").onclick = () => {
     const next = structuredClone(scenario);
@@ -627,6 +633,10 @@ function setup() {
   $("paystubs").onchange = readPaystubs;
   renderProfile();
 }
+// A field's change event fires while Tab or a click is still moving focus
+// (activeElement is <body>). Re-render after focus lands so setup() can
+// restore it to the field the user moved to.
+const deferUntilFocusMoves = (fn) => setTimeout(fn);
 function commit(next) {
   try {
     const normalized = Scenario.normalize(next),
@@ -642,6 +652,10 @@ function commit(next) {
     setup();
   }
 }
+const modelNotesDisclosure = (html) =>
+  html
+    ? `<details class="context-help"><summary>Model notes</summary>${html}</details>`
+    : "";
 function render() {
   const ready = Profile.hasIncome(scenario);
   $("attention").replaceChildren();
@@ -669,6 +683,12 @@ function render() {
   const row = result.rows[1],
     c = Scenario.engineInput(scenario),
     month = Number($("period").value);
+  const payroll =
+      view === "lifetime" || (view === "monthly" && month)
+        ? row.payroll
+        : result.ongoing.payroll,
+    notices = Presentation.forView(payroll.warnings, view),
+    modelNotes = notices.notes.map((n) => `<p>${escape(n)}</p>`).join("");
   if (view === "monthly") {
     const selected = month
       ? MoneyFlow.forMonth(row.payroll, row.flow, month)
@@ -678,11 +698,10 @@ function render() {
       CompactFlow.build(selected.payroll, selected.flow, c),
       money,
     );
-    const notes = Presentation.notices(selected.payroll.warnings);
     $("salary-context").innerHTML =
-      `<span class="context-chip">${month ? `Scheduled · ${row.year}` : `As of ${escape(selected.payroll.earningPace.asOf)}`}</span><details class="context-help"><summary>How this view works</summary><p>${month ? "Scheduled paychecks, vesting and purchases for this month." : "Your current salary, grant-year allocations and ESPP cycle averaged monthly, with annual contribution limits."}</p><p>Asset additions are new funding before expenses. Spending follows cash, equity, then retirement; additional sale taxes are not modeled.</p>${notes.assumptions.map((n) => `<p>${escape(n)}</p>`).join("")}</details>`;
-    // Include the selected payroll's history notes too: the attention list reads
-    // from it, and history notes are excluded there on this view.
+      `<span class="context-chip">${month ? `Scheduled · ${row.year}` : `As of ${escape(selected.payroll.earningPace.asOf)}`}</span><details class="context-help"><summary>How this view works</summary><p>${month ? "Scheduled paychecks, vesting and purchases for this month." : "Your current salary, grant-year allocations and ESPP cycle averaged monthly, with annual contribution limits."}</p><p>Asset additions are new funding before expenses. Spending follows cash, equity, then retirement; additional sale taxes are not modeled.</p>${modelNotes}</details>`;
+    // Include the selected payroll's history notes too: forView routes them
+    // here on this view rather than to the model notes.
     const history = [
       ...new Set([
         ...Presentation.notices(row.payroll.warnings).history,
@@ -747,11 +766,7 @@ function render() {
       ]),
     );
   } else if (view === "tax") {
-    const notes = Presentation.notices(result.ongoing.payroll.warnings),
-      rules = [...notes.tax, ...notes.assumptions];
-    $("tax-notes").innerHTML = rules.length
-      ? `<details class="context-help"><summary>Model notes</summary>${rules.map((n) => `<p>${escape(n)}</p>`).join("")}</details>`
-      : "";
+    $("tax-notes").innerHTML = modelNotesDisclosure(modelNotes);
     renderTaxExplorer(
       $("tax-explorer"),
       c,
@@ -764,12 +779,11 @@ function render() {
         lots: result.rows.flatMap((r) => r.payroll?.espp?.lots || []),
       }),
     );
-  } else renderProjection();
-  const payroll =
-    view === "lifetime" || (view === "monthly" && month)
-      ? row.payroll
-      : result.ongoing.payroll;
-  const alerts = Presentation.forView(payroll.warnings, view).attention;
+  } else {
+    renderProjection();
+    $("lifetime-notes").innerHTML = modelNotesDisclosure(modelNotes);
+  }
+  const alerts = notices.attention;
   $("attention").hidden = !alerts.length;
   $("attention").innerHTML = alerts.length
     ? `<details class="attention-list"><summary>${alerts.length} item${alerts.length === 1 ? "" : "s"} to review</summary><ul>${alerts.map((n) => `<li>${escape(n)}</li>`).join("")}</ul></details>`
