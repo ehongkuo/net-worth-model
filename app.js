@@ -741,6 +741,12 @@ function render() {
       result.ongoing.payroll,
       result.ongoing.flow,
     );
+    renderEsppComparison(
+      Compensation.esppSaleComparison(c, result.ongoing.payroll, {
+        asOf: result.ongoing.payroll.earningPace.asOf,
+        lots: result.rows.flatMap((r) => r.payroll?.espp?.lots || []),
+      }),
+    );
   } else renderProjection();
   const payroll =
     view === "lifetime" || (view === "monthly" && month)
@@ -751,6 +757,49 @@ function render() {
   $("attention").innerHTML = alerts.length
     ? `<details class="attention-list"><summary>${alerts.length} item${alerts.length === 1 ? "" : "s"} to review</summary><ul>${alerts.map((n) => `<li>${escape(n)}</li>`).join("")}</ul></details>`
     : "";
+}
+function renderEsppComparison(x) {
+  const host = $("espp-compare");
+  if (!x) return host.replaceChildren();
+  const s = x.scenarios,
+    row = (label, f) => [label, ...s.map(f)],
+    cents = (n) => Math.round(n * 100) / 100 || 0,
+    gain = (v) => {
+      const total = cents(v.shortGain + v.longGain);
+      if (!total) return "None";
+      return money(total) + (cents(v.longGain) ? " long-term" : " short-term");
+    };
+  const rows = [
+    row("Sale date", (v) => v.saleDate),
+    row("Sale price", (v) => money(v.price)),
+    row("Proceeds", (v) => money(v.proceeds)),
+    row("Ordinary income", (v) => money(v.ordinary)),
+    row("Capital gain", gain),
+    row("Added tax this year", (v) => money(v.tax)),
+    row("After-tax cash", (v) => money(v.afterTax)),
+    row(
+      x.qualifiedPlan ? "Profit over cost" : "Profit over purchase value",
+      (v) => money(v.profit),
+    ),
+  ];
+  const best = s.find((v) => v.id === x.best),
+    verdict = best
+      ? `Highest after-tax cash: <strong>${escape(best.label)}</strong>.`
+      : "After-tax cash is the same at every horizon.";
+  host.innerHTML = `<section class="espp-compare"><h2>ESPP sale timing</h2><p class="view-subtitle">Current purchase: ${x.lot.shares.toLocaleString("en-US", { maximumFractionDigits: 4 })} shares bought ${escape(x.lot.purchaseDate)} for ${money(x.lot.cost)}. ${verdict}</p><div class="table-scroll"><table class="data-table"><thead><tr><th></th>${s.map((v) => `<th${v.id === x.best ? ' class="espp-best"' : ""}>${escape(v.label)}</th>`).join("")}</tr></thead><tbody>${rows
+    .map(
+      (r) =>
+        `<tr><th>${escape(r[0])}</th>${r
+          .slice(1)
+          .map(
+            (v, i) =>
+              `<td${s[i].id === x.best ? ' class="espp-best"' : ""}>${escape(v)}</td>`,
+          )
+          .join("")}</tr>`,
+    )
+    .join(
+      "",
+    )}</tbody></table></div><details class="context-help"><summary>How this is calculated</summary><p>Selling at purchase uses the purchase-date price. Holding uses your assumed ESPP sale price, so the difference also reflects that price assumption.</p><p>Each column's tax is the increase in this year's full household tax estimate when that sale is added, at this year's brackets, even when the sale falls in a later year. Losses beyond the $3,000 annual deduction carry forward and are not credited here. The columns ignore the time value of money and the risk that the price changes while you hold.</p><p>${x.qualifiedPlan ? "Qualified (Section 423) plan. A sale qualifies more than two years after the offering starts and more than one year after purchase. Earlier sales are disqualifying: the purchase-date discount is ordinary income even if the price falls." : "Non-qualified plan. The purchase discount is taxed as wages when you buy, so it is the same in every column and not shown. Only the later gain or loss differs."}</p></details></section>`;
 }
 function renderProjection() {
   const rows = result.rows,

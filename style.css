@@ -1892,3 +1892,10 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+.espp-compare {
+  margin-top: 32px;
+}
+.espp-compare .espp-best {
+  background: rgba(56, 189, 248, 0.12);
+}
