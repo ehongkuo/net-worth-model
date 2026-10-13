@@ -744,7 +744,7 @@ function render() {
     renderEsppComparison(
       Compensation.esppSaleComparison(c, result.ongoing.payroll, {
         asOf: result.ongoing.payroll.earningPace.asOf,
-        lots: row.payroll.espp.lots,
+        lots: result.rows.flatMap((r) => r.payroll?.espp?.lots || []),
       }),
     );
   } else renderProjection();
