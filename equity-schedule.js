@@ -4,7 +4,43 @@
     typeof module !== "undefined" && module.exports
       ? require("./util")
       : root.Util;
-  const { positive, addMonths } = Util;
+  const TaxEngine =
+    typeof module !== "undefined" && module.exports
+      ? require("./tax-engine")
+      : root.TaxEngine;
+  const { positive, clamp, addMonths } = Util;
+  // Section 423 caps purchases at $25,000 of offering-date FMV per calendar year.
+  // A plan may set a lower annualFmvLimit; it can never raise the statutory cap.
+  function esppFmvLimit(e, year) {
+    const statutory = TaxEngine.limits(year).espp;
+    return Math.min(statutory, positive(e.annualFmvLimit ?? statutory));
+  }
+  // One ESPP purchase. fmvRoom is the remaining offering-date FMV the plan may buy
+  // (ignored for non-qualified plans); the caller decides how it is tracked.
+  function esppPurchase(e, { cash, offerPrice, purchasePrice, fmvRoom }) {
+    const grantPrice = Math.max(0.01, offerPrice),
+      marketPrice = Math.max(0.01, purchasePrice),
+      discount = clamp(e.discount, 0, 0.99),
+      price =
+        (e.lookback ? Math.min(grantPrice, marketPrice) : marketPrice) *
+        (1 - discount);
+    let shares = Math.min(
+      cash / price,
+      positive(e.shareCap) || Infinity,
+      e.qualifiedPlan ? positive(fmvRoom) / grantPrice : Infinity,
+    );
+    if (!e.fractional) shares = Math.floor(shares);
+    const cost = shares * price;
+    return {
+      shares,
+      price,
+      cost,
+      refund: cash - cost,
+      grantPrice,
+      marketPrice,
+      discount,
+    };
+  }
   function asOf(year, date) {
     if (date) return date;
     const today = new Date(),
@@ -185,21 +221,15 @@
         contributionOverride ?? eligible * rate,
         positive(e.annualPayrollCap) || Infinity,
       ),
-      cash = (annualContribution * period) / 12,
-      gp = Math.max(0.01, election.offerPrice ?? e.offerPrice),
-      pp = Math.max(0.01, election.purchasePrice ?? e.purchasePrice),
-      discount = Math.min(0.99, positive(e.discount)),
-      price = (e.lookback ? Math.min(gp, pp) : pp) * (1 - discount);
-    const annualShares = e.qualifiedPlan
-      ? Math.min(25000, positive(e.annualFmvLimit ?? 25000)) / gp
-      : Infinity;
-    let shares = Math.min(
-      cash / price,
-      positive(e.shareCap) || Infinity,
-      (annualShares * period) / 12,
-    );
-    if (!e.fractional) shares = Math.floor(shares);
-    const cost = shares * price;
+      cash = (annualContribution * period) / 12;
+    // Steady-state estimate: each purchase gets its share of the annual FMV limit.
+    const { shares, price, cost, grantPrice, marketPrice, discount } =
+      esppPurchase(e, {
+        cash,
+        offerPrice: election.offerPrice ?? e.offerPrice,
+        purchasePrice: election.purchasePrice ?? e.purchasePrice,
+        fmvRoom: (esppFmvLimit(e, Number(date.slice(0, 4))) * period) / 12,
+      });
     return {
       active: true,
       start,
@@ -208,11 +238,11 @@
       monthlyContribution: cash / period,
       monthlyCost: cost / period,
       monthlyRefund: (cash - cost) / period,
-      monthlyValue: (shares * pp) / period,
+      monthlyValue: (shares * marketPrice) / period,
       monthlyShares: shares / period,
       price,
-      grantPrice: gp,
-      marketPrice: pp,
+      grantPrice,
+      marketPrice,
       discount,
       rate,
     };
@@ -227,6 +257,8 @@
     instances,
     timeline,
     esppPace,
+    esppPurchase,
+    esppFmvLimit,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.EquitySchedule = api;

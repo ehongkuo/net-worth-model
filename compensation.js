@@ -133,22 +133,37 @@
     paydayCache.set(key, days);
     return days;
   }
-  function sellLot(lot, saleDate, price, fee = 0) {
-    const proceeds = Math.max(0, lot.shares * price - fee);
+  // Tax treatment of selling one ESPP lot.
+  // Section 423 plan: a qualifying disposition (>2y from offering and >1y from purchase)
+  // has ordinary income equal to the lesser of the offering-date discount and the
+  // actual gain; a disqualifying one has ordinary income equal to the purchase-date
+  // spread, even at a loss. Non-qualified plan: the spread was taxed as wages at
+  // purchase, so basis is purchase-date FMV and the sale has no ordinary income.
+  // Both are measured on the gross sale value; the fee only reduces the capital gain.
+  function sellLot(lot, saleDate, price, fee = 0, qualifiedPlan = true) {
+    const gross = lot.shares * price,
+      proceeds = Math.max(0, gross - fee);
     const qualified =
+      qualifiedPlan &&
       saleDate > addMonths(lot.grantDate, 24) &&
       saleDate > addMonths(lot.purchaseDate, 12);
-    const ordinary = qualified
-      ? Math.max(
-          0,
-          Math.min(
-            lot.shares * lot.grantPrice * lot.discount,
-            proceeds - lot.cost,
-          ),
-        )
-      : lot.shares *
-        Math.max(0, lot.purchasePrice - lot.cost / Math.max(lot.shares, 1e-20));
-    const gain = proceeds - lot.cost - ordinary;
+    const spread =
+      lot.shares *
+      Math.max(0, lot.purchasePrice - lot.cost / Math.max(lot.shares, 1e-20));
+    const ordinary = !qualifiedPlan
+      ? 0
+      : qualified
+        ? Math.max(
+            0,
+            Math.min(
+              lot.shares * lot.grantPrice * lot.discount,
+              gross - lot.cost,
+            ),
+          )
+        : spread;
+    const gain = qualifiedPlan
+      ? proceeds - lot.cost - ordinary
+      : proceeds - lot.cost - spread;
     const longTerm = saleDate > addMonths(lot.purchaseDate, 12);
     return {
       proceeds,
@@ -303,16 +318,8 @@
               saleDate,
               e.salePrice,
               (e.fee * 12) / pace.periodMonths,
+              e.qualifiedPlan,
             );
-        if (!e.qualifiedPlan) {
-          sale.ordinary = 0;
-          sale.shortGain = e.holdShares
-            ? 0
-            : sale.proceeds -
-              lot.cost -
-              lot.shares * (pace.marketPrice - pace.price);
-          sale.longGain = 0;
-        }
         for (const m of months) {
           m.esppContrib = pace.monthlyContribution;
           m.esppSalaryContrib = pace.monthlyContribution;
@@ -463,25 +470,21 @@
           stockAssets += cash;
           continue;
         }
-        const gp = Math.max(0.01, election.offerPrice ?? e.offerPrice);
-        const pp = Math.max(0.01, election.purchasePrice ?? e.purchasePrice);
-        const price =
-          Math.min(e.lookback ? gp : pp, pp) * (1 - clamp(e.discount, 0, 0.99));
-        const cap = e.qualifiedPlan
-          ? Math.max(
-              0,
-              Math.min(25000, positive(e.annualFmvLimit)) - (usage[py] || 0),
-            ) / gp
-          : Infinity;
-        let shares = Math.min(
-          cash / price,
-          positive(e.shareCap) || Infinity,
-          cap,
-        );
-        if (!e.fractional) shares = Math.floor(shares);
+        // Calendar ledger: FMV room is tracked per purchase year across offerings.
+        const {
+          shares,
+          price,
+          cost,
+          refund,
+          grantPrice: gp,
+          marketPrice: pp,
+        } = EquitySchedule.esppPurchase(e, {
+          cash,
+          offerPrice: election.offerPrice ?? e.offerPrice,
+          purchasePrice: election.purchasePrice ?? e.purchasePrice,
+          fmvRoom: EquitySchedule.esppFmvLimit(e, py) - (usage[py] || 0),
+        });
         usage[py] = (usage[py] || 0) + shares * gp;
-        const cost = shares * price,
-          refund = cash - cost;
         const saleDate = addMonths(purchaseDate, positive(e.holdMonths));
         const sy = e.holdShares ? Infinity : Number(saleDate.slice(0, 4));
         const lot = {
@@ -505,12 +508,13 @@
               qualified: false,
               held: true,
             }
-          : sellLot(lot, saleDate, election.salePrice ?? e.salePrice, e.fee);
-        if (!e.qualifiedPlan) {
-          sale.ordinary = 0;
-          sale.shortGain = sale.proceeds - cost - shares * (pp - price);
-          sale.longGain = 0;
-        }
+          : sellLot(
+              lot,
+              saleDate,
+              election.salePrice ?? e.salePrice,
+              e.fee,
+              e.qualifiedPlan,
+            );
         if (py === year) {
           months[Number(purchaseDate.slice(5, 7)) - 1].esppRefund += refund;
           if (!e.qualifiedPlan)
