@@ -3,14 +3,14 @@
  * Requires every *.test.js file in this directory, then runs the suite.
  */
 
-const fs = require('fs');
-const path = require('path');
-const { run } = require('./harness');
+const fs = require("fs");
+const path = require("path");
+const { run } = require("./harness");
 
 const dir = __dirname;
 fs.readdirSync(dir)
-  .filter(f => f.endsWith('.test.js'))
+  .filter((f) => f.endsWith(".test.js"))
   .sort()
-  .forEach(f => require(path.join(dir, f)));
+  .forEach((f) => require(path.join(dir, f)));
 
 run();

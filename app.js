@@ -1251,7 +1251,10 @@ document.addEventListener("click", (event) => {
   if (!scenarioMenu.contains(event.target)) closeScenarioMenu();
 });
 for (const id of ["export", "import", "inspect"])
-  $(id).addEventListener(id === "import" ? "change" : "click", closeScenarioMenu);
+  $(id).addEventListener(
+    id === "import" ? "change" : "click",
+    closeScenarioMenu,
+  );
 $("welcome-import").onclick = () => $("import").click();
 $("profile-back").onclick = () => {
   profileStep = Math.max(0, profileStep - 1);

@@ -3,12 +3,17 @@
   "version": "1.0.0",
   "description": "Interactive lifetime net worth projection model",
   "scripts": {
-    "test": "node test/run.js && node --test test-server/*.test.cjs",
-    "start": "node server.js"
+    "test": "prettier --check . && node test/run.js && node --test test-server/*.test.cjs",
+    "start": "node server.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "license": "MIT",
   "private": true,
   "dependencies": {
     "pdfjs-dist": "^6.3.289"
+  },
+  "devDependencies": {
+    "prettier": "3.9.9"
   }
 }
