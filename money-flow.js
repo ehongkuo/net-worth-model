@@ -401,6 +401,7 @@
       bonus: m.bonus,
       rsuGross: m.rsu,
       rsuCash: m.rsuCash,
+      esppSpread: m.esppSpread || 0,
       rsuSellToCover: m.rsuSellToCover,
       withholding: m.withholding,
       cashWithholding: m.cashWithholding,

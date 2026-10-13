@@ -461,6 +461,7 @@
         payroll.salary -
         payroll.bonus -
         payroll.rsuGross -
+        (payroll.esppSpread || 0) -
         (payroll.imputedIncome || 0),
       "#22d3ee",
       "cash",
@@ -468,6 +469,14 @@
     );
     add("rsu", "RSU vesting", payroll.rsuGross, "#fbbf24", "rsu", true);
     add("espp", "ESPP taxable sale income", e.ordinary, "#fb923c", "espp");
+    add(
+      "espp-spread",
+      "ESPP purchase discount (non-qualified wages)",
+      payroll.esppSpread,
+      "#fdba74",
+      "espp",
+      true,
+    );
     add(
       "conversion",
       "Backdoor taxable portion",
@@ -590,7 +599,7 @@
     const groups = [
       ["cash", "Cash compensation"],
       ["rsu", "RSU vesting"],
-      ["espp", "ESPP sale income"],
+      ["espp", "ESPP income"],
       ["other", "Other income / adjustments"],
     ].map(([id, label]) => {
       const members = sources.filter((s) => s.group === id);

@@ -198,6 +198,8 @@
       rsu: 0,
       rsuCash: 0,
       rsuCoverEligible: 0,
+      // Non-qualified ESPP purchase spread: taxable wages, but not RSU equity.
+      esppSpread: 0,
       esppContrib: 0,
       esppSalaryContrib: 0,
       esppProceeds: 0,
@@ -328,7 +330,8 @@
           m.ordinary = sale.ordinary / 12;
           m.shortGain = sale.shortGain / 12;
           m.longGain = sale.longGain / 12;
-          if (!e.qualifiedPlan) m.rsu += pace.monthlyValue - pace.monthlyCost;
+          if (!e.qualifiedPlan)
+            m.esppSpread = pace.monthlyValue - pace.monthlyCost;
         }
         lots.push({ ...lot, ...sale });
         if (e.holdShares) stockAssets += pace.monthlyValue * 12;
@@ -524,7 +527,7 @@
         if (py === year) {
           months[Number(purchaseDate.slice(5, 7)) - 1].esppRefund += refund;
           if (!e.qualifiedPlan)
-            months[Number(purchaseDate.slice(5, 7)) - 1].rsu +=
+            months[Number(purchaseDate.slice(5, 7)) - 1].esppSpread +=
               shares * (pp - price);
         }
         if (sy === year) {
@@ -596,12 +599,16 @@
       for (const m of eq.months) {
         m.rsu = positive(options.rsuOverride) / 12;
         m.rsuCash = m.rsu;
+        m.esppSpread = 0;
       }
     }
     const rsuGross = sum(eq.months, "rsu"),
-      rsuCash = sum(eq.months, "rsuCash");
+      rsuCash = sum(eq.months, "rsuCash"),
+      esppSpread = sum(eq.months, "esppSpread");
     let grossEligible =
-      salary + (r.bonusEligible ? bonus : 0) + (r.rsuEligible ? rsuGross : 0);
+      salary +
+      (r.bonusEligible ? bonus : 0) +
+      (r.rsuEligible ? rsuGross + esppSpread : 0);
     let eligible = Math.min(l.compensation, grossEligible);
     const grow = (1 + r.contributionGrowth) ** Math.max(0, offset);
     const prior = offset === 0;
@@ -733,7 +740,9 @@
       ({ salary, bonus, traditional, roth, mega, hsa, employer, hsaEmployer } =
         calendar.totals);
       grossEligible =
-        salary + (r.bonusEligible ? bonus : 0) + (r.rsuEligible ? rsuGross : 0);
+        salary +
+        (r.bonusEligible ? bonus : 0) +
+        (r.rsuEligible ? rsuGross + esppSpread : 0);
       eligible = Math.min(l.compensation, grossEligible);
       benefits = calendar.totals.health;
       postBenefits = calendar.totals.post;
@@ -789,6 +798,7 @@
         salary +
         bonus +
         rsuGross +
+        esppSpread +
         calendar.totals.imputed +
         (calendar.totals.taxableAllowance || 0) +
         positive(options.extraWages),
@@ -929,7 +939,8 @@
         Math.max(
           0,
           c.tax.rsuCoverRate == null
-            ? (rsuWithholding * q.rsuCoverEligible) / Math.max(1e-20, q.rsu)
+            ? (rsuWithholding * q.rsuCoverEligible) /
+                Math.max(1e-20, q.rsu + q.esppSpread)
             : q.rsuCoverEligible * c.tax.rsuCoverRate,
         ),
       );
@@ -963,6 +974,7 @@
         bonus: bm,
         rsu: q.rsu,
         rsuCash: q.rsuCash,
+        esppSpread: q.esppSpread,
         esppSaleProceeds: q.esppProceeds,
         esppRefund: q.esppRefund,
         payrollHsa: h.payroll ? hs : 0,
@@ -1142,7 +1154,8 @@
       rsuSellToCover,
       cashWithholding: withholding - rsuSellToCover,
       rsuVests: eq.rsuVests,
-      gross: salary + bonus + rsuGross,
+      esppSpread,
+      gross: salary + bonus + rsuGross + esppSpread,
       otherIncome: other,
       income,
       taxes,
