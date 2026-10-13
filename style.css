@@ -1021,29 +1021,6 @@ main {
 .profile-followups {
   margin: 24px 0;
 }
-.profile-question {
-  position: relative;
-  display: block;
-  width: 100%;
-  padding: 14px 35px 14px 14px;
-  text-align: left;
-  background: #1e2d43;
-  margin: 10px 0;
-}
-.profile-question span,
-.profile-question small {
-  display: block;
-}
-.profile-question small {
-  color: #9cafc7;
-  font-size: 12px;
-  margin-top: 5px;
-}
-.profile-question b {
-  position: absolute;
-  right: 16px;
-  top: 20px;
-}
 #profile-numbers {
   margin-top: 30px;
 }

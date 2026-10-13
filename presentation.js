@@ -16,6 +16,23 @@
     }
     return result;
   }
+  // Buckets each view renders inline; everything else goes to the attention list
+  // so no model warning is silently dropped.
+  const INLINE = {
+    monthly: ["history", "assumptions"],
+    tax: ["tax", "assumptions"],
+    lifetime: [],
+  };
+  function forView(warnings, view) {
+    const n = notices(warnings),
+      inline = INLINE[view] || [];
+    return {
+      ...n,
+      attention: Object.keys(n).flatMap((k) =>
+        k === "alerts" || !inline.includes(k) ? n[k] : [],
+      ),
+    };
+  }
   function overview(payroll, flow, buckets) {
     const assets = (id) => (buckets.find((b) => b.id === id)?.value || 0) / 12;
     return [
@@ -67,7 +84,7 @@
       },
     ];
   }
-  const api = { notices, overview };
+  const api = { notices, forView, INLINE, overview };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Presentation = api;
 })(typeof window !== "undefined" ? window : globalThis);

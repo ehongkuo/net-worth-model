@@ -59,3 +59,19 @@ test("profile overview preserves negative cash and handles zero activity", () =>
   assert(cards.find((c) => c.id === "cash").value === -100);
   assert(cards.filter((c) => c.id !== "cash").every((c) => c.value === 0));
 });
+test("every warning reaches something each view renders", () => {
+  const UI = require("../presentation");
+  const warnings = [
+    "Earlier paycheck dates and amounts are estimates reconciled to the latest available YTD fields, not uploaded actuals.",
+    "California income tax uses 2025 FTB tables projected to 2026 with the editable CA adjustment.",
+    "IRA pro-rata inputs are annual planning estimates; update year-end IRA balances before relying on conversion tax.",
+    "Traditional 401(k) capped at 24,500.",
+    "New model warning",
+  ];
+  for (const view of Object.keys(UI.INLINE)) {
+    const n = UI.forView(warnings, view);
+    const shown = [...n.attention, ...UI.INLINE[view].flatMap((k) => n[k])];
+    for (const w of warnings) assert(shown.includes(w), `${view} drops: ${w}`);
+    assert(new Set(shown).size === shown.length, `${view} shows a warning twice`);
+  }
+});

@@ -60,7 +60,7 @@ function field(path, label, type = "number", hint = "") {
         ? `From ${election.sourceDate} paycheck. ${election.mode === "percent" ? "Inferred from base salary plus bonus when configured eligible." : "Observed amount per paycheck."}`
         : "";
   const sourceInfo = provenance
-    ? `<details class="field-source"><summary>Source</summary>${escape(provenance)}</details>`
+    ? `<details class="field-source" data-key="source:${path}"><summary>Source</summary>${escape(provenance)}</details>`
     : "";
   const value = get(scenario, path),
     attrs = `data-path="${path}" data-type="${type}"`;
@@ -317,7 +317,7 @@ function setup() {
                 g,
                 EquitySchedule.asOf(scenario.taxProfile.year),
               );
-            return `<div class="grant-preview"><h3>Current earning pace: ${money(pace.monthlyMarket)}/month</h3><p class="cf-note">${pace.phase ? `Grant year ${pace.phase} · next change ${pace.nextChange}` : "Outside this grant’s earning period"}. Earning pace spreads the current grant-year allocation evenly; scheduled vests remain dated below.</p><details><summary>First vest · ${escape(v.date)}</summary>${table(["Grant duration", "Shares vesting", "Value at grant price", "Estimated market value"], [[`${v.years} years`, v.shares.toLocaleString("en-US", { maximumFractionDigits: 4 }), money(v.grantValue), money(v.marketValue)]])}<p class="cf-note">Pre-tax values for the first vest, not a monthly average. Market value uses your assumed vest price.</p></details></div>`;
+            return `<div class="grant-preview"><h3>Current earning pace: ${money(pace.monthlyMarket)}/month</h3><p class="cf-note">${pace.phase ? `Grant year ${pace.phase} · next change ${pace.nextChange}` : "Outside this grant’s earning period"}. Earning pace spreads the current grant-year allocation evenly; scheduled vests remain dated below.</p><details data-key="first-vest:${i}"><summary>First vest · ${escape(v.date)}</summary>${table(["Grant duration", "Shares vesting", "Value at grant price", "Estimated market value"], [[`${v.years} years`, v.shares.toLocaleString("en-US", { maximumFractionDigits: 4 }), money(v.grantValue), money(v.marketValue)]])}<p class="cf-note">Pre-tax values for the first vest, not a monthly average. Market value uses your assumed vest price.</p></details></div>`;
           })() +
           `<button data-remove-grant="${i}">Remove grant</button>`,
       ),
@@ -443,13 +443,13 @@ function setup() {
     const notes = review.filter((q) => questionIds.includes(q.id));
     return `<section class="plan-section" id="plan-${id}"><div class="plan-section-heading"><h3>${escape(title)}</h3>${notes.length ? '<span class="context-chip">Review plan details</span>' : ""}</div>${notes.map((q) => `<p class="plan-review-note">${escape(q.why)}</p>`).join("")}<div class="field-grid">${body}</div></section>`;
   };
+  const detailKey = (x) =>
+    x.dataset.key || x.querySelector("summary").textContent;
   const open = new Set(
-    [...$("setup").querySelectorAll("details[open]")].map(
-      (x) => x.querySelector("summary").textContent,
-    ),
+    [...$("setup").querySelectorAll("details[open]")].map(detailKey),
   );
   $("setup").innerHTML =
-    `<div data-profile-step="0" class="profile-panel"><h2>Tax profile</h2><p class="cf-note"></p>${tax}</div>` +
+    `<div data-profile-step="0" class="profile-panel"><h2>Tax profile</h2>${tax}</div>` +
     `<div data-profile-step="1" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck. Two consecutive checks help us identify your pay schedule.</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
     section("retirement", "Retirement & IRA", retirement, [
@@ -471,9 +471,7 @@ function setup() {
     `</div></div>`;
   $("setup")
     .querySelectorAll("details")
-    .forEach(
-      (x) => (x.open = open.has(x.querySelector("summary").textContent)),
-    );
+    .forEach((x) => (x.open = open.has(detailKey(x))));
   $("setup")
     .querySelectorAll(".field-grid")
     .forEach((grid) => {
@@ -738,19 +736,24 @@ function render() {
         ].map((k) => money(r[k])),
       ]),
     );
-  } else if (view === "tax")
+  } else if (view === "tax") {
+    const notes = Presentation.notices(result.ongoing.payroll.warnings),
+      rules = [...notes.tax, ...notes.assumptions];
+    $("tax-notes").innerHTML = rules.length
+      ? `<details class="context-help"><summary>Rules and assumptions</summary>${rules.map((n) => `<p>${escape(n)}</p>`).join("")}</details>`
+      : "";
     renderTaxExplorer(
       $("tax-explorer"),
       c,
       result.ongoing.payroll,
       result.ongoing.flow,
     );
-  else renderProjection();
+  } else renderProjection();
   const payroll =
     view === "lifetime" || (view === "monthly" && month)
       ? row.payroll
       : result.ongoing.payroll;
-  const alerts = Presentation.notices(payroll.warnings).alerts;
+  const alerts = Presentation.forView(payroll.warnings, view).attention;
   $("attention").hidden = !alerts.length;
   $("attention").innerHTML = alerts.length
     ? `<details class="attention-list"><summary>${alerts.length} item${alerts.length === 1 ? "" : "s"} to review</summary><ul>${alerts.map((n) => `<li>${escape(n)}</li>`).join("")}</ul></details>`
@@ -1229,6 +1232,19 @@ $("start-profile").onclick = () => {
   ((profileStep = 0), (grantTimelineAnnual = false));
   document.querySelector('[data-view="profile"]').click();
 };
+const scenarioMenu = document.querySelector(".scenario-menu");
+const closeScenarioMenu = () => scenarioMenu.removeAttribute("open");
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && scenarioMenu.open) {
+    closeScenarioMenu();
+    scenarioMenu.querySelector("summary").focus();
+  }
+});
+document.addEventListener("click", (event) => {
+  if (!scenarioMenu.contains(event.target)) closeScenarioMenu();
+});
+for (const id of ["export", "import", "inspect"])
+  $(id).addEventListener(id === "import" ? "change" : "click", closeScenarioMenu);
 $("welcome-import").onclick = () => $("import").click();
 $("profile-back").onclick = () => {
   profileStep = Math.max(0, profileStep - 1);
