@@ -106,13 +106,10 @@ function renderTaxExplorer(container, config, payroll, flow) {
       (el) => el.dataset.taxDetail,
     ),
   );
-  const money = (n) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(Number(n) || 0);
+  const { money, escape: safe } =
+    typeof module !== "undefined" && module.exports
+      ? require("./util")
+      : globalThis.Util;
   const compact = (n) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -122,18 +119,6 @@ function renderTaxExplorer(container, config, payroll, flow) {
     }).format(n);
   const percent = (n) =>
     `${(n * 100).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
-  const safe = (s) =>
-    String(s).replace(
-      /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[c],
-    );
   const line = (label, value, total = false) =>
     `<div class="tax-line ${total ? "tax-total" : ""}"><span>${safe(label)}</span><strong>${money(value)}</strong></div>`;
   const detail = (id, title, body) =>

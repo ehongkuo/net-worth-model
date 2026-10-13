@@ -10,20 +10,12 @@
     retirement: "#a78bfa",
     tax: "#fb7185",
   };
-  const positive = (v) => Math.max(0, v || 0),
-    sum = (rows) => rows.reduce((s, r) => s + r.value, 0);
-  const escape = (s) =>
-    String(s).replace(
-      /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[c],
-    );
+  const Util =
+    typeof module !== "undefined" && module.exports
+      ? require("./util")
+      : root.Util;
+  const { positive, escape } = Util;
+  const sum = (rows) => rows.reduce((s, r) => s + r.value, 0);
   function build(p, f, c) {
     const original = F.orderFlow(F.buildFlow(p, f));
     const incoming = (id) => sum(original.links.filter((l) => l.target === id));

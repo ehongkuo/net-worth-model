@@ -8,6 +8,7 @@ const files = new Set([
   "style.css",
   "app.js",
   "presentation.js",
+  "util.js",
   "input-rules.js",
   "profile.js",
   "scenario.js",

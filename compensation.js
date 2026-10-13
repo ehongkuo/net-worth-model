@@ -13,38 +13,20 @@
     typeof module !== "undefined" && module.exports
       ? require("./payroll-calendar")
       : root.PayrollCalendar;
-  const positive = (v) => Math.max(0, Number(v) || 0);
-  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || 0));
+  const Util =
+    typeof module !== "undefined" && module.exports
+      ? require("./util")
+      : root.Util;
+  const {
+    positive,
+    clamp,
+    addMonths,
+    merge,
+    isoDate: iso,
+    utcDate: date,
+  } = Util;
   const sum = (rows, key) => rows.reduce((n, r) => n + (r[key] || 0), 0);
-  const iso = (d) => d.toISOString().slice(0, 10);
-  const date = (s) => new Date(`${s}T12:00:00Z`);
   const endMonth = (y, m) => iso(new Date(Date.UTC(y, m + 1, 0, 12)));
-  function addMonths(s, n) {
-    const d = date(s),
-      day = d.getUTCDate();
-    d.setUTCDate(1);
-    d.setUTCMonth(d.getUTCMonth() + n);
-    d.setUTCDate(
-      Math.min(
-        day,
-        new Date(
-          Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0),
-        ).getUTCDate(),
-      ),
-    );
-    return iso(d);
-  }
-  function merge(a, b) {
-    const out = { ...a };
-    for (const [key, value] of Object.entries(b || {})) {
-      if (["__proto__", "constructor", "prototype"].includes(key)) continue;
-      out[key] =
-        value && typeof value === "object" && !Array.isArray(value)
-          ? merge(a?.[key] || {}, value)
-          : value;
-    }
-    return out;
-  }
   function defaults() {
     return {
       version: 2,

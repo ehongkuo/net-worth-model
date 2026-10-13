@@ -1,20 +1,6 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
-const escape = (value) =>
-  String(value ?? "").replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ],
-  );
-const money = (value) =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value || 0);
+const { escape, money } = Util;
 const KEY = "netWorthModel:scenario:v3",
   BACKUP = "netWorthModel:legacy-backup";
 let scenario,
