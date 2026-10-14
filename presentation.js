@@ -157,6 +157,17 @@
         new Date(2026, v - 1, 1).toLocaleString("en-US", { month: "long" }),
     })[kind]?.() ?? String(v);
   const read = (s, path) => path.split(".").reduce((v, k) => v?.[k], s);
+  // Readable label and value for any setup path (falls back to the path's
+  // last segment).
+  const labelFor = (path) =>
+    LEARNED[path]?.[0] ||
+    path
+      .split(".")
+      .at(-1)
+      .replace(/([A-Z])/g, " $1")
+      .replace(/^./, (c) => c.toUpperCase());
+  const formatValue = (path, v) =>
+    LEARNED[path] ? display(LEARNED[path][1], v) : String(v);
   // Everything the paystub supplied or the model inferred, with its source.
   function learned(s) {
     const sources = s.uploads?.fieldSources || {},
@@ -276,6 +287,8 @@
   const api = {
     notices,
     fieldBadge,
+    labelFor,
+    formatValue,
     learned,
     missing,
     forView,

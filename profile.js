@@ -148,6 +148,20 @@
       };
     }
   }
+  // Replace a kept user value with what the paystub showed (from applyUpload's
+  // kept list) and record the paystub as its source again.
+  function usePaystubValue(s, item) {
+    write(s, item.path, item.paystub);
+    s.uploads.manualFields = (s.uploads.manualFields || []).filter(
+      (p) => p !== item.path,
+    );
+    if (s.uploads.confirmedFields) delete s.uploads.confirmedFields[item.path];
+    s.uploads.fieldSources ??= {};
+    s.uploads.fieldSources[item.path] = item.inferred
+      ? { sourceDate: item.sourceDate, basis: item.basis, inferred: true }
+      : { sourceDate: item.sourceDate, basis: item.basis };
+    return s;
+  }
   // Paths the user set or confirmed; uploads and inferences never change them.
   function lockedPaths(s) {
     return [
@@ -164,7 +178,8 @@
         : root.Scenario;
     const s = JSON.parse(JSON.stringify(input)),
       defaults = S.defaults(),
-      conflicts = [];
+      conflicts = [],
+      kept = [];
     s.uploads.records = records;
     s.uploads.fieldSources ??= {};
     s.uploads.manualFields ??= [];
@@ -190,10 +205,19 @@
         confirmed ||
         legacyOverride
       ) {
-        if (old !== value)
+        if (JSON.stringify(old) !== JSON.stringify(value)) {
           conflicts.push(
             `${path}: kept your setting (${old}); upload suggests ${value}.`,
           );
+          kept.push({
+            path,
+            yours: old,
+            paystub: value,
+            basis,
+            sourceDate,
+            inferred,
+          });
+        }
         if (!confirmed)
           s.uploads.manualFields = [
             ...new Set([...s.uploads.manualFields, path]),
@@ -283,7 +307,7 @@
       );
     }
     s.uploads.useBaseline = true;
-    return { scenario: s, conflicts };
+    return { scenario: s, conflicts, kept };
   }
   function employerFunding(s, payroll) {
     const latest = [...s.uploads.records]
@@ -411,6 +435,7 @@
     initialView,
     applyUpload,
     lockedPaths,
+    usePaystubValue,
     edit,
     employerFunding,
     grantPreview,
