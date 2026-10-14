@@ -26,6 +26,30 @@ test("visual allocation spends cash then ESPP, RSU and retirement without changi
   assertClose(b.shortfall, 500);
   assertClose(b.remaining.hsa, 50);
 });
+test("expenses use cash and the tax reserve, then pending ESPP cash and equity, never the HSA", () => {
+  const accounts = {
+    cash: 100,
+    pending: 40,
+    reserve: 60,
+    espp: 200,
+    rsu: 300,
+    retirement: 400,
+    hsa: 50,
+  };
+  const a = F.allocateCosts(accounts, 180, F.SPENDING_ORDER);
+  assertClose(a.used.cash, 100);
+  assertClose(a.used.reserve, 60);
+  assertClose(a.used.pending, 20);
+  assertClose(a.used.espp, 0);
+  const c = F.allocateCosts(accounts, 250, F.SPENDING_ORDER);
+  assertClose(c.used.pending, 40);
+  assertClose(c.used.espp, 50);
+  assertClose(a.used.rsu, 0);
+  const b = F.allocateCosts(accounts, 2000, F.SPENDING_ORDER);
+  assertClose(b.used.retirement, 400);
+  assertClose(b.remaining.hsa, 50);
+  assertClose(b.shortfall, 2000 - 1100);
+});
 test("six column flow separates deductions, taxes, assets and costs without invented funding", () => {
   const p = C.calculate(
     C.merge(C.defaults(), {
@@ -166,4 +190,33 @@ test("known annual example preserves tax and contribution amounts while allocati
   assertClose(g.visualAllocation.remaining.retirement, 12000, 0.001);
   assertClose(f.netCashFlow, -9668, 0.001);
   balanced(g);
+});
+
+test("monthly view spends cash, then pending ESPP equity, before retirement", () => {
+  const Scenario = require("../scenario"),
+    Projection = require("../projection"),
+    CF = require("../compact-flow");
+  const s = Scenario.defaults();
+  Object.assign(s.compensation, {
+    salary: 165000,
+    frequency: "biweekly",
+    firstPayday: "2026-09-18",
+  });
+  Object.assign(s.employerPlan.espp, { enabled: true, rate: 0.15 });
+  const bucketsFor = (housing) => {
+    s.projection.monthlyExpenses.housing = housing;
+    const row = Projection.calculate(s).rows[1];
+    const sel = F.forMonth(row.payroll, row.flow, 10);
+    return CF.build(sel.payroll, sel.flow, Scenario.engineInput(s)).buckets;
+  };
+  // Probe how much cash and pending ESPP the month has.
+  const [cash0, equity0] = bucketsFor(0);
+  assert(equity0.value > 0, "October has ESPP cash awaiting purchase");
+  // Spend all cash plus part of equity: retirement must stay untouched.
+  const [cash, equity, retirement] = bucketsFor(cash0.value + 500);
+  assertClose(cash.remaining, 0, 0.01);
+  assert(cash.used <= cash.value + 0.01, "cash never goes negative");
+  assert(equity.used > 0, "equity funds the rest");
+  assertClose(retirement.used, 0, 0.01);
+  assert(equity.remaining < equity0.value && equity.remaining > 0);
 });

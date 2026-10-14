@@ -489,13 +489,26 @@
     f.cashOut = f.cashIn - f.netCashFlow;
     return { payroll: p, flow: f };
   }
-  function allocateCosts(accounts, costs) {
+  // Default order for trimming unfunded transfers.
+  const FUNDING_ORDER = ["cash", "espp", "rsu", "retirement"];
+  // Spending follows the chart top to bottom: cash (spendable, then the
+  // future-tax reserve), then equity (ESPP cash awaiting purchase, ESPP shares,
+  // RSUs), then retirement. HSA money is left for medical costs.
+  const SPENDING_ORDER = [
+    "cash",
+    "reserve",
+    "pending",
+    "espp",
+    "rsu",
+    "retirement",
+  ];
+  function allocateCosts(accounts, costs, order = FUNDING_ORDER) {
     const remaining = Object.fromEntries(
       Object.entries(accounts).map(([key, value]) => [key, Math.max(0, value)]),
     );
-    const used = { cash: 0, espp: 0, rsu: 0, retirement: 0 };
+    const used = Object.fromEntries(order.map((key) => [key, 0]));
     let shortfall = Math.max(0, costs);
-    for (const key of Object.keys(used)) {
+    for (const key of order) {
       used[key] = Math.min(remaining[key] || 0, shortfall);
       remaining[key] = (remaining[key] || 0) - used[key];
       shortfall -= used[key];
@@ -677,7 +690,7 @@
       }))
       .filter((n) => n.value > 1e-7);
     const costTotal = costBreakdown.reduce((sum, n) => sum + n.value, 0);
-    const allocation = allocateCosts(accounts, costTotal);
+    const allocation = allocateCosts(accounts, costTotal, SPENDING_ORDER);
     const labels = {
       cash: "Cash before expenses",
       espp: "ESPP assets",
@@ -783,7 +796,14 @@
 
   const roundMoney = (value) =>
     (Math.sign(value) * Math.round((Math.abs(value) + 1e-9) * 100)) / 100;
-  const api = { buildFlow, forMonth, orderFlow, allocateCosts, roundMoney };
+  const api = {
+    buildFlow,
+    forMonth,
+    orderFlow,
+    allocateCosts,
+    SPENDING_ORDER,
+    roundMoney,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.MoneyFlow = api;
 })(typeof window !== "undefined" ? window : globalThis);

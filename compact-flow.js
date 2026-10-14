@@ -119,14 +119,27 @@
       buckets[0].parts = buckets[0].parts.filter(
         (r) => r.label !== labels.pending,
       );
+      // Spending drawn from pending ESPP cash moves with it to the Equity bucket.
+      const pendingUsed = sum(
+        original.links.filter(
+          (l) => l.source === "account-pending" && l.target === "costs",
+        ),
+      );
       buckets[0].value -= projectedEspp.cost;
-      buckets[0].remaining -= projectedEspp.cost;
+      buckets[0].used -= pendingUsed;
+      buckets[0].remaining = buckets[0].value - buckets[0].used;
       buckets[1].parts.push({
         label: "Projected ESPP equity (not yet purchased)",
         value: projectedEspp.value,
       });
+      // Pending cash spent on expenses never buys shares, so only the unspent
+      // part keeps its projected purchase value.
+      const keptValue =
+        projectedEspp.value *
+        Math.max(0, 1 - pendingUsed / (projectedEspp.cost || 1));
+      buckets[1].remaining += keptValue;
       buckets[1].value += projectedEspp.value;
-      buckets[1].remaining += projectedEspp.value;
+      buckets[1].used += pendingUsed;
       esppCost += projectedEspp.cost;
       esppValue += projectedEspp.value;
     }
