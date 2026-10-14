@@ -144,13 +144,13 @@ function renderSetup() {
         "California 2026 bracket adjustment",
         "percent",
       ) +
-      field(t + "settings.withholdingMethod", "Forecast withholding", [
-        ["annual-estimate", "Estimated annual tax"],
-        ["w4", "W-4 payroll method"],
-      ]) +
       choices(
-        "W-4 payroll withholding",
-        field(t + "settings.w4Credits", "W-4 annual credits") +
+        "Your W-4 (optional)",
+        field(t + "settings.withholdingMethod", "Forecast withholding", [
+          ["annual-estimate", "Estimated annual tax"],
+          ["w4", "W-4 payroll method"],
+        ]) +
+          field(t + "settings.w4Credits", "W-4 annual credits") +
           field(t + "settings.w4OtherIncome", "W-4 other income") +
           field(t + "settings.w4Deductions", "W-4 deductions") +
           field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check"),
@@ -238,7 +238,15 @@ function renderSetup() {
       "Participation",
       field(e + "enabled", "Participate in ESPP", "check") +
         (plan.espp.enabled
-          ? field(e + "rate", "Payroll contribution", "percent") +
+          ? // A per-paycheck dollar election from a paystub drives payroll; the
+            // percent rate only applies when the election is a percentage.
+            (scenario.uploads.elections.espp &&
+            scenario.uploads.elections.espp.mode !== "percent"
+              ? field(
+                  "uploads.elections.espp.value",
+                  "ESPP contribution per paycheck",
+                )
+              : field(e + "rate", "Payroll contribution", "percent")) +
             field(
               e + "bonusEligible",
               "Include bonus in eligible ESPP pay",
@@ -397,7 +405,12 @@ function renderSetup() {
     )
     .join("");
   const uploads =
-    `<p class="cf-note">Review extracted amounts before saving. Documents stay on this device.</p><label class="button">Read paystub PDFs<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label><p>${scenario.uploads.records.length} saved paycheck observations</p><div id="upload-status" role="status"></div><div id="upload-review"></div>` +
+    `<p class="cf-note">Review extracted amounts before saving. Documents stay on this device.</p><label class="button">Read paystub PDFs<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label><p>${scenario.uploads.records.length} saved paycheck observations</p><div id="upload-status" role="status"></div><div id="upload-review"></div>${Profile.describe(
+      scenario,
+    )
+      .questions.filter((q) => q.id === "schedule")
+      .map((q) => `<p class="plan-review-note">${escape(q.why)}</p>`)
+      .join("")}` +
     compactGroup(
       "Salary & pay schedule",
       field(c + "salary", "Annual base salary") +
@@ -499,10 +512,7 @@ function renderSetup() {
     ]) +
     section("hsa", "HSA", hsa, ["hsa"]) +
     section("espp", "ESPP", espp, ["espp"]) +
-    section("compensation", "Pay & stock grants", compensation, [
-      "schedule",
-      "allowance",
-    ]) +
+    section("compensation", "Pay & stock grants", compensation, ["allowance"]) +
     section(
       "projection",
       "Lifetime & spending",
