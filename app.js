@@ -99,7 +99,7 @@ function quickQuestions() {
         "projection.monthlyExpenses.other",
         "About how much you spend per month",
         "number",
-        "Rent, food, travel and everything not taken out of your paycheck. Break it down later under Complete the picture.",
+        "Rent, food, travel and everything not taken out of your paycheck. Saved as Other spending; if you add categories later, lower Other by what you move into them.",
       ),
     ],
     balances: [
@@ -137,7 +137,7 @@ function quickQuestions() {
             "employerPlan.espp.offerPrice",
             "Company share price today",
             "number",
-            "Used for the offering, purchase and sale price until you set them separately.",
+            "A starting estimate for the offering, purchase and sale prices. Set the offering-start price and expected prices separately under Complete the picture when you know them.",
             {
               also: [
                 "employerPlan.espp.purchasePrice",
@@ -166,8 +166,16 @@ function quickQuestions() {
     : '<h2>About you</h2><p class="cf-note">Your paystub and answers cover everything the model needs.</p>';
 }
 function renderSetup() {
-  fieldConfig = Scenario.engineInput(scenario);
   shownPaths = new Set();
+  try {
+    renderSetupForm();
+  } finally {
+    // A failed render must not leave later fields hidden.
+    shownPaths = null;
+  }
+}
+function renderSetupForm() {
+  fieldConfig = Scenario.engineInput(scenario);
   const quick = quickQuestions();
   const t = "taxProfile.",
     r = "employerPlan.retirement.",
@@ -579,7 +587,15 @@ function renderSetup() {
     field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
     field(p + "socialSecurityStartAge", "Social Security start age") +
     group("Starting balances", balances) +
-    group("Monthly living expenses", expenses) +
+    group(
+      "Monthly living expenses",
+      (scenario.projection.monthlyExpenses.other > 0 &&
+      Object.entries(scenario.projection.monthlyExpenses).some(
+        ([key, v]) => key !== "other" && v > 0,
+      )
+        ? '<p class="plan-review-note">Other may still hold your quick total. Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
+        : "") + expenses,
+    ) +
     modelAssumptions;
   const review = Profile.describe(scenario).questions;
   const section = (id, title, body, questionIds = []) => {
@@ -612,7 +628,6 @@ function renderSetup() {
   $("setup")
     .querySelectorAll("details")
     .forEach((x) => (x.open = open.has(detailKey(x))));
-  shownPaths = null;
   $("setup")
     .querySelectorAll(".field-grid")
     .forEach((grid) => {
@@ -664,12 +679,15 @@ function renderSetup() {
                     ? null
                     : (Number(el.value) * (kind === "years" ? 12 : 1)) /
                       (kind === "percent" ? 100 : 1);
+            // One answer can fill related fields (e.g. one share price), but
+            // never a value the user set or confirmed, and the copies stay
+            // unmarked so later uploads or edits can still fill them.
+            const locked = Profile.lockedPaths(scenario);
             Profile.edit(next, el.dataset.path, value);
-            // One answer can fill related fields (e.g. one share price).
             for (const path of (el.dataset.also || "")
               .split(",")
-              .filter(Boolean))
-              Profile.edit(next, path, value);
+              .filter((p) => p && !locked.includes(p)))
+              set(next, path, value);
             commit(next);
           })),
     );
