@@ -122,26 +122,40 @@ function renderSetup() {
           t + "settings.estimatedPayments",
           "Annual estimated tax payments",
         ) +
-        field(t + "settings.capitalLossCarry", "Capital loss carryforward") +
+        field(t + "settings.capitalLossCarry", "Capital loss carryforward"),
+    );
+  // Settings that describe the model rather than the user, gathered in one
+  // collapsed group so setup never asks for them.
+  const modelAssumptions = group(
+    "Model assumptions",
+    field(p + "years", "Projection years") +
+      field(p + "inflation", "Annual inflation", "percent") +
+      field(p + "marketReturn", "Annual nominal investment return", "percent") +
+      field(c + "salaryGrowth", "Annual salary growth", "percent") +
+      field(c + "stockGrowth", "Annual company stock growth", "percent") +
+      field(t + "settings.limitGrowth", "Future IRS limit growth", "percent") +
+      field(
+        t + "settings.bracketGrowth",
+        "Future tax bracket growth",
+        "percent",
+      ) +
+      field(
+        t + "settings.caGrowth2026",
+        "California 2026 bracket adjustment",
+        "percent",
+      ) +
+      choices(
+        "Your W-4 (optional)",
         field(t + "settings.withholdingMethod", "Forecast withholding", [
           ["annual-estimate", "Estimated annual tax"],
           ["w4", "W-4 payroll method"],
         ]) +
-        choices(
-          "W-4 payroll withholding",
           field(t + "settings.w4Credits", "W-4 annual credits") +
-            field(t + "settings.w4OtherIncome", "W-4 other income") +
-            field(t + "settings.w4Deductions", "W-4 deductions") +
-            field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check"),
-        ) +
-        field(
-          t + "settings.caGrowth2026",
-          "California 2026 bracket adjustment",
-          "percent",
-        ) +
-        field(t + "settings.limitGrowth", "Future limit growth", "percent") +
-        field(t + "settings.bracketGrowth", "Future bracket growth", "percent"),
-    );
+          field(t + "settings.w4OtherIncome", "W-4 other income") +
+          field(t + "settings.w4Deductions", "W-4 deductions") +
+          field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check"),
+      ),
+  );
   const electionField = (key) => {
     const v = scenario.uploads.elections[key];
     return v
@@ -224,7 +238,15 @@ function renderSetup() {
       "Participation",
       field(e + "enabled", "Participate in ESPP", "check") +
         (plan.espp.enabled
-          ? field(e + "rate", "Payroll contribution", "percent") +
+          ? // A per-paycheck dollar election from a paystub drives payroll; the
+            // percent rate only applies when the election is a percentage.
+            (scenario.uploads.elections.espp &&
+            scenario.uploads.elections.espp.mode !== "percent"
+              ? field(
+                  "uploads.elections.espp.value",
+                  "ESPP contribution per paycheck",
+                )
+              : field(e + "rate", "Payroll contribution", "percent")) +
             field(
               e + "bonusEligible",
               "Include bonus in eligible ESPP pay",
@@ -356,9 +378,8 @@ function renderSetup() {
       ),
     )
     .join("");
+  // Salary, pay frequency and payday live with the paychecks (step 2) only.
   const compensation =
-    field(c + "salary", "Annual base salary") +
-    field(c + "salaryGrowth", "Annual salary growth", "percent") +
     field(c + "bonusPercent", "Bonus target", "percent") +
     field(
       c + "bonusMonth",
@@ -368,18 +389,13 @@ function renderSetup() {
         new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
       ]),
     ) +
-    field(c + "frequency", "Pay frequency", [
-      ["biweekly", "Every two weeks"],
-      ["semimonthly", "Twice monthly"],
-      ["monthly", "Monthly"],
-      ["weekly", "Weekly"],
-    ]) +
-    field(c + "firstPayday", "A recent payday", "date") +
-    field(c + "stockGrowth", "Annual company stock growth", "percent") +
     `<div id="grant-timeline" class="grant-preview"></div>` +
     grants +
     '<button id="add-grant">Add RSU grant</button>';
+  const planElections = ["traditional", "roth", "mega", "hsa", "espp"];
   const elections = Object.entries(scenario.uploads.elections)
+    // Plan elections are edited in their plan sections (401(k), HSA, ESPP).
+    .filter(([key]) => !planElections.includes(key))
     .map(([key, v]) =>
       field(
         `uploads.elections.${key}.value`,
@@ -389,7 +405,12 @@ function renderSetup() {
     )
     .join("");
   const uploads =
-    `<p class="cf-note">Review extracted amounts before saving. Documents stay on this device.</p><label class="button">Read paystub PDFs<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label><p>${scenario.uploads.records.length} saved paycheck observations</p><div id="upload-status" role="status"></div><div id="upload-review"></div>` +
+    `<p class="cf-note">Review extracted amounts before saving. Documents stay on this device.</p><label class="button">Read paystub PDFs<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label><p>${scenario.uploads.records.length} saved paycheck observations</p><div id="upload-status" role="status"></div><div id="upload-review"></div>${Profile.describe(
+      scenario,
+    )
+      .questions.filter((q) => q.id === "schedule")
+      .map((q) => `<p class="plan-review-note">${escape(q.why)}</p>`)
+      .join("")}` +
     compactGroup(
       "Salary & pay schedule",
       field(c + "salary", "Annual base salary") +
@@ -401,7 +422,9 @@ function renderSetup() {
         ]) +
         field(c + "firstPayday", "A recent payday", "date"),
     ) +
-    (elections ? compactGroup("Recurring contributions", elections) : "") +
+    (elections
+      ? compactGroup("Other recurring paycheck items", elections)
+      : "") +
     (scenario.uploads.records.length
       ? ""
       : compactGroup(
@@ -463,14 +486,12 @@ function renderSetup() {
     )
     .join("");
   const projection =
-    field(p + "years", "Projection years") +
     field(p + "retirementAge", "Retirement age") +
-    field(p + "inflation", "Annual inflation", "percent") +
-    field(p + "marketReturn", "Annual nominal investment return", "percent") +
     field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
     field(p + "socialSecurityStartAge", "Social Security start age") +
     group("Starting balances", balances) +
-    group("Monthly living expenses", expenses);
+    group("Monthly living expenses", expenses) +
+    modelAssumptions;
   const review = Profile.describe(scenario).questions;
   const section = (id, title, body, questionIds = []) => {
     const notes = review.filter((q) => questionIds.includes(q.id));
@@ -491,10 +512,7 @@ function renderSetup() {
     ]) +
     section("hsa", "HSA", hsa, ["hsa"]) +
     section("espp", "ESPP", espp, ["espp"]) +
-    section("compensation", "Pay & stock grants", compensation, [
-      "schedule",
-      "allowance",
-    ]) +
+    section("compensation", "Pay & stock grants", compensation, ["allowance"]) +
     section(
       "projection",
       "Lifetime & spending",
