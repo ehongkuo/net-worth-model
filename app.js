@@ -593,7 +593,7 @@ function renderSetupForm() {
       Object.entries(scenario.projection.monthlyExpenses).some(
         ([key, v]) => key !== "other" && v > 0,
       )
-        ? '<p class="plan-review-note">Other may still hold your quick total. Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
+        ? '<p class="plan-review-note">Your spending total is saved as Other (under About you, or below). Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
         : "") + expenses,
     ) +
     modelAssumptions;
