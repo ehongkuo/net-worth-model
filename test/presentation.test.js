@@ -106,3 +106,57 @@ test("attention banner holds only actionable alerts on every view", () => {
   const monthly = UI.forView(methodology, "monthly");
   assert(monthly.notes.length === 3 && monthly.history.length === 1);
 });
+test("setup lists what a paystub can't answer, most important first", () => {
+  const UI = require("../presentation"),
+    S = require("../scenario");
+  const s = S.defaults();
+  assert(
+    UI.missing(s)
+      .map((m) => m.id)
+      .join() === "spending,balances,age,filing",
+  );
+  s.projection.monthlyExpenses.housing = 2000;
+  s.projection.startingBalances.cash = 5000;
+  s.taxProfile.settings.filing = "married";
+  s.uploads.confirmedFields = {
+    "taxProfile.age": 30,
+    "taxProfile.settings.filing": "married",
+  };
+  s.employerPlan.hsa.eligible = true;
+  s.uploads.fieldSources = {
+    "employerPlan.hsa.eligible": { sourceDate: "2026-09-18", basis: "HSA" },
+  };
+  s.employerPlan.espp.enabled = true;
+  assert(
+    UI.missing(s)
+      .map((m) => m.id)
+      .join() === "spouse,hsa,espp",
+  );
+});
+test("what we learned lists paystub values and inferences with their source", () => {
+  const UI = require("../presentation"),
+    S = require("../scenario");
+  const s = S.defaults();
+  s.compensation.salary = 165000;
+  s.employerPlan.hsa.coverage = "family";
+  s.uploads.fieldSources = {
+    "compensation.salary": { sourceDate: "2026-09-18", basis: "Annualized" },
+    "employerPlan.hsa.coverage": {
+      sourceDate: "2026-09-18",
+      basis: "Above self-only limit",
+      inferred: true,
+    },
+  };
+  s.uploads.elections = {
+    traditional: { mode: "percent", value: 0.19, sourceDate: "2026-09-18" },
+  };
+  const rows = UI.learned(s);
+  const row = (label) => rows.find((r) => r.label === label);
+  assert(row("Annual salary").value === "$165,000");
+  assert(row("Annual salary").source === "From paystub");
+  assert(row("HSA coverage").value === "Family");
+  assert(row("HSA coverage").source === "Inferred");
+  assert(row("Traditional 401(k)").value === "19% of pay");
+  s.uploads.manualFields = ["compensation.salary"];
+  assert(!UI.learned(s).some((r) => r.label === "Annual salary"));
+});

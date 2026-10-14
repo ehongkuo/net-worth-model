@@ -9,6 +9,7 @@ let scenario,
   drafts = [],
   fieldConfig,
   profileStep = 0,
+  showLearned = false,
   grantTimelineAnnual = false;
 const get = (object, path) => path.split(".").reduce((v, k) => v?.[k], object);
 function set(object, path, value) {
@@ -503,8 +504,8 @@ function renderSetup() {
     [...$("setup").querySelectorAll("details[open]")].map(detailKey),
   );
   $("setup").innerHTML =
-    `<div data-profile-step="0" class="profile-panel"><h2>Tax profile</h2>${tax}</div>` +
-    `<div data-profile-step="1" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck. Two consecutive checks help us identify your pay schedule.</p>${uploads}</div>` +
+    `<div data-profile-step="1" class="profile-panel"><h2>Tax profile</h2>${tax}</div>` +
+    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck. Two consecutive checks help us identify your pay schedule.</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
     section("retirement", "Retirement & IRA", retirement, [
       "mega",
@@ -700,6 +701,7 @@ function render() {
         : result.ongoing.payroll,
     notices = Presentation.forView(payroll.warnings, view),
     modelNotes = notices.notes.map((n) => `<p>${escape(n)}</p>`).join("");
+  renderLearned(view === "monthly" && showLearned);
   if (view === "monthly") {
     const selected = month
       ? MoneyFlow.forMonth(row.payroll, row.flow, month)
@@ -842,6 +844,23 @@ function renderEsppComparison(x) {
     .join(
       "",
     )}</tbody></table></div><details class="context-help"><summary>How this is calculated</summary><p>Selling at purchase uses the purchase-date price. Holding uses your assumed ESPP sale price, so the difference also reflects that price assumption.</p><p>Each column's tax is the increase in this year's full household tax estimate when that sale is added, at this year's brackets, even when the sale falls in a later year. Losses beyond the $3,000 annual deduction carry forward and are not credited here. The columns ignore the time value of money and the risk that the price changes while you hold.</p><p>${x.qualifiedPlan ? "Qualified (Section 423) plan. A sale qualifies more than two years after the offering starts and more than one year after purchase. Earlier sales are disqualifying: the purchase-date discount is ordinary income even if the price falls." : "Non-qualified plan. The purchase discount is taxed as wages when you buy, so it is the same in every column and not shown. Only the later gain or loss differs."}</p></details></section>`;
+}
+function renderLearned(visible) {
+  const host = $("learned");
+  if (!visible) return host.replaceChildren();
+  const rows = Presentation.learned(scenario),
+    gaps = Presentation.missing(scenario);
+  host.innerHTML = `<section class="learned-card" aria-labelledby="learned-title"><div class="learned-heading"><h2 id="learned-title">What we learned from your paystub</h2><button id="learned-dismiss" aria-label="Dismiss">Dismiss</button></div>${rows.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Item</th><th>Value</th><th>Source</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escape(r.label)}</td><td>${escape(r.value)}</td><td><span class="source-chip source-${r.source === "Inferred" ? "inferred" : "paystub"}" title="${escape(r.basis || "")}">${escape(r.source)}</span></td></tr>`).join("")}</tbody></table></div>` : ""}${gaps.length ? `<div class="learned-gaps"><h3>Still needed for accurate results</h3><ul>${gaps.map((g) => `<li><strong>${escape(g.label)}</strong> <span>${escape(g.why)}</span></li>`).join("")}</ul><button id="learned-next" class="primary">Answer ${gaps.length} quick question${gaps.length === 1 ? "" : "s"}</button></div>` : '<p class="cf-note">Your profile has everything it needs.</p>'}</section>`;
+  $("learned-dismiss").onclick = () => {
+    showLearned = false;
+    host.replaceChildren();
+  };
+  if ($("learned-next"))
+    $("learned-next").onclick = () => {
+      showLearned = false;
+      profileStep = 1;
+      document.querySelector('[data-view="profile"]').click();
+    };
 }
 function renderProjection() {
   const rows = result.rows,
@@ -1087,13 +1106,9 @@ function reviewUploads() {
     !drafts.length || drafts.some((r) => !PaystubParser.validate(r).valid);
   $("apply-upload").onclick = () => {
     try {
-      if (
-        drafts.some(
-          (r) => Number(r.date.slice(0, 4)) !== scenario.taxProfile.year,
-        )
-      )
+      if (new Set(drafts.map((r) => r.date.slice(0, 4))).size > 1)
         throw new Error(
-          "Set the starting tax year to the uploaded check year.",
+          "Upload checks from one calendar year at a time, starting with the latest year.",
         );
       const next = structuredClone(scenario),
         records = PaystubParser.mergeRecords(next.uploads.records, drafts),
@@ -1102,13 +1117,26 @@ function reviewUploads() {
           Scenario.engineInput(next),
           { locked: Profile.lockedPaths(next) },
         );
+      // The tax year is inferred only from a current-year check; any other
+      // year must match the year being modeled.
+      const checkYear = Number(drafts[0]?.date.slice(0, 4));
+      if (
+        checkYear &&
+        checkYear !==
+          (suggestion.inferred?.["taxProfile.year"]?.value ??
+            next.taxProfile.year)
+      )
+        throw new Error(
+          `These checks are from ${checkYear}, but your profile models ${next.taxProfile.year}. Upload checks from the year you want to model.`,
+        );
       const applied = Profile.applyUpload(
         next,
         records,
         suggestion,
         $("apply-schedule").checked,
       );
-      profileStep = 2;
+      showLearned = true;
+      view = "monthly";
       commit(applied.scenario);
       if (applied.conflicts.length)
         $("status").textContent =
@@ -1229,8 +1257,8 @@ function renderProfile() {
     profileStep === 2
       ? "See my monthly picture"
       : profileStep === 1
-        ? "Continue with what I have"
-        : "Continue to paychecks";
+        ? "Continue to plan details"
+        : "Continue with what I have";
   if (Profile.hasIncome(scenario)) {
     const { payroll, flow } = result.ongoing;
     const graph = CompactFlow.build(
@@ -1244,7 +1272,7 @@ function renderProfile() {
   } else $("profile-overview").innerHTML = "";
   const date = profile.last?.date;
   $("profile-summary").innerHTML =
-    profileStep !== 1
+    profileStep !== 0
       ? ""
       : profile.last
         ? `<div class="profile-preview"><div><h2>Latest paycheck</h2><p>${escape(date)}</p></div><div class="profile-metrics"><div><span>Cash deposited</span><strong>${money(profile.snapshot.cash)}</strong></div><div><span>Retirement + HSA</span><strong>${money(profile.snapshot.retirement + profile.snapshot.hsa)}</strong></div><div><span>ESPP cash set aside</span><strong>${money(profile.snapshot.espp)}</strong></div></div><p class="cf-note">${profile.records} paycheck${profile.records === 1 ? "" : "s"} saved · ${profile.schedule.confirmed ? "Every " + (profile.schedule.frequency === "weekly" ? "week" : "two weeks") + " inferred from check dates." : "Pay frequency needs confirmation."}</p></div>`
@@ -1320,6 +1348,11 @@ document.querySelectorAll("[data-step]").forEach(
       renderProfile();
     }),
 );
+$("start-upload").onclick = () => {
+  ((profileStep = 0), (grantTimelineAnnual = false));
+  document.querySelector('[data-view="profile"]').click();
+  $("paystubs")?.click();
+};
 $("start-profile").onclick = () => {
   ((profileStep = 0), (grantTimelineAnnual = false));
   document.querySelector('[data-view="profile"]').click();
