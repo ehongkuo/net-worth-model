@@ -16,21 +16,22 @@
     }
     return result;
   }
-  // Buckets each view renders inline; everything else goes to the attention list
-  // so no model warning is silently dropped.
+  // Only actionable alerts go to the attention banner. Each view shows the
+  // other buckets quietly: the ones listed here in their own place, the rest
+  // in the view's model-notes disclosure. Every warning reaches exactly one.
   const INLINE = {
-    monthly: ["history", "assumptions"],
-    tax: ["tax", "assumptions"],
+    monthly: ["history"],
+    tax: [],
     lifetime: [],
   };
+  const NOTE_BUCKETS = ["tax", "assumptions", "history"];
   function forView(warnings, view) {
     const n = notices(warnings),
       inline = INLINE[view] || [];
     return {
       ...n,
-      attention: Object.keys(n).flatMap((k) =>
-        k === "alerts" || !inline.includes(k) ? n[k] : [],
-      ),
+      attention: n.alerts,
+      notes: NOTE_BUCKETS.flatMap((k) => (inline.includes(k) ? [] : n[k])),
     };
   }
   function overview(payroll, flow, buckets) {
@@ -84,7 +85,7 @@
       },
     ];
   }
-  const api = { notices, forView, INLINE, overview };
+  const api = { notices, forView, INLINE, NOTE_BUCKETS, overview };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Presentation = api;
 })(typeof window !== "undefined" ? window : globalThis);

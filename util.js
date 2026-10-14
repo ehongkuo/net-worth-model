@@ -51,8 +51,70 @@
     }
     return out;
   }
+  // Re-rendering a container replaces (or re-parents) its focused element, which
+  // drops keyboard focus to <body>. Find the focused element's stable key before
+  // rendering and refocus its replacement afterwards. A focused <summary> is
+  // keyed by its <details>.
+  const FOCUS_KEYS = [
+    "data-path",
+    "data-key",
+    "id",
+    "data-confirm",
+    "data-step",
+    "data-grant-allocation",
+    "data-remove-grant",
+  ];
+  function focusKey(el) {
+    const target = el.tagName === "SUMMARY" ? el.parentElement : el;
+    for (const attr of FOCUS_KEYS)
+      if (target?.hasAttribute?.(attr))
+        return {
+          attr,
+          value: target.getAttribute(attr),
+          summary: target !== el,
+        };
+    if (target?.tagName === "DETAILS")
+      return { summary: true, text: el.textContent };
+    return null;
+  }
+  function preserveFocus(container, rerender) {
+    const doc = container.ownerDocument,
+      active = doc.activeElement,
+      key = active && container.contains(active) ? focusKey(active) : null;
+    let range = null;
+    try {
+      if (key && active.selectionStart != null)
+        range = [
+          active.selectionStart,
+          active.selectionEnd,
+          active.selectionDirection,
+        ];
+    } catch {}
+    rerender();
+    if (!key) return;
+    const find = (attr, value) =>
+      [...container.querySelectorAll(`[${attr}]`)].find(
+        (el) => el.getAttribute(attr) === value,
+      );
+    const match = !key.attr
+      ? [...container.querySelectorAll("details > summary")].find(
+          (el) => el.textContent === key.text,
+        )?.parentElement
+      : find(key.attr, key.value) ||
+        // A confirmed assumption's button disappears; move to its field.
+        (key.attr === "data-confirm" ? find("data-path", key.value) : null);
+    const next = key.summary ? match?.querySelector("summary") : match;
+    if (!next || doc.activeElement === next) return;
+    next.focus({ preventScroll: true });
+    try {
+      if (range) next.setSelectionRange(...range);
+      // Number inputs have no selection API; select all as keyboard entry does.
+      else if (next.type === "number") next.select();
+    } catch {}
+  }
   const api = {
     escape,
+    preserveFocus,
     merge,
     money,
     positive,
