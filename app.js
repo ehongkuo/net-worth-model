@@ -10,6 +10,7 @@ let scenario,
   fieldConfig,
   profileStep = 0,
   showLearned = false,
+  keptValues = [],
   grantTimelineAnnual = false;
 const get = (object, path) => path.split(".").reduce((v, k) => v?.[k], object);
 function set(object, path, value) {
@@ -784,6 +785,7 @@ function render() {
   const ready = Profile.hasIncome(scenario);
   $("attention").replaceChildren();
   $("attention").hidden = true;
+  $("accuracy").hidden = true;
   if (!ready && !["profile", "welcome"].includes(view)) view = "welcome";
   if (ready && view === "welcome") view = "monthly";
   for (const name of ["welcome", "profile", "monthly", "tax", "lifetime"])
@@ -814,6 +816,7 @@ function render() {
     notices = Presentation.forView(payroll.warnings, view),
     modelNotes = notices.notes.map((n) => `<p>${escape(n)}</p>`).join("");
   renderLearned(view === "monthly" && showLearned);
+  renderAccuracy(!(view === "monthly" && showLearned));
   if (view === "monthly") {
     const selected = month
       ? MoneyFlow.forMonth(row.payroll, row.flow, month)
@@ -957,12 +960,36 @@ function renderEsppComparison(x) {
       "",
     )}</tbody></table></div><details class="context-help"><summary>How this is calculated</summary><p>Selling at purchase uses the purchase-date price. Holding uses your assumed ESPP sale price, so the difference also reflects that price assumption.</p><p>Each column's tax is the increase in this year's full household tax estimate when that sale is added, at this year's brackets, even when the sale falls in a later year. Losses beyond the $3,000 annual deduction carry forward and are not credited here. The columns ignore the time value of money and the risk that the price changes while you hold.</p><p>${x.qualifiedPlan ? "Qualified (Section 423) plan. A sale qualifies more than two years after the offering starts and more than one year after purchase. Earlier sales are disqualifying: the purchase-date discount is ordinary income even if the price falls." : "Non-qualified plan. The purchase discount is taxed as wages when you buy, so it is the same in every column and not shown. Only the later gain or loss differs."}</p></details></section>`;
 }
+// Results stay visible while details are missing; this bar says which.
+function renderAccuracy(visible) {
+  const host = $("accuracy"),
+    gaps = visible ? Presentation.missing(scenario) : [];
+  host.hidden = !gaps.length;
+  host.innerHTML = gaps.length
+    ? `<span><strong>Estimates</strong> until you add: ${gaps.map((g) => escape(g.label)).join(" · ")}</span><button id="accuracy-next">Improve accuracy</button>`
+    : "";
+  if (gaps.length)
+    $("accuracy-next").onclick = () => {
+      profileStep = 1;
+      document.querySelector('[data-view="profile"]').click();
+    };
+}
 function renderLearned(visible) {
   const host = $("learned");
   if (!visible) return host.replaceChildren();
   const rows = Presentation.learned(scenario),
-    gaps = Presentation.missing(scenario);
-  host.innerHTML = `<section class="learned-card" aria-labelledby="learned-title"><div class="learned-heading"><h2 id="learned-title">What we learned from your paystub</h2><button id="learned-dismiss" aria-label="Dismiss">Dismiss</button></div>${rows.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Item</th><th>Value</th><th>Source</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escape(r.label)}</td><td>${escape(r.value)}</td><td><span class="source-chip source-${r.source === "Inferred" ? "inferred" : "paystub"}" title="${escape(r.basis || "")}">${escape(r.source)}</span></td></tr>`).join("")}</tbody></table></div>` : ""}${gaps.length ? `<div class="learned-gaps"><h3>Still needed for accurate results</h3><ul>${gaps.map((g) => `<li><strong>${escape(g.label)}</strong> <span>${escape(g.why)}</span></li>`).join("")}</ul><button id="learned-next" class="primary">Answer ${gaps.length} quick question${gaps.length === 1 ? "" : "s"}</button></div>` : '<p class="cf-note">Your profile has everything it needs.</p>'}</section>`;
+    gaps = Presentation.missing(scenario),
+    kept = keptValues.length
+      ? `<div class="learned-kept"><h3>Your settings were kept</h3><ul>${keptValues.map((k, i) => `<li><strong>${escape(Presentation.labelFor(k.path))}</strong>: you set ${escape(Presentation.formatValue(k.path, k.yours))}; your paystub suggests ${escape(Presentation.formatValue(k.path, k.paystub))} <button data-use-paystub="${i}">Use paystub value</button></li>`).join("")}</ul></div>`
+      : "";
+  host.innerHTML = `<section class="learned-card" aria-labelledby="learned-title"><div class="learned-heading"><h2 id="learned-title">What we learned from your paystub</h2><button id="learned-dismiss" aria-label="Dismiss">Dismiss</button></div>${kept}${rows.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Item</th><th>Value</th><th>Source</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escape(r.label)}</td><td>${escape(r.value)}</td><td><span class="source-chip source-${r.source === "Inferred" ? "inferred" : "paystub"}" title="${escape(r.basis || "")}">${escape(r.source)}</span></td></tr>`).join("")}</tbody></table></div>` : ""}${gaps.length ? `<div class="learned-gaps"><h3>Still needed for accurate results</h3><ul>${gaps.map((g) => `<li><strong>${escape(g.label)}</strong> <span>${escape(g.why)}</span></li>`).join("")}</ul><button id="learned-next" class="primary">Answer ${gaps.length} quick question${gaps.length === 1 ? "" : "s"}</button></div>` : '<p class="cf-note">Your profile has everything it needs.</p>'}</section>`;
+  host.querySelectorAll("[data-use-paystub]").forEach(
+    (button) =>
+      (button.onclick = () => {
+        const [item] = keptValues.splice(Number(button.dataset.usePaystub), 1);
+        commit(Profile.usePaystubValue(structuredClone(scenario), item));
+      }),
+  );
   $("learned-dismiss").onclick = () => {
     showLearned = false;
     host.replaceChildren();
@@ -1120,46 +1147,54 @@ function reviewUploads() {
     ...scenario,
     uploads: { ...scenario.uploads, records: drafts },
   });
-  $("upload-review").innerHTML =
-    drafts
-      .map(
-        (r, i) =>
-          `<h3>Paycheck ${i + 1}</h3><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}</p><details ${PaystubParser.validate(r).valid ? "" : "open"}><summary>Review extracted amounts and categories</summary><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
-            .map(
-              (l, j) =>
-                `<tr><td>${escape(l.label)}</td><td><select data-mapping="${i}:${j}"><option value="">Choose</option>${Object.entries(
-                  PaystubParser.labels,
+  const checks = drafts
+    .map(
+      (r, i) =>
+        `<h3>Paycheck ${i + 1}</h3><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}</p><details ${PaystubParser.validate(r).valid ? "" : "open"}><summary>Review extracted amounts and categories</summary><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
+          .map(
+            (l, j) =>
+              `<tr><td>${escape(l.label)}</td><td><select data-mapping="${i}:${j}"><option value="">Choose</option>${Object.entries(
+                PaystubParser.labels,
+              )
+                .map(
+                  ([k, v]) =>
+                    `<option value="${k}" ${l.key === k ? "selected" : ""}>${escape(v)}</option>`,
                 )
-                  .map(
-                    ([k, v]) =>
-                      `<option value="${k}" ${l.key === k ? "selected" : ""}>${escape(v)}</option>`,
-                  )
-                  .join("")}</select>${
-                  PaystubParser.benefitTypes[l.key]
-                    ? `<label>Repeats<select data-benefit-schedule="${i}:${j}">${Object.entries(
-                        {
-                          review: "Confirm schedule",
-                          paycheck: "Every paycheck",
-                          monthly: "First paycheck each month",
-                          once: "This payment only",
-                        },
+                .join("")}</select>${
+                PaystubParser.benefitTypes[l.key]
+                  ? `<label>Repeats<select data-benefit-schedule="${i}:${j}">${Object.entries(
+                      {
+                        review: "Confirm schedule",
+                        paycheck: "Every paycheck",
+                        monthly: "First paycheck each month",
+                        once: "This payment only",
+                      },
+                    )
+                      .map(
+                        ([k, v]) =>
+                          `<option value="${k}" ${(l.schedule || (["commuter", "parking"].includes(l.key) ? "review" : "paycheck")) === k ? "selected" : ""}>${v}</option>`,
                       )
-                        .map(
-                          ([k, v]) =>
-                            `<option value="${k}" ${(l.schedule || (["commuter", "parking"].includes(l.key) ? "review" : "paycheck")) === k ? "selected" : ""}>${v}</option>`,
-                        )
-                        .join(
-                          "",
-                        )}</select></label><label>Employer annual cap (optional)<input type="number" min="0" step=".01" data-benefit-cap="${i}:${j}" value="${l.annualCap ?? ""}"></label>`
-                    : ""
-                }</td><td><input aria-label="Current ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:current" value="${l.current ?? ""}"></td><td><input aria-label="YTD ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:ytd" value="${l.ytd ?? ""}"></td></tr>`,
-            )
-            .join(
-              "",
-            )}</tbody></table></div></details><p>${PaystubParser.validate(r).errors.map(escape).join(" ") || "Amounts reconcile."}</p>`,
-      )
-      .join("") +
-    `<label class="check"><input id="apply-schedule" type="checkbox" checked>Fill salary and payday schedule${preview.schedule.confirmed ? " from check dates" : " using the selected pay frequency (confirm this in your profile)"}</label><button id="apply-upload">Apply reviewed paychecks</button>`;
+                      .join(
+                        "",
+                      )}</select></label><label>Employer annual cap (optional)<input type="number" min="0" step=".01" data-benefit-cap="${i}:${j}" value="${l.annualCap ?? ""}"></label>`
+                  : ""
+              }</td><td><input aria-label="Current ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:current" value="${l.current ?? ""}"></td><td><input aria-label="YTD ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:ytd" value="${l.ytd ?? ""}"></td></tr>`,
+          )
+          .join(
+            "",
+          )}</tbody></table></div></details><p>${PaystubParser.validate(r).errors.map(escape).join(" ") || "Amounts reconcile."}</p>`,
+    )
+    .join("");
+  const schedule = `<label class="check"><input id="apply-schedule" type="checkbox" checked>Fill salary and payday schedule${preview.schedule.confirmed ? " from check dates" : " using the selected pay frequency (confirm this in your profile)"}</label>`;
+  // When every check reconciles there is nothing to decide: show a one-line
+  // summary and keep line-by-line details one click away.
+  const clean =
+    drafts.length &&
+    drafts.every((r) => PaystubParser.validate(r).valid) &&
+    preview.schedule.confirmed;
+  $("upload-review").innerHTML = clean
+    ? `<p class="review-summary"><strong>${drafts.length} paycheck${drafts.length === 1 ? "" : "s"} read</strong> · ${drafts.map((r) => escape(r.date)).join(", ")} · all totals reconcile</p><button id="apply-upload" class="primary">Use these paychecks</button><details class="review-details"><summary>Check what we read</summary>${checks}${schedule}</details>`
+    : `${checks}${schedule}<button id="apply-upload">Apply reviewed paychecks</button>`;
   $("upload-review")
     .querySelectorAll("[data-benefit-cap]")
     .forEach(
@@ -1243,11 +1278,9 @@ function reviewUploads() {
           `These checks are from ${checkYear}, but your profile models ${applied.scenario.taxProfile.year}. Upload checks from the year you want to model.`,
         );
       showLearned = true;
+      keptValues = applied.kept || [];
       view = "monthly";
       commit(applied.scenario);
-      if (applied.conflicts.length)
-        $("status").textContent =
-          "Upload applied. " + applied.conflicts.join(" ");
       drafts = [];
     } catch (error) {
       $("upload-status").textContent = error.message;
@@ -1328,6 +1361,11 @@ try {
     warnings = migrated.warnings;
   } else {
     scenario = Scenario.defaults();
+    // A new profile models the current year (the engine starts at 2026).
+    scenario.taxProfile.year = Math.max(
+      scenario.taxProfile.year,
+      new Date().getFullYear(),
+    );
     scenario.compensation.salary = 0;
   }
   view = Profile.initialView(scenario);

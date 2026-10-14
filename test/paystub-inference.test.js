@@ -234,3 +234,36 @@ test("family coverage keeps the full HSA election in the forecast", () => {
   const p = require("../projection").calculate(out).ongoing.payroll;
   assert(p.contributions.hsa > 4400 - 800, "not capped at the self-only limit");
 });
+test("a confirmed value that the paystub contradicts is kept, reported, and can be switched", () => {
+  const records = P.mergeRecords(
+    [],
+    [parse("Marital Status: Married\n" + fixture, "a")],
+  );
+  const s = Scenario.defaults();
+  s.uploads.confirmedFields = { "taxProfile.settings.filing": "single" };
+  const applied = Profile.applyUpload(
+    s,
+    records,
+    P.suggest(records, Scenario.engineInput(s), {
+      today,
+      locked: Profile.lockedPaths(s),
+    }),
+    true,
+  );
+  assertEqual(applied.scenario.taxProfile.settings.filing, "single");
+  const item = applied.kept.find(
+    (k) => k.path === "taxProfile.settings.filing",
+  );
+  assert(item && item.yours === "single" && item.paystub === "married");
+  const switched = Profile.usePaystubValue(applied.scenario, item);
+  assertEqual(switched.taxProfile.settings.filing, "married");
+  assert(!("taxProfile.settings.filing" in switched.uploads.confirmedFields));
+  assertEqual(
+    Profile.fieldState(switched, "taxProfile.settings.filing").kind,
+    "inferred",
+  );
+  assertEqual(
+    Presentation.formatValue("taxProfile.settings.filing", item.paystub),
+    "Married filing jointly",
+  );
+});

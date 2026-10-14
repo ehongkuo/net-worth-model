@@ -372,10 +372,9 @@
       elections = {},
       inferred = {},
       warnings = [];
-    // Never infer over a value the user set or confirmed.
-    const infer = (path, value, basis) => {
-      if (!locked.includes(path)) inferred[path] = { value, basis };
-    };
+    // Inferences are recorded even for values the user set or confirmed;
+    // applyUpload keeps the user's value and reports the disagreement.
+    const infer = (path, value, basis) => (inferred[path] = { value, basis });
     const year = Number(last.date.slice(0, 4));
     // Only a check from the current calendar year describes the year being
     // modeled; older checks (e.g. last December's) never move the tax year.
@@ -499,8 +498,9 @@
         : y[key];
       return used != null && used >= caps[key] - 0.02;
     };
-    const coverage =
-      inferred["employerPlan.hsa.coverage"]?.value || c.hsa.coverage;
+    const coverage = locked.includes("employerPlan.hsa.coverage")
+      ? c.hsa.coverage
+      : inferred["employerPlan.hsa.coverage"]?.value || c.hsa.coverage;
     for (const key of [
       "traditional",
       "roth",
