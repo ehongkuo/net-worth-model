@@ -492,14 +492,16 @@
   // Default order for trimming unfunded transfers.
   const FUNDING_ORDER = ["cash", "espp", "rsu", "retirement"];
   // Spending follows the chart top to bottom: cash (spendable, then the
-  // future-tax reserve), then equity (ESPP cash awaiting purchase, ESPP shares,
-  // RSUs), then retirement. HSA money is left for medical costs.
+  // future-tax reserve), then equity (ESPP shares, RSUs, and last the ESPP cash
+  // awaiting purchase, since using it means withdrawing from the offering and
+  // losing that purchase's discount), then retirement. HSA money is left for
+  // medical costs. projection.js draw() follows the same order.
   const SPENDING_ORDER = [
     "cash",
     "reserve",
-    "pending",
     "espp",
     "rsu",
+    "pending",
     "retirement",
   ];
   function allocateCosts(accounts, costs, order = FUNDING_ORDER) {

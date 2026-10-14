@@ -18,6 +18,7 @@
       "cash",
       "brokerage",
       "companyEquity",
+      "esppPending",
       "pretax401k",
       "traditionalIRA",
       "rothAccounts",
@@ -42,7 +43,9 @@
       },
       basis = balances.brokerage,
       lossCarry = c.tax.capitalLossCarry || 0,
-      companyWithdrawn = 0;
+      companyWithdrawn = 0,
+      esppPendingGross = 0,
+      pendingWithdrawn = 0;
     const history = {},
       coverHistory = {},
       rows = [
@@ -104,17 +107,21 @@
       const purchaseCost = payroll.espp.lots
         .filter((l) => Number(l.purchaseDate.slice(0, 4)) === year)
         .reduce((n, l) => n + l.cost, 0);
-      balances.esppPending = Math.max(
+      // ESPP cash awaiting purchase as payroll deposits it; spending some of it
+      // (withdrawing from the offering) is tracked separately so it doesn't
+      // inflate company equity.
+      esppPendingGross = Math.max(
         0,
-        balances.esppPending +
+        esppPendingGross +
           payroll.espp.contributions -
           payroll.espp.refunds -
           purchaseCost,
       );
+      balances.esppPending = Math.max(0, esppPendingGross - pendingWithdrawn);
       companyWithdrawn *= 1 + c.stockGrowth;
       balances.companyEquity = Math.max(
         0,
-        payroll.stockAssets - balances.esppPending - companyWithdrawn,
+        payroll.stockAssets - esppPendingGross - companyWithdrawn,
       );
       const taxFor = (pre, gain) =>
         C.tax(
@@ -153,6 +160,8 @@
         basis = Math.max(0, basis - brokerUsed + withdrawal.gains);
         companyWithdrawn +=
           balances.companyEquity - withdrawal.balances.companyEquity;
+        pendingWithdrawn +=
+          balances.esppPending - withdrawal.balances.esppPending;
         balances = withdrawal.balances;
       }
       lossCarry = taxes.lossCarryforward || 0;

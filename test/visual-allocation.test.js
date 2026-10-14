@@ -26,7 +26,7 @@ test("visual allocation spends cash then ESPP, RSU and retirement without changi
   assertClose(b.shortfall, 500);
   assertClose(b.remaining.hsa, 50);
 });
-test("expenses use cash and the tax reserve, then pending ESPP cash and equity, never the HSA", () => {
+test("expenses use cash and the tax reserve, then equity with pending ESPP cash last, never the HSA", () => {
   const accounts = {
     cash: 100,
     pending: 40,
@@ -39,12 +39,12 @@ test("expenses use cash and the tax reserve, then pending ESPP cash and equity, 
   const a = F.allocateCosts(accounts, 180, F.SPENDING_ORDER);
   assertClose(a.used.cash, 100);
   assertClose(a.used.reserve, 60);
-  assertClose(a.used.pending, 20);
-  assertClose(a.used.espp, 0);
-  const c = F.allocateCosts(accounts, 250, F.SPENDING_ORDER);
-  assertClose(c.used.pending, 40);
-  assertClose(c.used.espp, 50);
-  assertClose(a.used.rsu, 0);
+  assertClose(a.used.espp, 20);
+  assertClose(a.used.pending, 0);
+  const c = F.allocateCosts(accounts, 680, F.SPENDING_ORDER);
+  assertClose(c.used.rsu, 300);
+  assertClose(c.used.pending, 20);
+  assertClose(c.used.retirement, 0);
   const b = F.allocateCosts(accounts, 2000, F.SPENDING_ORDER);
   assertClose(b.used.retirement, 400);
   assertClose(b.remaining.hsa, 50);
