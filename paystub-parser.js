@@ -86,7 +86,7 @@
             : null;
     if (section === "Employee Taxes") {
       if (/OASDI|Social Security/i.test(label)) return "ss";
-      if (/Medicare/i.test(label)) return "medicare";
+      if (/Medicare|\bMED\b/i.test(label)) return "medicare";
       if (/\bFed(eral)?\b|\bFITW?\b/i.test(label)) return "federal";
       if (
         /SDI|disability|\bSUI\b|\bPFL\b|\bFLI\b|family leave|unemploy/i.test(

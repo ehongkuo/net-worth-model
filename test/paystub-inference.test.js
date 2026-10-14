@@ -83,6 +83,11 @@ test("federal and local withholding are never classified as state tax", () => {
     "FITW",
   ])
     assertEqual(key(label), "federal", label);
+  // Paylocity prints Medicare as "FED MED/EE".
+  const med = parse(
+    fixture.replace("Medicare 89.19", "FED MED/EE 89.19"),
+  ).lines.find((l) => l.label === "FED MED/EE");
+  assertEqual(med.key, "medicare");
   for (const label of [
     "NYC Withholding",
     "Local Withholding",
