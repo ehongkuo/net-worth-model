@@ -1140,13 +1140,17 @@ document.querySelectorAll("[data-view]").forEach(
       render();
     }),
 );
-for (let month = 1; month <= 12; month++)
+// Two views: the monthly average at your current earning pace, or this
+// calendar month's scheduled paychecks, vests and purchases.
+{
+  const today = new Date();
   $("period").add(
     new Option(
-      new Date(2026, month - 1, 1).toLocaleString("en-US", { month: "long" }),
-      month,
+      `This month (${today.toLocaleString("en-US", { month: "long" })})`,
+      today.getMonth() + 1,
     ),
   );
+}
 $("period").onchange = render;
 $("year").oninput = renderProjection;
 $("real").onchange = renderProjection;
