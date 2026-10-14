@@ -1936,3 +1936,16 @@ button:disabled {
 .field-status.field-inferred {
   color: #c4b5fd;
 }
+
+.quick-question {
+  border: 1px solid #2b3b52;
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin: 12px 0;
+}
+.quick-question h3 {
+  margin: 0 0 4px;
+}
+.quick-done {
+  color: #86efac;
+}

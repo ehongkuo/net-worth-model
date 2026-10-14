@@ -21,7 +21,10 @@ function set(object, path, value) {
 function table(headers, rows) {
   return `<table><thead><tr>${headers.map((x) => `<th>${escape(x)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((v) => `<td>${escape(v)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
-function field(path, label, type = "number", hint = "") {
+// Paths already drawn in the current form render; each field appears once.
+let shownPaths = null;
+function field(path, label, type = "number", hint = "", { also = [] } = {}) {
+  if (shownPaths?.has(path)) return "";
   const enginePath = path.startsWith("employerPlan.")
     ? path.slice(13)
     : path.startsWith("taxProfile.settings.")
@@ -49,8 +52,9 @@ function field(path, label, type = "number", hint = "") {
   const sourceInfo = provenance
     ? `<details class="field-source" data-key="source:${path}"><summary>Source</summary>${escape(provenance)}</details>`
     : "";
+  shownPaths?.add(path);
   const value = get(scenario, path),
-    attrs = `data-path="${path}" data-type="${type}"`;
+    attrs = `data-path="${path}" data-type="${type}"${also.length ? ` data-also="${also.join(",")}"` : ""}`;
   const state = Profile.fieldState(scenario, path);
   const { badge, approve } = Presentation.fieldBadge(state, path, label);
   if (type === "check")
@@ -79,8 +83,100 @@ const compactGroup = (title, body) =>
 function setup() {
   Util.preserveFocus($("setup"), renderSetup);
 }
+// Questions shown on the quick screen this session; answered ones stay in place
+// so the form doesn't jump while the user works through it.
+const quickAsked = new Set();
+function quickQuestions() {
+  for (const m of Presentation.missing(scenario)) quickAsked.add(m.id);
+  const why = Object.fromEntries(
+    Presentation.missing(scenario).map((m) => [m.id, m.why]),
+  );
+  const espp = scenario.employerPlan.espp;
+  const items = {
+    spending: [
+      "Monthly spending",
+      field(
+        "projection.monthlyExpenses.other",
+        "About how much you spend per month",
+        "number",
+        "Rent, food, travel and everything not taken out of your paycheck. Saved as Other spending; if you add categories later, lower Other by what you move into them.",
+      ),
+    ],
+    balances: [
+      "What you already have",
+      field("projection.startingBalances.cash", "Cash and savings") +
+        field("projection.startingBalances.brokerage", "Taxable investments") +
+        field("projection.startingBalances.pretax401k", "Traditional 401(k)") +
+        field("projection.startingBalances.rothAccounts", "Roth accounts") +
+        field("projection.startingBalances.traditionalIRA", "Traditional IRA") +
+        field("projection.startingBalances.hsa", "HSA"),
+    ],
+    age: ["Your age", field("taxProfile.age", "Age today")],
+    filing: [
+      "Filing status",
+      field("taxProfile.settings.filing", "How you file taxes", [
+        ["single", "Single"],
+        ["married", "Married filing jointly"],
+      ]),
+    ],
+    spouse: [
+      "Spouse income",
+      field("taxProfile.settings.spouseIncome", "Spouse's annual wages"),
+    ],
+    hsa: [
+      "HSA coverage",
+      field("employerPlan.hsa.coverage", "Your HSA health plan covers", [
+        ["single", "Just me (self-only)"],
+        ["family", "Me and family"],
+      ]),
+    ],
+    espp: espp.enabled
+      ? [
+          "ESPP",
+          field(
+            "employerPlan.espp.offerPrice",
+            "Company share price today",
+            "number",
+            "A starting estimate for the offering, purchase and sale prices. Set the offering-start price and expected prices separately under Complete the picture when you know them.",
+            {
+              also: [
+                "employerPlan.espp.purchasePrice",
+                "employerPlan.espp.salePrice",
+              ],
+            },
+          ) +
+            field(
+              "employerPlan.espp.start",
+              "Current offering started",
+              "date",
+            ) +
+            field("employerPlan.espp.periodMonths", "Months per offering"),
+        ]
+      : null,
+  };
+  const html = [...quickAsked]
+    .filter((id) => items[id])
+    .map(
+      (id) =>
+        `<section class="quick-question"><h3>${escape(items[id][0])}</h3>${why[id] ? `<p class="cf-note">${escape(why[id])}</p>` : '<p class="cf-note quick-done">Answered</p>'}<div class="field-grid">${items[id][1]}</div></section>`,
+    )
+    .join("");
+  return html
+    ? `<h2>A few things your paystub can't tell us</h2>${html}`
+    : '<h2>About you</h2><p class="cf-note">Your paystub and answers cover everything the model needs.</p>';
+}
 function renderSetup() {
+  shownPaths = new Set();
+  try {
+    renderSetupForm();
+  } finally {
+    // A failed render must not leave later fields hidden.
+    shownPaths = null;
+  }
+}
+function renderSetupForm() {
   fieldConfig = Scenario.engineInput(scenario);
+  const quick = quickQuestions();
   const t = "taxProfile.",
     r = "employerPlan.retirement.",
     h = "employerPlan.hsa.",
@@ -491,7 +587,15 @@ function renderSetup() {
     field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
     field(p + "socialSecurityStartAge", "Social Security start age") +
     group("Starting balances", balances) +
-    group("Monthly living expenses", expenses) +
+    group(
+      "Monthly living expenses",
+      (scenario.projection.monthlyExpenses.other > 0 &&
+      Object.entries(scenario.projection.monthlyExpenses).some(
+        ([key, v]) => key !== "other" && v > 0,
+      )
+        ? '<p class="plan-review-note">Your spending total is saved as Other (under About you, or below). Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
+        : "") + expenses,
+    ) +
     modelAssumptions;
   const review = Profile.describe(scenario).questions;
   const section = (id, title, body, questionIds = []) => {
@@ -504,7 +608,7 @@ function renderSetup() {
     [...$("setup").querySelectorAll("details[open]")].map(detailKey),
   );
   $("setup").innerHTML =
-    `<div data-profile-step="1" class="profile-panel"><h2>Tax profile</h2>${tax}</div>` +
+    `<div data-profile-step="1" class="profile-panel">${quick}<h2>Tax details</h2>${tax}</div>` +
     `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck. Two consecutive checks help us identify your pay schedule.</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
     section("retirement", "Retirement & IRA", retirement, [
@@ -575,7 +679,15 @@ function renderSetup() {
                     ? null
                     : (Number(el.value) * (kind === "years" ? 12 : 1)) /
                       (kind === "percent" ? 100 : 1);
+            // One answer can fill related fields (e.g. one share price), but
+            // never a value the user set or confirmed, and the copies stay
+            // unmarked so later uploads or edits can still fill them.
+            const locked = Profile.lockedPaths(scenario);
             Profile.edit(next, el.dataset.path, value);
+            for (const path of (el.dataset.also || "")
+              .split(",")
+              .filter((p) => p && !locked.includes(p)))
+              set(next, path, value);
             commit(next);
           })),
     );
