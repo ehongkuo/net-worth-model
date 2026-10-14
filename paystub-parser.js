@@ -84,22 +84,31 @@
           : /medical/i.test(label)
             ? "employerMedical"
             : null;
-    if (section === "Employee Taxes")
-      return /OASDI|Social Security/i.test(label)
-        ? "ss"
-        : /Medicare/i.test(label)
-          ? "medicare"
-          : /Federal/i.test(label)
-            ? "federal"
-            : /SDI|disability|\bSUI\b|\bPFL\b|\bFLI\b|family leave|unemploy/i.test(
-                  label,
-                )
-              ? "sdi"
-              : /state\s+(income\s+)?tax|state\s+withholding|\bSIT\b|\bST\s+WH\b|withholding/i.test(
-                    label,
-                  )
-                ? "state"
-                : null;
+    if (section === "Employee Taxes") {
+      if (/OASDI|Social Security/i.test(label)) return "ss";
+      if (/Medicare/i.test(label)) return "medicare";
+      if (/\bFed(eral)?\b|\bFITW?\b/i.test(label)) return "federal";
+      if (
+        /SDI|disability|\bSUI\b|\bPFL\b|\bFLI\b|family leave|unemploy/i.test(
+          label,
+        )
+      )
+        return "sdi";
+      // City, local and school taxes have no model category; leave them for the
+      // user to map rather than counting them as state tax.
+      if (/\b(local|city|NYC|school|EIT|county|municipal)\b/i.test(label))
+        return null;
+      // State income tax: explicit wording, SIT / ST WH, or withholding tied to
+      // a named state ("California Withholding", "OR Withholding").
+      if (
+        /state\s+(income\s+)?tax|state\s+withholding|\bSIT\b|\bST\s+WH\b/i.test(
+          label,
+        ) ||
+        (/withholding/i.test(label) && stateCode(label))
+      )
+        return "state";
+      return null;
+    }
     if (section === "Earnings")
       return /imputed/i.test(label)
         ? "imputed"

@@ -71,6 +71,25 @@ test("state comes from recognized state income tax lines from several vendors", 
   const sdi = parse(fixture).lines.find((l) => l.label === "CA SDI - CASDI");
   assertEqual(sdi.key, "sdi");
 });
+test("federal and local withholding are never classified as state tax", () => {
+  const key = (label) =>
+    parse(
+      fixture.replace("Federal Withholding 753", `${label} 753`),
+    ).lines.find((l) => l.label === label)?.key;
+  for (const label of [
+    "FIT Withholding",
+    "Fed Withholding",
+    "Fed Income Tax",
+    "FITW",
+  ])
+    assertEqual(key(label), "federal", label);
+  for (const label of [
+    "NYC Withholding",
+    "Local Withholding",
+    "Withholding Tax",
+  ])
+    assertEqual(key(label), null, label);
+});
 test("a missing or unrecognized state line is never read as no state tax", () => {
   const noLine = fixture.replace(/State Tax - CA .*\n/, "");
   assert(!suggest(noLine).inferred["taxProfile.settings.state"]);
