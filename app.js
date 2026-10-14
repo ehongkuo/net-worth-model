@@ -695,6 +695,17 @@ function render() {
   const row = result.rows[1],
     c = Scenario.engineInput(scenario),
     month = Number($("period").value);
+  // The month comes from today's date, the data from the model's tax year;
+  // name both so a different modeled year is never mistaken for this month.
+  {
+    const option = $("period").options[1],
+      today = new Date(),
+      name = today.toLocaleString("en-US", { month: "long" });
+    option.text =
+      row.year === today.getFullYear()
+        ? `This month (${name})`
+        : `${name} ${row.year}`;
+  }
   const payroll =
       view === "lifetime" || (view === "monthly" && month)
         ? row.payroll
