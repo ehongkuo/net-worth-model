@@ -104,9 +104,14 @@
       if (c.retirement.iraMode === "traditional")
         balances.traditionalIRA += a.ira;
       balances.hsa += a.hsa + a.hsaEmployer;
-      const purchaseCost = payroll.espp.lots
-        .filter((l) => Number(l.purchaseDate.slice(0, 4)) === year)
-        .reduce((n, l) => n + l.cost, 0);
+      const purchased = payroll.espp.lots.filter(
+          (l) => Number(l.purchaseDate.slice(0, 4)) === year,
+        ),
+        purchaseCost = purchased.reduce((n, l) => n + l.cost, 0),
+        purchaseValue = purchased.reduce(
+          (n, l) => n + l.shares * l.purchasePrice,
+          0,
+        );
       // ESPP cash awaiting purchase as payroll deposits it; spending some of it
       // (withdrawing from the offering) is tracked separately so it doesn't
       // inflate company equity.
@@ -117,8 +122,16 @@
           payroll.espp.refunds -
           purchaseCost,
       );
-      balances.esppPending = Math.max(0, esppPendingGross - pendingWithdrawn);
       companyWithdrawn *= 1 + c.stockGrowth;
+      // Pending cash spent earlier never buys shares: when the offering
+      // purchases, remove those shares (at purchase value) from company equity
+      // and settle the withdrawal.
+      if (pendingWithdrawn > 0 && purchaseCost > 0) {
+        const settled = Math.min(pendingWithdrawn, purchaseCost);
+        companyWithdrawn += (settled * purchaseValue) / purchaseCost;
+        pendingWithdrawn -= settled;
+      }
+      balances.esppPending = Math.max(0, esppPendingGross - pendingWithdrawn);
       balances.companyEquity = Math.max(
         0,
         payroll.stockAssets - esppPendingGross - companyWithdrawn,
