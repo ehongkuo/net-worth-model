@@ -258,7 +258,7 @@
         fieldSources: Object.fromEntries(
           Object.entries(u.fieldSources || {}).map(([k, v]) => [
             k,
-            pick(v, ["sourceDate", "basis"]),
+            pick(v, ["sourceDate", "basis", "inferred"]),
           ]),
         ),
         bonusDate: u.bonusDate || "",
