@@ -148,6 +148,15 @@
       };
     }
   }
+  // Paths the user set or confirmed; uploads and inferences never change them.
+  function lockedPaths(s) {
+    return [
+      ...new Set([
+        ...(s.uploads.manualFields || []),
+        ...Object.keys(s.uploads.confirmedFields || {}),
+      ]),
+    ];
+  }
   function applyUpload(input, records, suggestion, applySchedule) {
     const S =
       typeof module !== "undefined" && module.exports
@@ -175,14 +184,20 @@
         old != null &&
         old !== 0 &&
         JSON.stringify(old) !== JSON.stringify(read(defaults, path));
-      if (s.uploads.manualFields.includes(path) || legacyOverride) {
+      const confirmed = Object.hasOwn(s.uploads.confirmedFields || {}, path);
+      if (
+        s.uploads.manualFields.includes(path) ||
+        confirmed ||
+        legacyOverride
+      ) {
         if (old !== value)
           conflicts.push(
             `${path}: kept your setting (${old}); upload suggests ${value}.`,
           );
-        s.uploads.manualFields = [
-          ...new Set([...s.uploads.manualFields, path]),
-        ];
+        if (!confirmed)
+          s.uploads.manualFields = [
+            ...new Set([...s.uploads.manualFields, path]),
+          ];
         return;
       }
       write(s, path, value);
@@ -318,12 +333,17 @@
       (path.startsWith("uploads.elections.") &&
         s.uploads.elections[path.split(".")[2]]?.sourceDate)
     )
-      return {
-        kind: "observed",
-        label: s.uploads.fieldSources?.[path]?.inferred
-          ? "Inferred"
-          : "From paystub",
-      };
+      return s.uploads.fieldSources?.[path]?.inferred
+        ? Object.hasOwn(s.uploads.confirmedFields || {}, path) &&
+          JSON.stringify(s.uploads.confirmedFields[path]) ===
+            JSON.stringify(read(s, path))
+          ? { kind: "confirmed", label: "Confirmed" }
+          : {
+              kind: "inferred",
+              label: "Inferred",
+              basis: s.uploads.fieldSources[path].basis,
+            }
+        : { kind: "observed", label: "From paystub" };
     if (
       Object.hasOwn(s.uploads.confirmedFields || {}, path) &&
       JSON.stringify(s.uploads.confirmedFields[path]) ===
@@ -390,6 +410,7 @@
     hasIncome,
     initialView,
     applyUpload,
+    lockedPaths,
     edit,
     employerFunding,
     grantPreview,

@@ -51,14 +51,7 @@ function field(path, label, type = "number", hint = "") {
   const value = get(scenario, path),
     attrs = `data-path="${path}" data-type="${type}"`;
   const state = Profile.fieldState(scenario, path);
-  const badge =
-    state.kind === "review"
-      ? `<span class="field-status">${escape(state.label)}</span>`
-      : "";
-  const approve =
-    state.kind === "review" && state.label !== "Needs input"
-      ? `<button type="button" class="confirm-field" data-confirm="${path}" aria-label="Confirm ${escape(label)}">Confirm assumption</button>`
-      : "";
+  const { badge, approve } = Presentation.fieldBadge(state, path, label);
   if (type === "check")
     return `<div class="profile-cell state-${state.kind}"><label class="check">${badge}<input ${attrs} type="checkbox" ${value ? "checked" : ""}>${escape(label)}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${sourceInfo}${approve}</div>`;
   const choices = Array.isArray(type) ? type : null;
@@ -1086,7 +1079,11 @@ function reviewUploads() {
         );
       const next = structuredClone(scenario),
         records = PaystubParser.mergeRecords(next.uploads.records, drafts),
-        suggestion = PaystubParser.suggest(records, Scenario.engineInput(next));
+        suggestion = PaystubParser.suggest(
+          records,
+          Scenario.engineInput(next),
+          { locked: Profile.lockedPaths(next) },
+        );
       const applied = Profile.applyUpload(
         next,
         records,

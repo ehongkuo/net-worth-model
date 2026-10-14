@@ -1,5 +1,9 @@
 (function (root) {
   "use strict";
+  const Util =
+    typeof module !== "undefined" && module.exports
+      ? require("./util")
+      : root.Util;
   function notices(warnings = []) {
     const result = { alerts: [], history: [], tax: [], assumptions: [] };
     for (const text of new Set(warnings)) {
@@ -85,7 +89,23 @@
       },
     ];
   }
-  const api = { notices, forView, INLINE, NOTE_BUCKETS, overview };
+  // Status chip and confirm button for a setup field, from Profile.fieldState.
+  function fieldBadge(state, path, label) {
+    const esc = Util.escape;
+    const badge =
+      state.kind === "review"
+        ? `<span class="field-status">${esc(state.label)}</span>`
+        : state.kind === "inferred"
+          ? `<span class="field-status field-inferred" title="${esc(state.basis)}">Inferred</span>`
+          : "";
+    const approve =
+      (state.kind === "review" && state.label !== "Needs input") ||
+      state.kind === "inferred"
+        ? `<button type="button" class="confirm-field" data-confirm="${esc(path)}" aria-label="Confirm ${esc(label)}">${state.kind === "inferred" ? "Confirm" : "Confirm assumption"}</button>`
+        : "";
+    return { badge, approve };
+  }
+  const api = { notices, fieldBadge, forView, INLINE, NOTE_BUCKETS, overview };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Presentation = api;
 })(typeof window !== "undefined" ? window : globalThis);
