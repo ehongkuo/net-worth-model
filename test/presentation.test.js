@@ -160,3 +160,20 @@ test("what we learned lists paystub values and inferences with their source", ()
   s.uploads.manualFields = ["compensation.salary"];
   assert(!UI.learned(s).some((r) => r.label === "Annual salary"));
 });
+
+test("an inferred filing status is still asked about until confirmed", () => {
+  const UI = require("../presentation"),
+    S = require("../scenario");
+  const s = S.defaults();
+  s.taxProfile.settings.filing = "married";
+  s.uploads.fieldSources = {
+    "taxProfile.settings.filing": {
+      sourceDate: "2026-09-18",
+      basis: "W-4 status",
+      inferred: true,
+    },
+  };
+  assert(UI.missing(s).some((m) => m.id === "filing"));
+  s.uploads.confirmedFields = { "taxProfile.settings.filing": "married" };
+  assert(!UI.missing(s).some((m) => m.id === "filing"));
+});

@@ -1117,24 +1117,19 @@ function reviewUploads() {
           Scenario.engineInput(next),
           { locked: Profile.lockedPaths(next) },
         );
-      // The tax year is inferred only from a current-year check; any other
-      // year must match the year being modeled.
-      const checkYear = Number(drafts[0]?.date.slice(0, 4));
-      if (
-        checkYear &&
-        checkYear !==
-          (suggestion.inferred?.["taxProfile.year"]?.value ??
-            next.taxProfile.year)
-      )
-        throw new Error(
-          `These checks are from ${checkYear}, but your profile models ${next.taxProfile.year}. Upload checks from the year you want to model.`,
-        );
       const applied = Profile.applyUpload(
         next,
         records,
         suggestion,
         $("apply-schedule").checked,
       );
+      // The tax year is inferred only from a current-year check; the checks
+      // must match the year the profile models after applying them.
+      const checkYear = Number(drafts[0]?.date.slice(0, 4));
+      if (checkYear && checkYear !== applied.scenario.taxProfile.year)
+        throw new Error(
+          `These checks are from ${checkYear}, but your profile models ${applied.scenario.taxProfile.year}. Upload checks from the year you want to model.`,
+        );
       showLearned = true;
       view = "monthly";
       commit(applied.scenario);

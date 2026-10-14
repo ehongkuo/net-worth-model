@@ -219,7 +219,16 @@
         why: "Sets catch-up limits and your retirement timeline.",
         path: "taxProfile.age",
       });
-    if (!confirmed("taxProfile.settings.filing"))
+    // A W-4 withholding status is only a guess at the filing status, so an
+    // inferred value still needs an answer.
+    if (
+      !confirmed("taxProfile.settings.filing") ||
+      (s.uploads?.fieldSources?.["taxProfile.settings.filing"]?.inferred &&
+        !Object.hasOwn(
+          s.uploads?.confirmedFields || {},
+          "taxProfile.settings.filing",
+        ))
+    )
       out.push({
         id: "filing",
         label: "Filing status",
