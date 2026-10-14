@@ -160,7 +160,13 @@
     s.uploads.fieldSources ??= {};
     s.uploads.manualFields ??= [];
     const date = suggestion.record?.date;
-    const assign = (path, value, basis, sourceDate = date) => {
+    const assign = (
+      path,
+      value,
+      basis,
+      sourceDate = date,
+      inferred = false,
+    ) => {
       if (value == null) return;
       const old = read(s, path),
         prior = s.uploads.fieldSources[path];
@@ -180,8 +186,14 @@
         return;
       }
       write(s, path, value);
-      s.uploads.fieldSources[path] = { sourceDate, basis };
+      s.uploads.fieldSources[path] = inferred
+        ? { sourceDate, basis, inferred: true }
+        : { sourceDate, basis };
     };
+    for (const [path, { value, basis }] of Object.entries(
+      suggestion.inferred || {},
+    ))
+      assign(path, value, basis, date, true);
     for (const [key, election] of Object.entries(suggestion.elections || {})) {
       const existing = s.uploads.elections[key];
       if (s.uploads.annualSettingKeys?.includes(key)) {
@@ -306,7 +318,12 @@
       (path.startsWith("uploads.elections.") &&
         s.uploads.elections[path.split(".")[2]]?.sourceDate)
     )
-      return { kind: "observed", label: "From paystub" };
+      return {
+        kind: "observed",
+        label: s.uploads.fieldSources?.[path]?.inferred
+          ? "Inferred"
+          : "From paystub",
+      };
     if (
       Object.hasOwn(s.uploads.confirmedFields || {}, path) &&
       JSON.stringify(s.uploads.confirmedFields[path]) ===
