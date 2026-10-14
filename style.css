@@ -1895,3 +1895,7 @@ button:disabled {
 .espp-compare .espp-best {
   background: rgba(56, 189, 248, 0.12);
 }
+
+.field-status.field-inferred {
+  color: #c4b5fd;
+}

@@ -148,6 +148,15 @@
       };
     }
   }
+  // Paths the user set or confirmed; uploads and inferences never change them.
+  function lockedPaths(s) {
+    return [
+      ...new Set([
+        ...(s.uploads.manualFields || []),
+        ...Object.keys(s.uploads.confirmedFields || {}),
+      ]),
+    ];
+  }
   function applyUpload(input, records, suggestion, applySchedule) {
     const S =
       typeof module !== "undefined" && module.exports
@@ -160,7 +169,13 @@
     s.uploads.fieldSources ??= {};
     s.uploads.manualFields ??= [];
     const date = suggestion.record?.date;
-    const assign = (path, value, basis, sourceDate = date) => {
+    const assign = (
+      path,
+      value,
+      basis,
+      sourceDate = date,
+      inferred = false,
+    ) => {
       if (value == null) return;
       const old = read(s, path),
         prior = s.uploads.fieldSources[path];
@@ -169,19 +184,31 @@
         old != null &&
         old !== 0 &&
         JSON.stringify(old) !== JSON.stringify(read(defaults, path));
-      if (s.uploads.manualFields.includes(path) || legacyOverride) {
+      const confirmed = Object.hasOwn(s.uploads.confirmedFields || {}, path);
+      if (
+        s.uploads.manualFields.includes(path) ||
+        confirmed ||
+        legacyOverride
+      ) {
         if (old !== value)
           conflicts.push(
             `${path}: kept your setting (${old}); upload suggests ${value}.`,
           );
-        s.uploads.manualFields = [
-          ...new Set([...s.uploads.manualFields, path]),
-        ];
+        if (!confirmed)
+          s.uploads.manualFields = [
+            ...new Set([...s.uploads.manualFields, path]),
+          ];
         return;
       }
       write(s, path, value);
-      s.uploads.fieldSources[path] = { sourceDate, basis };
+      s.uploads.fieldSources[path] = inferred
+        ? { sourceDate, basis, inferred: true }
+        : { sourceDate, basis };
     };
+    for (const [path, { value, basis }] of Object.entries(
+      suggestion.inferred || {},
+    ))
+      assign(path, value, basis, date, true);
     for (const [key, election] of Object.entries(suggestion.elections || {})) {
       const existing = s.uploads.elections[key];
       if (s.uploads.annualSettingKeys?.includes(key)) {
@@ -306,7 +333,17 @@
       (path.startsWith("uploads.elections.") &&
         s.uploads.elections[path.split(".")[2]]?.sourceDate)
     )
-      return { kind: "observed", label: "From paystub" };
+      return s.uploads.fieldSources?.[path]?.inferred
+        ? Object.hasOwn(s.uploads.confirmedFields || {}, path) &&
+          JSON.stringify(s.uploads.confirmedFields[path]) ===
+            JSON.stringify(read(s, path))
+          ? { kind: "confirmed", label: "Confirmed" }
+          : {
+              kind: "inferred",
+              label: "Inferred",
+              basis: s.uploads.fieldSources[path].basis,
+            }
+        : { kind: "observed", label: "From paystub" };
     if (
       Object.hasOwn(s.uploads.confirmedFields || {}, path) &&
       JSON.stringify(s.uploads.confirmedFields[path]) ===
@@ -373,6 +410,7 @@
     hasIncome,
     initialView,
     applyUpload,
+    lockedPaths,
     edit,
     employerFunding,
     grantPreview,

@@ -47,6 +47,17 @@
   Object.entries(benefitTypes).forEach(
     ([key, type]) => (labels[key] = type.label),
   );
+  const MIN_TAX_YEAR = 2026; // first year the tax engine models
+  const NO_INCOME_TAX = ["AK", "FL", "NV", "NH", "SD", "TN", "TX", "WA", "WY"];
+  const STATES =
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split(
+      " ",
+    );
+  // The last valid USPS code in a label: "ST WH CA" -> CA, "OR State Income Tax" -> OR.
+  const stateCode = (label) =>
+    (label.match(/\b[A-Z]{2}\b/g) || [])
+      .filter((t) => STATES.includes(t))
+      .at(-1) || (/california/i.test(label) ? "CA" : "");
   const parseMoney = (s) =>
     Number(String(s).replace(/[$,()]/g, "")) *
     (String(s).includes("(") ? -1 : 1);
@@ -73,18 +84,31 @@
           : /medical/i.test(label)
             ? "employerMedical"
             : null;
-    if (section === "Employee Taxes")
-      return /OASDI|Social Security/i.test(label)
-        ? "ss"
-        : /Medicare/i.test(label)
-          ? "medicare"
-          : /Federal/i.test(label)
-            ? "federal"
-            : /SDI|disability/i.test(label)
-              ? "sdi"
-              : /State Tax|State Withholding/i.test(label)
-                ? "state"
-                : null;
+    if (section === "Employee Taxes") {
+      if (/OASDI|Social Security/i.test(label)) return "ss";
+      if (/Medicare|\bMED\b/i.test(label)) return "medicare";
+      if (/\bFed(eral)?\b|\bFITW?\b/i.test(label)) return "federal";
+      if (
+        /SDI|disability|\bSUI\b|\bPFL\b|\bFLI\b|family leave|unemploy/i.test(
+          label,
+        )
+      )
+        return "sdi";
+      // City, local and school taxes have no model category; leave them for the
+      // user to map rather than counting them as state tax.
+      if (/\b(local|city|NYC|school|EIT|county|municipal)\b/i.test(label))
+        return null;
+      // State income tax: explicit wording, SIT / ST WH, or withholding tied to
+      // a named state ("California Withholding", "OR Withholding").
+      if (
+        /state\s+(income\s+)?tax|state\s+withholding|\bSIT\b|\bST\s+WH\b/i.test(
+          label,
+        ) ||
+        (/withholding/i.test(label) && stateCode(label))
+      )
+        return "state";
+      return null;
+    }
     if (section === "Earnings")
       return /imputed/i.test(label)
         ? "imputed"
@@ -127,6 +151,16 @@
     for (const page of pages)
       for (const raw of page.text.split("\n")) {
         const line = raw.trim();
+        // Some layouts print the W-4 filing status ("Marital Status: Single").
+        const filing = line.match(
+          /(?:filing|marital)\s+status\W+(single|married(?! filing separ)|head of household)/i,
+        );
+        if (filing && !result.filingStatus)
+          result.filingStatus = /married/i.test(filing[1])
+            ? "married"
+            : /single/i.test(filing[1])
+              ? "single"
+              : "";
         const dates = line.match(/\d{2}\/\d{2}\/\d{4}/g);
         if (dates?.length >= 3 && !result.date) {
           [result.periodStart, result.periodEnd, result.date] = dates
@@ -310,7 +344,7 @@
     }
     return out.sort((a, b) => a.date.localeCompare(b.date));
   }
-  function suggest(records, c) {
+  function suggest(records, c, { locked = [], today = new Date() } = {}) {
     const tax =
       typeof module !== "undefined" && module.exports
         ? require("./tax-engine")
@@ -329,9 +363,106 @@
     const count = { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 }[
       frequency
     ];
-    const salary = last.current.salary * count,
+    // Per-check amounts are rounded to cents, so salary × checks lands a few
+    // cents off the real annual figure; snap to $10 when rounding explains it.
+    const rawSalary = last.current.salary * count,
+      snapped = Math.round(rawSalary / 10) * 10,
+      salary =
+        Math.abs(snapped - rawSalary) <= count * 0.01 ? snapped : rawSalary,
       elections = {},
+      inferred = {},
       warnings = [];
+    // Never infer over a value the user set or confirmed.
+    const infer = (path, value, basis) => {
+      if (!locked.includes(path)) inferred[path] = { value, basis };
+    };
+    const year = Number(last.date.slice(0, 4));
+    // Only a check from the current calendar year describes the year being
+    // modeled; older checks (e.g. last December's) never move the tax year.
+    if (year === today.getFullYear() && year >= MIN_TAX_YEAR)
+      infer("taxProfile.year", year, "Year of your latest check date");
+    // A W-4 withholding status is a starting guess for the filing status.
+    const filing = sorted.findLast((r) => r.filingStatus)?.filingStatus;
+    if (filing)
+      infer(
+        "taxProfile.settings.filing",
+        filing,
+        "Withholding status printed on your paystub",
+      );
+    // State: only a recognized state income tax line names it. An unrecognized
+    // or missing line is never read as "no state income tax".
+    const stateLine = (last.lines || []).find((l) => l.key === "state");
+    const code = stateCode(stateLine?.label || "");
+    if (code === "CA")
+      infer(
+        "taxProfile.settings.state",
+        "CA",
+        `Withholding line "${stateLine.label}"`,
+      );
+    else if (code && NO_INCOME_TAX.includes(code))
+      infer(
+        "taxProfile.settings.state",
+        "none",
+        `${code} has no state income tax`,
+      );
+    else if (code) {
+      infer(
+        "taxProfile.settings.state",
+        "custom",
+        `Withholding line "${stateLine.label}"`,
+      );
+      // State withholding also covers bonus and RSU income.
+      const wages =
+        (last.ytd.salary || 0) + (last.ytd.bonus || 0) + (last.ytd.rsu || 0);
+      if (wages > 0 && last.ytd.state > 0)
+        infer(
+          "taxProfile.settings.customStateRate",
+          Math.round((last.ytd.state / wages) * 10000) / 10000,
+          "Estimated from state tax withheld this year; adjust if you know your effective rate",
+        );
+    }
+    // HSA coverage: only year-to-date funding proves the coverage type. A
+    // per-check rate can be front-loaded or a one-time deposit, and a payroll
+    // system stops self-only funding at the cap. Without a known age under 55
+    // the $1,000 catch-up must also be exceeded.
+    const ytdHsa = (last.ytd.hsa || 0) + (last.ytd.hsaEmployer || 0);
+    if (ytdHsa > 0) {
+      const l = tax.limits(year, c.tax),
+        ageKnown = locked.includes("taxProfile.age"),
+        catchup = ageKnown && c.age + year - c.taxYear < 55 ? 0 : l.hsaCatchup;
+      if (ytdHsa > l.hsaFamily + l.hsaCatchup + 0.01)
+        warnings.push(
+          "HSA funding this year is above the family limit; check the HSA lines.",
+        );
+      else if (ytdHsa > l.hsaSingle + catchup + 0.01)
+        infer(
+          "employerPlan.hsa.coverage",
+          "family",
+          `HSA funding so far this year (${Math.round(ytdHsa).toLocaleString("en-US")}) is above the ${(l.hsaSingle + catchup).toLocaleString("en-US")} self-only limit`,
+        );
+    }
+    // Bonus: only an annual or performance bonus recurs; sign-on, spot and
+    // retention bonuses are one-time.
+    const recurringBonus = (r) =>
+      (r.lines || []).some(
+        (l) =>
+          l.key === "bonus" &&
+          l.current > 0 &&
+          /annual|performance|target|incentive/i.test(l.label),
+      );
+    const bonusCheck = sorted.findLast(recurringBonus);
+    if (bonusCheck && salary > 0) {
+      infer(
+        "compensation.bonusMonth",
+        Number(bonusCheck.date.slice(5, 7)),
+        `Bonus paid on ${bonusCheck.date}`,
+      );
+      infer(
+        "compensation.bonusPercent",
+        Math.round((bonusCheck.current.bonus / salary) * 1000) / 1000,
+        `Bonus on ${bonusCheck.date} relative to salary`,
+      );
+    }
     const capped = (record, key) => {
       const year = Number(record.date.slice(0, 4)),
         l = tax.limits(year, c.tax),
@@ -355,7 +486,7 @@
         ),
         hsa: Math.max(
           0,
-          (((c.hsa.coverage === "family" ? l.hsaFamily : l.hsaSingle) +
+          (((coverage === "family" ? l.hsaFamily : l.hsaSingle) +
             (age >= 55 ? l.hsaCatchup : 0)) *
             Math.min(12, c.hsa.eligibleMonths)) /
             12 -
@@ -368,6 +499,8 @@
         : y[key];
       return used != null && used >= caps[key] - 0.02;
     };
+    const coverage =
+      inferred["employerPlan.hsa.coverage"]?.value || c.hsa.coverage;
     for (const key of [
       "traditional",
       "roth",
@@ -436,6 +569,7 @@
       frequency,
       firstPayday: last.date,
       elections,
+      inferred,
       withholding,
       warnings,
       record: last,
