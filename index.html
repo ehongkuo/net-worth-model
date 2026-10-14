@@ -51,23 +51,24 @@
           </p>
           <ol class="welcome-steps">
             <li>
-              <strong>Tax information</strong
-              ><span>Start with a few basics.</span>
+              <strong>Upload a paystub</strong
+              ><span>We read your pay, contributions and taxes.</span>
             </li>
             <li>
-              <strong>Paystub upload</strong
-              ><span>Bring in your pay and contributions.</span>
+              <strong>See your picture</strong
+              ><span>Your monthly flow appears right away.</span>
             </li>
             <li>
-              <strong>Fill in the gaps</strong
-              ><span>Add details your paycheck cannot tell us.</span>
+              <strong>Fill in what's missing</strong
+              ><span>A few questions a paystub can't answer.</span>
             </li>
           </ol>
-          <button id="start-profile" class="primary">Set up my profile</button>
+          <button id="start-upload" class="primary">Upload a paystub</button>
+          <button id="start-profile">Enter details instead</button>
           <button id="welcome-import">Import an existing scenario</button>
           <p class="muted">
-            Your progress saves on this device. You can explore your results as
-            soon as you add income.
+            Text-based PDFs only. Documents are read in your browser and never
+            leave this device.
           </p>
         </section>
         <section id="profile" hidden>
@@ -77,8 +78,8 @@
             <p>Tax information, paychecks and plan details.</p>
           </div>
           <div class="profile-steps" aria-label="Setup steps">
-            <button data-step="0">1 <span>About you</span></button
-            ><button data-step="1">2 <span>Your paychecks</span></button
+            <button data-step="0">1 <span>Your paychecks</span></button
+            ><button data-step="1">2 <span>About you</span></button
             ><button data-step="2">3 <span>Complete the picture</span></button>
           </div>
           <div id="profile-overview"></div>
@@ -95,6 +96,7 @@
           </details>
         </section>
         <section id="monthly">
+          <div id="learned"></div>
           <div class="toolbar">
             <h1>Monthly flow</h1>
             <select id="period" aria-label="Monthly flow period">

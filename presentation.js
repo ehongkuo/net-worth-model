@@ -105,7 +105,184 @@
         : "";
     return { badge, approve };
   }
-  const api = { notices, fieldBadge, forView, INLINE, NOTE_BUCKETS, overview };
+  const LEARNED = {
+    "compensation.salary": ["Annual salary", "money"],
+    "compensation.frequency": ["Pay frequency", "frequency"],
+    "compensation.firstPayday": ["Recent payday", "text"],
+    "taxProfile.year": ["Tax year", "text"],
+    "taxProfile.settings.filing": ["Filing status", "filing"],
+    "taxProfile.settings.state": ["State income tax", "state"],
+    "taxProfile.settings.customStateRate": ["State effective rate", "percent"],
+    "employerPlan.hsa.eligible": ["HSA", "yes"],
+    "employerPlan.hsa.coverage": ["HSA coverage", "coverage"],
+    "employerPlan.retirement.megaEnabled": ["After-tax 401(k)", "yes"],
+    "employerPlan.retirement.employerAnnual": [
+      "Employer 401(k) funding",
+      "money",
+    ],
+    "employerPlan.espp.enabled": ["ESPP", "yes"],
+    "employerPlan.espp.rate": ["ESPP contribution", "percent"],
+    "compensation.bonusPercent": ["Bonus", "percent"],
+    "compensation.bonusMonth": ["Bonus month", "month"],
+  };
+  const ELECTIONS = {
+    traditional: "Traditional 401(k)",
+    roth: "Roth 401(k)",
+    mega: "After-tax 401(k) contribution",
+    hsa: "HSA contribution",
+  };
+  const usd = (n) =>
+    Number(n).toLocaleString("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: n % 1 ? 2 : 0,
+    });
+  const display = (kind, v) =>
+    ({
+      money: () => usd(v),
+      percent: () => `${(v * 100).toFixed(2).replace(/\.?0+$/, "")}%`,
+      frequency: () =>
+        ({
+          weekly: "Weekly",
+          biweekly: "Every two weeks",
+          semimonthly: "Twice a month",
+          monthly: "Monthly",
+        })[v] || v,
+      filing: () => (v === "married" ? "Married filing jointly" : "Single"),
+      state: () =>
+        v === "CA" ? "California" : v === "none" ? "None" : "Other state",
+      coverage: () => (v === "family" ? "Family" : "Self-only"),
+      yes: () => (v ? "Yes" : "No"),
+      month: () =>
+        new Date(2026, v - 1, 1).toLocaleString("en-US", { month: "long" }),
+    })[kind]?.() ?? String(v);
+  const read = (s, path) => path.split(".").reduce((v, k) => v?.[k], s);
+  // Everything the paystub supplied or the model inferred, with its source.
+  function learned(s) {
+    const sources = s.uploads?.fieldSources || {},
+      manual = s.uploads?.manualFields || [],
+      rows = [];
+    for (const [path, [label, kind]] of Object.entries(LEARNED)) {
+      const src = sources[path];
+      if (!src || manual.includes(path)) continue;
+      rows.push({
+        path,
+        label,
+        value: display(kind, read(s, path)),
+        source: src.inferred ? "Inferred" : "From paystub",
+        basis: src.basis,
+      });
+    }
+    for (const [key, label] of Object.entries(ELECTIONS)) {
+      const e = s.uploads?.elections?.[key];
+      if (!e?.sourceDate || e.manual) continue;
+      rows.push({
+        path: `uploads.elections.${key}.value`,
+        label,
+        value:
+          e.mode === "percent"
+            ? `${display("percent", e.value)} of pay`
+            : `${usd(e.value)} per paycheck`,
+        source: "From paystub",
+        basis: `Paycheck on ${e.sourceDate}`,
+      });
+    }
+    return rows;
+  }
+  // What a paystub can't tell us, most impactful first. Each item names the
+  // setup path to open so the UI can jump straight to it.
+  function missing(s) {
+    const confirmed = (path) =>
+      Object.hasOwn(s.uploads?.confirmedFields || {}, path) ||
+      (s.uploads?.manualFields || []).includes(path) ||
+      Boolean(s.uploads?.fieldSources?.[path]);
+    const sum = (o) => Object.values(o || {}).reduce((n, v) => n + (v || 0), 0);
+    const out = [];
+    if (!(sum(s.projection?.monthlyExpenses) > 0))
+      out.push({
+        id: "spending",
+        label: "Monthly spending",
+        why: "Without it, projections assume you spend nothing.",
+        path: "projection.monthlyExpenses.housing",
+      });
+    if (!(sum(s.projection?.startingBalances) > 0))
+      out.push({
+        id: "balances",
+        label: "What you already have saved",
+        why: "Projections start from $0 until you add balances.",
+        path: "projection.startingBalances.cash",
+      });
+    if (!confirmed("taxProfile.age"))
+      out.push({
+        id: "age",
+        label: "Your age",
+        why: "Sets catch-up limits and your retirement timeline.",
+        path: "taxProfile.age",
+      });
+    // A W-4 withholding status is only a guess at the filing status, so an
+    // inferred value still needs an answer.
+    if (
+      !confirmed("taxProfile.settings.filing") ||
+      (s.uploads?.fieldSources?.["taxProfile.settings.filing"]?.inferred &&
+        !Object.hasOwn(
+          s.uploads?.confirmedFields || {},
+          "taxProfile.settings.filing",
+        ))
+    )
+      out.push({
+        id: "filing",
+        label: "Filing status",
+        why: "Paystubs rarely show it; it changes your tax brackets.",
+        path: "taxProfile.settings.filing",
+      });
+    if (
+      s.taxProfile?.settings?.filing === "married" &&
+      !confirmed("taxProfile.settings.spouseIncome") &&
+      !(s.taxProfile.settings.spouseIncome > 0)
+    )
+      out.push({
+        id: "spouse",
+        label: "Spouse income",
+        why: "Joint filing taxes both incomes together.",
+        path: "taxProfile.settings.spouseIncome",
+      });
+    if (
+      s.employerPlan?.hsa?.eligible &&
+      confirmed("employerPlan.hsa.eligible") &&
+      !confirmed("employerPlan.hsa.coverage")
+    )
+      out.push({
+        id: "hsa",
+        label: "HSA coverage (self-only or family)",
+        why: "Sets your HSA limit; a paystub only proves family coverage late in the year.",
+        path: "employerPlan.hsa.coverage",
+      });
+    const e = s.employerPlan?.espp;
+    if (
+      e?.enabled &&
+      !(
+        confirmed("employerPlan.espp.offerPrice") &&
+        confirmed("employerPlan.espp.purchasePrice")
+      )
+    )
+      out.push({
+        id: "espp",
+        label: "ESPP share prices and offering dates",
+        why: "ESPP results use placeholder $100 prices until you add them.",
+        path: "employerPlan.espp.offerPrice",
+      });
+    return out;
+  }
+  const api = {
+    notices,
+    fieldBadge,
+    learned,
+    missing,
+    forView,
+    INLINE,
+    NOTE_BUCKETS,
+    overview,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Presentation = api;
 })(typeof window !== "undefined" ? window : globalThis);

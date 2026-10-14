@@ -1896,6 +1896,43 @@ button:disabled {
   background: rgba(56, 189, 248, 0.12);
 }
 
+.learned-card {
+  border: 1px solid #2b3b52;
+  border-radius: 10px;
+  padding: 16px;
+  margin: 0 0 20px;
+  background: #142033;
+}
+.learned-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.learned-heading h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.learned-gaps ul {
+  padding-left: 18px;
+}
+.learned-gaps li span {
+  color: #9cafc7;
+}
+.source-chip {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.source-paystub {
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+}
+.source-inferred {
+  background: rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+}
 .field-status.field-inferred {
   color: #c4b5fd;
 }
