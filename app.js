@@ -21,7 +21,10 @@ function set(object, path, value) {
 function table(headers, rows) {
   return `<table><thead><tr>${headers.map((x) => `<th>${escape(x)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((v) => `<td>${escape(v)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
-function field(path, label, type = "number", hint = "") {
+// Paths already drawn in the current form render; each field appears once.
+let shownPaths = null;
+function field(path, label, type = "number", hint = "", { also = [] } = {}) {
+  if (shownPaths?.has(path)) return "";
   const enginePath = path.startsWith("employerPlan.")
     ? path.slice(13)
     : path.startsWith("taxProfile.settings.")
@@ -49,8 +52,9 @@ function field(path, label, type = "number", hint = "") {
   const sourceInfo = provenance
     ? `<details class="field-source" data-key="source:${path}"><summary>Source</summary>${escape(provenance)}</details>`
     : "";
+  shownPaths?.add(path);
   const value = get(scenario, path),
-    attrs = `data-path="${path}" data-type="${type}"`;
+    attrs = `data-path="${path}" data-type="${type}"${also.length ? ` data-also="${also.join(",")}"` : ""}`;
   const state = Profile.fieldState(scenario, path);
   const { badge, approve } = Presentation.fieldBadge(state, path, label);
   if (type === "check")
@@ -79,8 +83,92 @@ const compactGroup = (title, body) =>
 function setup() {
   Util.preserveFocus($("setup"), renderSetup);
 }
+// Questions shown on the quick screen this session; answered ones stay in place
+// so the form doesn't jump while the user works through it.
+const quickAsked = new Set();
+function quickQuestions() {
+  for (const m of Presentation.missing(scenario)) quickAsked.add(m.id);
+  const why = Object.fromEntries(
+    Presentation.missing(scenario).map((m) => [m.id, m.why]),
+  );
+  const espp = scenario.employerPlan.espp;
+  const items = {
+    spending: [
+      "Monthly spending",
+      field(
+        "projection.monthlyExpenses.other",
+        "About how much you spend per month",
+        "number",
+        "Rent, food, travel and everything not taken out of your paycheck. Break it down later under Complete the picture.",
+      ),
+    ],
+    balances: [
+      "What you already have",
+      field("projection.startingBalances.cash", "Cash and savings") +
+        field("projection.startingBalances.brokerage", "Taxable investments") +
+        field("projection.startingBalances.pretax401k", "Traditional 401(k)") +
+        field("projection.startingBalances.rothAccounts", "Roth accounts") +
+        field("projection.startingBalances.traditionalIRA", "Traditional IRA") +
+        field("projection.startingBalances.hsa", "HSA"),
+    ],
+    age: ["Your age", field("taxProfile.age", "Age today")],
+    filing: [
+      "Filing status",
+      field("taxProfile.settings.filing", "How you file taxes", [
+        ["single", "Single"],
+        ["married", "Married filing jointly"],
+      ]),
+    ],
+    spouse: [
+      "Spouse income",
+      field("taxProfile.settings.spouseIncome", "Spouse's annual wages"),
+    ],
+    hsa: [
+      "HSA coverage",
+      field("employerPlan.hsa.coverage", "Your HSA health plan covers", [
+        ["single", "Just me (self-only)"],
+        ["family", "Me and family"],
+      ]),
+    ],
+    espp: espp.enabled
+      ? [
+          "ESPP",
+          field(
+            "employerPlan.espp.offerPrice",
+            "Company share price today",
+            "number",
+            "Used for the offering, purchase and sale price until you set them separately.",
+            {
+              also: [
+                "employerPlan.espp.purchasePrice",
+                "employerPlan.espp.salePrice",
+              ],
+            },
+          ) +
+            field(
+              "employerPlan.espp.start",
+              "Current offering started",
+              "date",
+            ) +
+            field("employerPlan.espp.periodMonths", "Months per offering"),
+        ]
+      : null,
+  };
+  const html = [...quickAsked]
+    .filter((id) => items[id])
+    .map(
+      (id) =>
+        `<section class="quick-question"><h3>${escape(items[id][0])}</h3>${why[id] ? `<p class="cf-note">${escape(why[id])}</p>` : '<p class="cf-note quick-done">Answered</p>'}<div class="field-grid">${items[id][1]}</div></section>`,
+    )
+    .join("");
+  return html
+    ? `<h2>A few things your paystub can't tell us</h2>${html}`
+    : '<h2>About you</h2><p class="cf-note">Your paystub and answers cover everything the model needs.</p>';
+}
 function renderSetup() {
   fieldConfig = Scenario.engineInput(scenario);
+  shownPaths = new Set();
+  const quick = quickQuestions();
   const t = "taxProfile.",
     r = "employerPlan.retirement.",
     h = "employerPlan.hsa.",
@@ -504,7 +592,7 @@ function renderSetup() {
     [...$("setup").querySelectorAll("details[open]")].map(detailKey),
   );
   $("setup").innerHTML =
-    `<div data-profile-step="1" class="profile-panel"><h2>Tax profile</h2>${tax}</div>` +
+    `<div data-profile-step="1" class="profile-panel">${quick}<h2>Tax details</h2>${tax}</div>` +
     `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck. Two consecutive checks help us identify your pay schedule.</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
     section("retirement", "Retirement & IRA", retirement, [
@@ -524,6 +612,7 @@ function renderSetup() {
   $("setup")
     .querySelectorAll("details")
     .forEach((x) => (x.open = open.has(detailKey(x))));
+  shownPaths = null;
   $("setup")
     .querySelectorAll(".field-grid")
     .forEach((grid) => {
@@ -576,6 +665,11 @@ function renderSetup() {
                     : (Number(el.value) * (kind === "years" ? 12 : 1)) /
                       (kind === "percent" ? 100 : 1);
             Profile.edit(next, el.dataset.path, value);
+            // One answer can fill related fields (e.g. one share price).
+            for (const path of (el.dataset.also || "")
+              .split(",")
+              .filter(Boolean))
+              Profile.edit(next, path, value);
             commit(next);
           })),
     );
