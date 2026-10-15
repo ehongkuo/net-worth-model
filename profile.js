@@ -149,7 +149,10 @@
     }
   }
   // Payroll elections from a suggestion, except ones the user overrode or set
-  // as annual amounts. Returns conflict notes.
+  // as annual amounts. Returns conflict notes. (applyUpload also copies a
+  // percent ESPP election into employerPlan.espp.rate; re-reading elections
+  // after a coverage or age change doesn't need that, since the ESPP percent
+  // depends on neither.)
   function applyElections(s, suggestion) {
     const conflicts = [];
     for (const [key, election] of Object.entries(suggestion.elections || {})) {

@@ -137,6 +137,17 @@
         pendingWithdrawn -= fromRefund + fromShares;
       }
       balances.esppPending = Math.max(0, esppPendingGross - pendingWithdrawn);
+      // Shares spent earlier that the payroll engine has since sold (on
+      // schedule, or right after an ESPP purchase) leave company equity and
+      // their proceeds are booked as cash. Withdrawn value that equity can no
+      // longer absorb is cash that was already spent, so it comes out of this
+      // year's cash flow. (Tax on those sales is still counted, slightly
+      // overstating tax.)
+      const soldSpent = Math.max(
+        0,
+        companyWithdrawn - Math.max(0, payroll.stockAssets - esppPendingGross),
+      );
+      companyWithdrawn -= soldSpent;
       balances.companyEquity = Math.max(
         0,
         payroll.stockAssets - esppPendingGross - companyWithdrawn,
@@ -152,11 +163,13 @@
           year,
           c.tax,
         );
-      // A refund of already-spent cash never arrives.
+      // Refunds of already-spent ESPP cash, and proceeds of shares already
+      // spent, never arrive.
+      const notReceived = refundSpent + soldSpent;
       const cashFlow = (taxes) => {
         const f = C.cashFlow(payroll, { taxes, expenses, socialSecurity });
-        return refundSpent
-          ? { ...f, netCashFlow: f.netCashFlow - refundSpent }
+        return notReceived
+          ? { ...f, netCashFlow: f.netCashFlow - notReceived }
           : f;
       };
       let taxes = taxFor(0, 0),

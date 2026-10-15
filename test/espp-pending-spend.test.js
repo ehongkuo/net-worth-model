@@ -1,10 +1,10 @@
-const { test, assert, assertClose } = require("./harness");
+const { test, assert, assertClose, assertEqual } = require("./harness");
 const Scenario = require("../scenario"),
   Projection = require("../projection");
 
 // Aug-Jan offerings leave ESPP cash pending at year end. Salary doubles in
 // 2027 so that year has no deficit and no further withdrawals.
-function run(housing) {
+function run(housing, espp = {}) {
   const s = Scenario.defaults();
   Object.assign(s.compensation, { salary: 200000, salaryGrowth: 1 });
   Object.assign(s.employerPlan.espp, {
@@ -16,6 +16,7 @@ function run(housing) {
     purchasePrice: 120,
     salePrice: 120,
     holdShares: true,
+    ...espp,
   });
   s.projection.startingBalances.pretax401k = 200000;
   s.projection.monthlyExpenses.housing = housing;
@@ -87,4 +88,17 @@ test("spent pending ESPP cash comes out of the refund, not back as cash", () => 
   const extra =
     high[1].expenses - low[1].expenses + high[2].expenses - low[2].expenses;
   assertClose(low[2].netWorth - high[2].netWorth, extra, 0.01);
+});
+
+test("shares sold right after purchase don't bring back spent ESPP cash", () => {
+  const drop = (espp) => {
+    const none = run(0, espp),
+      spend = run(11000, espp);
+    return none[2].netWorth - spend[2].netWorth;
+  };
+  const sold = { holdShares: false, holdMonths: 0 };
+  // The sold shares' proceeds are cash that was already spent, so net worth
+  // falls by the same amount whether the shares are held or sold.
+  assertClose(drop(sold), drop({}), 1);
+  assertEqual(run(11000, sold)[2].balances.companyEquity, 0);
 });

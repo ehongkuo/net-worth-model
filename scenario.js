@@ -257,7 +257,7 @@
         confirmedFields: clone(u.confirmedFields || {}),
         keptDecisions: Object.fromEntries(
           Object.entries(u.keptDecisions || {}).filter(
-            ([k, v]) => typeof k === "string" && typeof v === "string",
+            ([, v]) => typeof v === "string",
           ),
         ),
         fieldSources: Object.fromEntries(
