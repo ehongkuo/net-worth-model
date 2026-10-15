@@ -18,6 +18,7 @@
       federalAdjustment: 0,
       stateAdjustment: 0,
       customStateRate: 0,
+      localRate: 0,
       federalExtra: 0,
       stateExtra: 0,
       salaryFederalRate: null,
@@ -181,6 +182,10 @@
       0,
       state - positive(t.stateCredits) + (Number(t.stateAdjustment) || 0),
     );
+    // City, local and school income tax: an effective rate on wages (the
+    // basis the paystub inference uses), reported within state tax.
+    const local = wages * clamp(t.localRate, 0, 1);
+    state += local;
     const magi = fedAgi + longGain;
     const saltBase = year <= 2029 ? 40400 * 1.01 ** (year - 2026) : 10000;
     const saltThreshold =
@@ -303,7 +308,9 @@
         federal -
         (Math.max(0, regular + amt - positive(t.federalCredits)) + niit),
       stateBracketTax: stateBrackets.reduce((s, r) => s + r.tax, 0),
-      stateNetAdjustments: state - stateBrackets.reduce((s, r) => s + r.tax, 0),
+      stateNetAdjustments:
+        state - local - stateBrackets.reduce((s, r) => s + r.tax, 0),
+      localTax: local,
       payrollWages: w,
       spousePayrollWages: spouse,
       amtIncome,
