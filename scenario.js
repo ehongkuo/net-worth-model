@@ -126,6 +126,7 @@
     "ss",
     "medicare",
     "sdi",
+    "local",
     "taxablePayroll",
     "taxableMedicare",
     "taxableFederal",

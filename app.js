@@ -204,6 +204,12 @@ function renderSetupForm() {
     (scenario.taxProfile.settings.state === "custom"
       ? field(t + "settings.customStateRate", "State effective rate", "percent")
       : "") +
+    field(
+      t + "settings.localRate",
+      "City or local income tax rate",
+      "percent",
+      "Effective rate for city, county or school income tax (e.g. NYC); 0 if none",
+    ) +
     `<p class="cf-note">${limits.year} limits: employee 401(k) ${money(limits.deferral)}, total plan ${money(limits.total401k)}, IRA ${money(limits.ira)}. Catch-up eligibility is applied by age.</p>` +
     group(
       "Additional tax information",

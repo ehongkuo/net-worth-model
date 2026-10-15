@@ -113,6 +113,7 @@
     "taxProfile.settings.filing": ["Filing status", "filing"],
     "taxProfile.settings.state": ["State income tax", "state"],
     "taxProfile.settings.customStateRate": ["State effective rate", "percent"],
+    "taxProfile.settings.localRate": ["Local income tax rate", "percent"],
     "employerPlan.hsa.eligible": ["HSA", "yes"],
     "employerPlan.hsa.coverage": ["HSA coverage", "coverage"],
     "employerPlan.retirement.megaEnabled": ["After-tax 401(k)", "yes"],

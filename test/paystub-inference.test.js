@@ -88,12 +88,40 @@ test("federal and local withholding are never classified as state tax", () => {
     fixture.replace("Medicare 89.19", "FED MED/EE 89.19"),
   ).lines.find((l) => l.label === "FED MED/EE");
   assertEqual(med.key, "medicare");
-  for (const label of [
-    "NYC Withholding",
-    "Local Withholding",
-    "Withholding Tax",
-  ])
-    assertEqual(key(label), null, label);
+  for (const label of ["NYC Withholding", "Local Withholding", "City Tax"])
+    assertEqual(key(label), "local", label);
+  assertEqual(key("Withholding Tax"), null);
+});
+test("local tax reconciles and becomes its own rate, not the state's", () => {
+  // The CA line relabelled as city tax: same amounts, so totals still match.
+  const text = fixture.replace(
+    "State Tax - CA 354.22",
+    "NYC Withholding 354.22",
+  );
+  const record = parse(text);
+  assertEqual(record.current.local, 354.22);
+  assert(P.validate(record).valid, P.validate(record).errors.join("; "));
+  const sug = suggest(text);
+  assertEqual(inferred(sug, "taxProfile.settings.customStateRate"), undefined);
+  assertEqual(inferred(sug, "taxProfile.settings.state"), undefined);
+  const wages =
+    (record.ytd.salary || 0) + (record.ytd.bonus || 0) + (record.ytd.rsu || 0);
+  assertClose(
+    inferred(sug, "taxProfile.settings.localRate"),
+    5084.78 / wages,
+    0.0001,
+  );
+  // The model adds it to state tax and to each check's withholding.
+  const s = Scenario.defaults();
+  s.taxProfile.settings.state = "none";
+  const before = require("../projection").calculate(s).ongoing.payroll;
+  s.taxProfile.settings.localRate = 0.03;
+  const after = require("../projection").calculate(s).ongoing.payroll;
+  assert(
+    after.taxes.state > before.taxes.state + 1000,
+    "local tax is modelled",
+  );
+  assert(after.withholding > before.withholding + 1000, "and withheld");
 });
 test("a missing or unrecognized state line is never read as no state tax", () => {
   const noLine = fixture.replace(/State Tax - CA .*\n/, "");

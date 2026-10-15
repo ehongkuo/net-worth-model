@@ -27,6 +27,7 @@
     "ss",
     "medicare",
     "sdi",
+    "local",
   ];
   const sum = (rows, key) =>
     amount(rows.reduce((n, p) => n + cents(p[key]), 0));
@@ -554,7 +555,10 @@
             (Math.max(0, medicareWages + value - 200000) -
               Math.max(0, medicareWages - 200000));
         const federal = supplementalTax(value, c.tax.rsuFederalRate),
-          state = c.tax.state === "none" ? 0 : value * c.tax.rsuStateRate,
+          local = Math.max(0, Number(c.tax.localRate) || 0),
+          state =
+            (c.tax.state === "none" ? 0 : value * c.tax.rsuStateRate) +
+            value * local,
           sdi = c.tax.state === "CA" ? value * c.tax.caSdi : 0;
         schedule.equityTaxes.push({
           date: v.date,
@@ -652,8 +656,9 @@
               c.tax.federalExtra,
           ),
         );
+        row.local = 0;
         row.state =
-          c.tax.state === "none"
+          c.tax.state === "none" && !c.tax.localRate
             ? 0
             : amount(
                 cents(
@@ -665,8 +670,12 @@
                           row.traditional -
                           row.health -
                           (c.tax.state === "CA" ? 0 : row.hsa),
-                      ) * c.tax.salaryStateRate) +
-                    row.bonus * c.tax.bonusStateRate +
+                      ) *
+                      (c.tax.salaryStateRate +
+                        Math.max(0, Number(c.tax.localRate) || 0))) +
+                    row.bonus *
+                      ((c.tax.state === "none" ? 0 : c.tax.bonusStateRate) +
+                        Math.max(0, Number(c.tax.localRate) || 0)) +
                     c.tax.stateExtra,
                 ),
               );
@@ -677,6 +686,7 @@
           row.federal = amount(
             cents(row.taxableFederal * observed.federal.rate),
           );
+        if (observed.state) row.local = 0;
         if (observed.state)
           row.state = amount(
             cents((row.salary + row.bonus) * observed.state.rate),
@@ -688,7 +698,9 @@
       row.grossCash =
         row.salary + row.bonus + row.allowance + row.taxableAllowance;
       row.withholding = amount(
-        cents(row.federal + row.state + row.ss + row.medicare + row.sdi),
+        cents(
+          row.federal + row.state + row.local + row.ss + row.medicare + row.sdi,
+        ),
       );
       row.netPay = amount(
         cents(

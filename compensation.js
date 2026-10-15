@@ -924,7 +924,7 @@
               : positive(c.tax.spouseFederalWithholding)) / 12
           : 0;
       const federal = cs("federal") + et("federal") + spouseFederal,
-        state = cs("state") + et("state");
+        state = cs("state") + cs("local") + et("state");
       const fica =
           cs("ss") + cs("medicare") + et("ss") + et("medicare") + spouseFica,
         sdi =

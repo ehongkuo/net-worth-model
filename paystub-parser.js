@@ -20,6 +20,7 @@
     ss: "Social Security",
     medicare: "Medicare",
     sdi: "State disability",
+    local: "Local tax withheld",
     taxablePayroll: "Payroll taxable wages",
     taxableMedicare: "Medicare taxable wages",
     taxableFederal: "Federal taxable wages",
@@ -94,10 +95,10 @@
         )
       )
         return "sdi";
-      // City, local and school taxes have no model category; leave them for the
-      // user to map rather than counting them as state tax.
+      // City, local and school income taxes: kept out of state tax so they
+      // don't inflate the inferred state rate.
       if (/\b(local|city|NYC|school|EIT|county|municipal)\b/i.test(label))
-        return null;
+        return "local";
       // State income tax: explicit wording, SIT / ST WH, or withholding tied to
       // a named state ("California Withholding", "OR Withholding").
       if (
@@ -289,7 +290,14 @@
         "taxableAllowance",
       ]),
       pretax = total(current, ["traditional", "hsa", "health"]),
-      taxes = total(current, ["federal", "state", "ss", "medicare", "sdi"]),
+      taxes = total(current, [
+        "federal",
+        "state",
+        "local",
+        "ss",
+        "medicare",
+        "sdi",
+      ]),
       posttax = total(current, ["roth", "mega", "espp", "post"]);
     const computed = {
       gross,
@@ -310,7 +318,14 @@
       const y = r.ytd || {},
         gross = total(y, ["salary", "bonus", "allowance", "taxableAllowance"]),
         pretax = total(y, ["traditional", "hsa", "health"]),
-        taxes = total(y, ["federal", "state", "ss", "medicare", "sdi"]),
+        taxes = total(y, [
+          "federal",
+          "state",
+          "local",
+          "ss",
+          "medicare",
+          "sdi",
+        ]),
         posttax = total(y, ["roth", "mega", "espp", "post"]);
       const computedYtd = {
         gross,
@@ -420,6 +435,15 @@
           "Estimated from state tax withheld this year; adjust if you know your effective rate",
         );
     }
+    // City, local and school income tax, as an effective rate like the state's.
+    const localWages =
+      (last.ytd.salary || 0) + (last.ytd.bonus || 0) + (last.ytd.rsu || 0);
+    if (localWages > 0 && last.ytd.local > 0)
+      infer(
+        "taxProfile.settings.localRate",
+        Math.round((last.ytd.local / localWages) * 10000) / 10000,
+        `Estimated from local tax withheld this year ("${(last.lines || []).find((l) => l.key === "local")?.label || "local tax"}")`,
+      );
     // HSA coverage: only year-to-date funding proves the coverage type. A
     // per-check rate can be front-loaded or a one-time deposit, and a payroll
     // system stops self-only funding at the cap. Without a known age under 55
@@ -558,9 +582,10 @@
         basis: "Federal taxable wages",
         sourceDate: last.date,
       };
+    // The model's state withholding includes local tax.
     if (v.salary + (v.bonus || 0) > 0 && v.state != null)
       withholding.state = {
-        rate: v.state / (v.salary + (v.bonus || 0)),
+        rate: (v.state + (v.local || 0)) / (v.salary + (v.bonus || 0)),
         basis: "Gross salary and bonus (state wage basis unavailable)",
         sourceDate: last.date,
       };
