@@ -148,6 +148,34 @@
       };
     }
   }
+  // Payroll elections from a suggestion, except ones the user overrode or set
+  // as annual amounts. Returns conflict notes.
+  function applyElections(s, suggestion) {
+    const conflicts = [];
+    for (const [key, election] of Object.entries(suggestion.elections || {})) {
+      const existing = s.uploads.elections[key];
+      if (s.uploads.annualSettingKeys?.includes(key)) {
+        conflicts.push(
+          `${key}: kept your annual contribution setting; a payroll election was also observed.`,
+        );
+      } else if (existing?.manual) {
+        if (existing.value !== election.value)
+          conflicts.push(
+            `${key}: kept your override (${existing.value}); upload suggests ${election.value}.`,
+          );
+      } else s.uploads.elections[key] = { ...election };
+    }
+    return conflicts;
+  }
+  // The user chose to keep their value over this paystub value; later uploads
+  // don't offer the same value again (a different value is offered).
+  function keepYourValue(s, item) {
+    s.uploads.keptDecisions = {
+      ...s.uploads.keptDecisions,
+      [item.path]: JSON.stringify(item.paystub),
+    };
+    return s;
+  }
   // Replace a kept user value with what the paystub showed (from applyUpload's
   // kept list) and record the paystub as its source again.
   function usePaystubValue(s, item) {
@@ -156,6 +184,7 @@
       (p) => p !== item.path,
     );
     if (s.uploads.confirmedFields) delete s.uploads.confirmedFields[item.path];
+    if (s.uploads.keptDecisions) delete s.uploads.keptDecisions[item.path];
     s.uploads.fieldSources ??= {};
     s.uploads.fieldSources[item.path] = item.inferred
       ? { sourceDate: item.sourceDate, basis: item.basis, inferred: true }
@@ -205,7 +234,9 @@
         confirmed ||
         legacyOverride
       ) {
-        if (JSON.stringify(old) !== JSON.stringify(value)) {
+        const declined =
+          s.uploads.keptDecisions?.[path] === JSON.stringify(value);
+        if (JSON.stringify(old) !== JSON.stringify(value) && !declined) {
           conflicts.push(
             `${path}: kept your setting (${old}); upload suggests ${value}.`,
           );
@@ -233,19 +264,7 @@
       suggestion.inferred || {},
     ))
       assign(path, value, basis, date, true);
-    for (const [key, election] of Object.entries(suggestion.elections || {})) {
-      const existing = s.uploads.elections[key];
-      if (s.uploads.annualSettingKeys?.includes(key)) {
-        conflicts.push(
-          `${key}: kept your annual contribution setting; a payroll election was also observed.`,
-        );
-      } else if (existing?.manual) {
-        if (existing.value !== election.value)
-          conflicts.push(
-            `${key}: kept your override (${existing.value}); upload suggests ${election.value}.`,
-          );
-      } else s.uploads.elections[key] = { ...election };
-    }
+    conflicts.push(...applyElections(s, suggestion));
     const v = suggestion.record?.current || {};
     if (v.espp > 0)
       assign("employerPlan.espp.enabled", true, "ESPP deduction on paycheck");
@@ -436,6 +455,8 @@
     applyUpload,
     lockedPaths,
     usePaystubValue,
+    keepYourValue,
+    applyElections,
     edit,
     employerFunding,
     grantPreview,

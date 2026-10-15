@@ -107,11 +107,7 @@
       const purchased = payroll.espp.lots.filter(
           (l) => Number(l.purchaseDate.slice(0, 4)) === year,
         ),
-        purchaseCost = purchased.reduce((n, l) => n + l.cost, 0),
-        purchaseValue = purchased.reduce(
-          (n, l) => n + l.shares * l.purchasePrice,
-          0,
-        );
+        purchaseCost = purchased.reduce((n, l) => n + l.cost, 0);
       // ESPP cash awaiting purchase as payroll deposits it; spending some of it
       // (withdrawing from the offering) is tracked separately so it doesn't
       // inflate company equity.
@@ -123,13 +119,22 @@
           purchaseCost,
       );
       companyWithdrawn *= 1 + c.stockGrowth;
-      // Pending cash spent earlier never buys shares: when the offering
-      // purchases, remove those shares (at purchase value) from company equity
-      // and settle the withdrawal.
-      if (pendingWithdrawn > 0 && purchaseCost > 0) {
-        const settled = Math.min(pendingWithdrawn, purchaseCost);
-        companyWithdrawn += (settled * purchaseValue) / purchaseCost;
-        pendingWithdrawn -= settled;
+      // Pending cash spent earlier is neither refunded nor used to buy shares.
+      // Purchases settle it in date order: first from each purchase's refund
+      // (cash it couldn't use, e.g. above the $25,000 limit), then from its
+      // shares at purchase value.
+      let refundSpent = 0;
+      for (const lot of [...purchased].sort((a, b) =>
+        a.purchaseDate.localeCompare(b.purchaseDate),
+      )) {
+        if (pendingWithdrawn <= 0) break;
+        const fromRefund = Math.min(pendingWithdrawn, lot.refund || 0),
+          fromShares = Math.min(pendingWithdrawn - fromRefund, lot.cost);
+        refundSpent += fromRefund;
+        if (fromShares > 0)
+          companyWithdrawn +=
+            (fromShares * lot.shares * lot.purchasePrice) / lot.cost;
+        pendingWithdrawn -= fromRefund + fromShares;
       }
       balances.esppPending = Math.max(0, esppPendingGross - pendingWithdrawn);
       balances.companyEquity = Math.max(
@@ -147,8 +152,15 @@
           year,
           c.tax,
         );
+      // A refund of already-spent cash never arrives.
+      const cashFlow = (taxes) => {
+        const f = C.cashFlow(payroll, { taxes, expenses, socialSecurity });
+        return refundSpent
+          ? { ...f, netCashFlow: f.netCashFlow - refundSpent }
+          : f;
+      };
       let taxes = taxFor(0, 0),
-        flow = C.cashFlow(payroll, { taxes, expenses, socialSecurity }),
+        flow = cashFlow(taxes),
         withdrawal;
       const baselineCash = flow.netCashFlow,
         baselineTax = taxes.total;
@@ -165,7 +177,7 @@
         }
         taxes = next;
       }
-      flow = C.cashFlow(payroll, { taxes, expenses, socialSecurity });
+      flow = cashFlow(taxes);
       withdrawal = draw(balances, -flow.netCashFlow, basis);
       if (flow.netCashFlow >= 0) balances.cash += flow.netCashFlow;
       else {

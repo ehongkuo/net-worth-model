@@ -255,6 +255,11 @@
           (x) => typeof x === "string",
         ),
         confirmedFields: clone(u.confirmedFields || {}),
+        keptDecisions: Object.fromEntries(
+          Object.entries(u.keptDecisions || {}).filter(
+            ([k, v]) => typeof k === "string" && typeof v === "string",
+          ),
+        ),
         fieldSources: Object.fromEntries(
           Object.entries(u.fieldSources || {}).map(([k, v]) => [
             k,
