@@ -991,14 +991,33 @@ function renderLearned(visible) {
   const rows = Presentation.learned(scenario),
     gaps = Presentation.missing(scenario),
     kept = keptValues.length
-      ? `<div class="learned-kept"><h3>Your settings were kept</h3><ul>${keptValues.map((k, i) => `<li><strong>${escape(Presentation.labelFor(k.path))}</strong>: you set ${escape(Presentation.formatValue(k.path, k.yours))}; your paystub suggests ${escape(Presentation.formatValue(k.path, k.paystub))} <button data-use-paystub="${i}">Use paystub value</button></li>`).join("")}</ul></div>`
+      ? `<div class="learned-kept"><h3>Your settings were kept</h3><ul>${keptValues.map((k, i) => `<li><strong>${escape(Presentation.labelFor(k.path))}</strong>: you set ${escape(Presentation.formatValue(k.path, k.yours))}; your paystub suggests ${escape(Presentation.formatValue(k.path, k.paystub))} <button data-use-paystub="${i}">Use paystub value</button> <button data-keep-mine="${i}">Keep mine</button></li>`).join("")}</ul></div>`
       : "";
   host.innerHTML = `<section class="learned-card" aria-labelledby="learned-title"><div class="learned-heading"><h2 id="learned-title">What we learned from your paystub</h2><button id="learned-dismiss" aria-label="Dismiss">Dismiss</button></div>${kept}${rows.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Item</th><th>Value</th><th>Source</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escape(r.label)}</td><td>${escape(r.value)}</td><td><span class="source-chip source-${r.source === "Inferred" ? "inferred" : "paystub"}" title="${escape(r.basis || "")}">${escape(r.source)}</span></td></tr>`).join("")}</tbody></table></div>` : ""}${gaps.length ? `<div class="learned-gaps"><h3>Still needed for accurate results</h3><ul>${gaps.map((g) => `<li><strong>${escape(g.label)}</strong> <span>${escape(g.why)}</span></li>`).join("")}</ul><button id="learned-next" class="primary">Answer ${gaps.length} quick question${gaps.length === 1 ? "" : "s"}</button></div>` : '<p class="cf-note">Your profile has everything it needs.</p>'}</section>`;
   host.querySelectorAll("[data-use-paystub]").forEach(
     (button) =>
       (button.onclick = () => {
         const [item] = keptValues.splice(Number(button.dataset.usePaystub), 1);
-        commit(Profile.usePaystubValue(structuredClone(scenario), item));
+        const next = Profile.usePaystubValue(structuredClone(scenario), item);
+        // Elections depend on settings such as HSA coverage and age (they
+        // decide which checks hit a limit), so re-read them from the checks.
+        if (next.uploads.records?.length)
+          Profile.applyElections(
+            next,
+            PaystubParser.suggest(
+              next.uploads.records,
+              Scenario.engineInput(next),
+              { locked: Profile.lockedPaths(next) },
+            ),
+          );
+        commit(next);
+      }),
+  );
+  host.querySelectorAll("[data-keep-mine]").forEach(
+    (button) =>
+      (button.onclick = () => {
+        const [item] = keptValues.splice(Number(button.dataset.keepMine), 1);
+        commit(Profile.keepYourValue(structuredClone(scenario), item));
       }),
   );
   $("learned-dismiss").onclick = () => {

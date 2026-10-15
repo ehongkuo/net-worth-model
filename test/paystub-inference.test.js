@@ -267,3 +267,63 @@ test("a confirmed value that the paystub contradicts is kept, reported, and can 
     "Married filing jointly",
   );
 });
+test("keeping your value is remembered until the paystub suggests something new", () => {
+  const married = P.mergeRecords(
+    [],
+    [parse("Marital Status: Married\n" + fixture, "a")],
+  );
+  const upload = (s, records) =>
+    Profile.applyUpload(
+      s,
+      records,
+      P.suggest(records, Scenario.engineInput(s), {
+        today,
+        locked: Profile.lockedPaths(s),
+      }),
+      true,
+    );
+  const s = Scenario.defaults();
+  s.uploads.confirmedFields = { "taxProfile.settings.filing": "single" };
+  const first = upload(s, married);
+  const item = first.kept.find((k) => k.path === "taxProfile.settings.filing");
+  const kept = Scenario.normalize(Profile.keepYourValue(first.scenario, item));
+  assertEqual(
+    kept.uploads.keptDecisions["taxProfile.settings.filing"],
+    '"married"',
+  );
+  const again = upload(kept, married);
+  assert(
+    !again.kept.some((k) => k.path === "taxProfile.settings.filing"),
+    "the same paystub value is not offered again",
+  );
+  assertEqual(again.scenario.taxProfile.settings.filing, "single");
+  // Using the paystub value clears the decision.
+  const used = Profile.usePaystubValue(kept, item);
+  assert(!("taxProfile.settings.filing" in used.uploads.keptDecisions));
+});
+test("switching HSA coverage to the paystub's family value re-reads the HSA election", () => {
+  const records = P.mergeRecords(
+    [],
+    [parse(familyHsa(fixture), "a"), parse(familyHsa(second), "b")],
+  );
+  const s = Scenario.defaults();
+  s.employerPlan.hsa.coverage = "self";
+  s.uploads.confirmedFields = { "employerPlan.hsa.coverage": "self" };
+  const opts = (x) => ({ today, locked: Profile.lockedPaths(x) });
+  const applied = Profile.applyUpload(
+    s,
+    records,
+    P.suggest(records, Scenario.engineInput(s), opts(s)),
+    true,
+  );
+  // Self-only coverage makes every check look capped, so no election.
+  assert(!applied.scenario.uploads.elections.hsa?.value);
+  const item = applied.kept.find((k) => k.path === "employerPlan.hsa.coverage");
+  assertEqual(item.paystub, "family");
+  const next = Profile.usePaystubValue(applied.scenario, item);
+  Profile.applyElections(
+    next,
+    P.suggest(next.uploads.records, Scenario.engineInput(next), opts(next)),
+  );
+  assertClose(next.uploads.elections.hsa.value, 178.75, 0.01);
+});
