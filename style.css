@@ -2344,3 +2344,9 @@ button:disabled {
     width: 30%;
   }
 }
+/* Steps scrolled into view stop below the sticky header. */
+.profile-steps,
+.plan-section,
+#setup {
+  scroll-margin-top: 88px;
+}

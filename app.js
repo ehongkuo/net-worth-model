@@ -1779,6 +1779,8 @@ $("profile-next").onclick = () => {
   if (profileStep < 2) {
     profileStep++;
     renderProfile();
-    $("profile").scrollIntoView({ block: "start", behavior: "smooth" });
+    document
+      .querySelector(".profile-steps")
+      .scrollIntoView({ block: "start", behavior: "smooth" });
   } else document.querySelector('[data-view="monthly"]').click();
 };
