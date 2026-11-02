@@ -62,7 +62,7 @@ function field(path, label, type = "number", hint = "", { also = [] } = {}) {
     return `<div class="profile-cell state-${state.kind}"><label class="check">${badge}<input ${attrs} type="checkbox" ${value ? "checked" : ""}>${escape(label)}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${sourceInfo}${approve}</div>`;
   const choices = Array.isArray(type) ? type : null;
   const control = choices
-    ? `<select ${attrs}>${choices
+    ? `<select ${attrs}>${value == null || value === "" ? '<option value="" selected disabled>Choose</option>' : ""}${choices
         .map((v) => {
           const [key, text] = Array.isArray(v) ? v : [v, v];
           return `<option value="${key}" ${String(value) === String(key) ? "selected" : ""}>${escape(text)}</option>`;
@@ -1401,7 +1401,6 @@ try {
       scenario.taxProfile.year,
       new Date().getFullYear(),
     );
-    scenario.compensation.salary = 0;
   }
   view = Profile.initialView(scenario);
   result = Projection.calculate(scenario);

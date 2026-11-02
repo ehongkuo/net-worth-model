@@ -7,6 +7,8 @@ const Scenario = require("../scenario"),
 function run(housing, espp = {}) {
   const s = Scenario.defaults();
   Object.assign(s.compensation, { salary: 200000, salaryGrowth: 1 });
+  // The housing amounts below were sized for California tax.
+  s.taxProfile.settings.state = "CA";
   Object.assign(s.employerPlan.espp, {
     enabled: true,
     rate: 0.15,
@@ -54,6 +56,7 @@ test("spending pending ESPP cash removes the shares it would have bought", () =>
 function capped(housing) {
   const s = Scenario.defaults();
   Object.assign(s.compensation, { salary: 500000, salaryGrowth: 1 });
+  s.taxProfile.settings.state = "CA";
   Object.assign(s.employerPlan.espp, {
     enabled: true,
     rate: 0.15,

@@ -103,3 +103,19 @@ test("plan features survive export including max elections, reserve settings and
   assertClose(c.espp.reserveSaleMonths, 12);
   assert(c.espp.end === "2026-06-08");
 });
+test("a new scenario is a blank slate: no salary, balances, spending or state", () => {
+  const s = S.defaults();
+  assert(s.compensation.salary === 0);
+  assert(s.taxProfile.settings.state === "");
+  assert(Object.values(s.projection.startingBalances).every((v) => v === 0));
+  assert(Object.values(s.projection.monthlyExpenses).every((v) => v === 0));
+  // An unset state is valid, round-trips and is modelled without state tax.
+  const restored = S.normalize(JSON.parse(S.serialize(s)));
+  assert(restored.taxProfile.settings.state === "");
+  assert(S.engineInput(s).tax.state === "none");
+});
+test("legacy scenarios without a salary or state keep the old California model", () => {
+  const { scenario } = S.migrate({ config: { age: 30 } });
+  assert(scenario.compensation.salary === 0);
+  assert(scenario.taxProfile.settings.state === "CA");
+});

@@ -151,7 +151,13 @@
         })[v] || v,
       filing: () => (v === "married" ? "Married filing jointly" : "Single"),
       state: () =>
-        v === "CA" ? "California" : v === "none" ? "None" : "Other state",
+        v === "CA"
+          ? "California"
+          : v === "none"
+            ? "None"
+            : v
+              ? "Other state"
+              : "Not set",
       coverage: () => (v === "family" ? "Family" : "Self-only"),
       yes: () => (v ? "Yes" : "No"),
       month: () =>

@@ -104,6 +104,8 @@ test("welcome persists for empty profiles regardless of saved tax or asset input
 });
 test("salary, equity grants or observed earnings unlock results without optional setup", () => {
   const s = S.defaults();
+  assert(P.initialView(s) === "welcome");
+  s.compensation.salary = 100000;
   assert(P.initialView(s) === "monthly");
   s.compensation.salary = 0;
   s.uploads.records = [{ current: { salary: 5000 } }];

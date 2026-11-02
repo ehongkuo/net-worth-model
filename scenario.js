@@ -172,7 +172,8 @@
         year: c.taxYear,
         age: c.age,
         birthday: "",
-        settings: c.tax,
+        // Unset until a paystub or the user names a state.
+        settings: { ...c.tax, state: "" },
       },
       employerPlan: {
         retirement: c.retirement,
@@ -376,7 +377,7 @@
       throw new Error(
         "Supported filing statuses are single and married filing jointly.",
       );
-    if (!["none", "CA", "custom"].includes(t.settings.state))
+    if (!["", "none", "CA", "custom"].includes(t.settings.state))
       throw new Error("Choose a supported state tax model.");
     const positive = (v, label) => {
       if (typeof v !== "number" || !Number.isFinite(v) || v < 0)
@@ -426,11 +427,13 @@
     if (cfg.compensation?.version === 2)
       return C.merge(C.defaults(), cfg.compensation);
     return C.merge(C.defaults(), {
-      salary: cfg.baseSalary ?? 165000,
+      salary: cfg.baseSalary ?? 0,
       age: cfg.age ?? 25,
       salaryGrowth: cfg.salaryGrowth ?? 0.03,
       bonusPercent: cfg.bonusPercent ?? 0.1,
       tax: {
+        // The legacy model always applied California tax.
+        state: "CA",
         spouseIncome: cfg.spouseIncome || 0,
         otherIncome: cfg.rentalIncome || 0,
       },
@@ -519,7 +522,11 @@
       taxYear: s.taxProfile.year,
       age: s.taxProfile.age,
       birthday: s.taxProfile.birthday,
-      tax: s.taxProfile.settings,
+      // An unset state is modelled without state income tax.
+      tax: {
+        ...s.taxProfile.settings,
+        state: s.taxProfile.settings.state || "none",
+      },
       ...s.employerPlan,
       payroll: {
         enabled: true,

@@ -32,7 +32,7 @@
       version: 2,
       taxYear: 2026,
       age: 25,
-      salary: 165000,
+      salary: 0,
       salaryGrowth: 0.03,
       bonusPercent: 0,
       bonusMonth: 3,

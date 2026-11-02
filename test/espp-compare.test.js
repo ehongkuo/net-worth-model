@@ -5,7 +5,7 @@ const Compensation = require("../compensation");
 
 function run(espp, scenario = {}) {
   const s = Scenario.defaults();
-  Object.assign(s.compensation, scenario);
+  Object.assign(s.compensation, { salary: 165000 }, scenario);
   s.employerPlan.espp = { ...s.employerPlan.espp, enabled: true, ...espp };
   const r = Projection.calculate(s);
   const row = r.rows[1];
