@@ -2417,7 +2417,7 @@ button:disabled {
 }
 .field-origin {
   display: block;
-  margin-top: 6px;
+  margin-top: 4px;
   font-size: 12px;
   color: var(--text-3);
 }
@@ -2425,15 +2425,56 @@ button:disabled {
   margin: -4px 0 8px;
 }
 .linked-amount {
-  padding: 14px 0;
+  padding: 12px 0;
   border-top: 1px solid var(--line);
+}
+/* Inputs and status on the left, the year chart on the right. */
+.linked-amount.has-chart {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.6fr);
+  gap: 4px 28px;
+  align-items: start;
+}
+.la-chart {
+  padding-top: 22px;
+}
+.la-details {
+  grid-column: 1 / -1;
+  border-top: 0;
+  padding: 2px 0 0;
+}
+.la-details summary {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.la-details table {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.limit-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.limit-status strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.limit-fix {
+  padding: 3px 10px;
+  font-size: 12px;
 }
 .linked-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 10px;
-  margin-bottom: 8px;
+  gap: 2px 10px;
+  margin-bottom: 6px;
 }
 .linked-head small {
   color: var(--text-2);
@@ -2466,10 +2507,17 @@ button:disabled {
   border-color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--ink);
 }
+.unit-input input::-webkit-inner-spin-button,
+.unit-input input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 .unit-input input {
-  width: 9ch;
+  -moz-appearance: textfield;
+  appearance: textfield;
+  width: 8ch;
   border: 0;
-  padding: 8px 0;
+  padding: 6px 0;
   background: none;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -2495,16 +2543,39 @@ button:disabled {
   border-radius: var(--r-1);
   background: var(--surface-2);
 }
+@media (max-width: 800px) {
+  .linked-amount.has-chart {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .la-chart {
+    padding-top: 8px;
+  }
+}
 @media (max-width: 600px) {
+  /* Boxes side by side, each with its unit as a small label on top. */
   .unit-row {
     display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
     gap: 6px;
   }
   .unit-eq {
     display: none;
   }
+  .unit-input {
+    flex-wrap: wrap;
+    padding: 4px 8px;
+    gap: 0 4px;
+  }
+  .unit-input .unit {
+    order: -1;
+    width: 100%;
+    font-size: 11px;
+  }
   .unit-input input {
     flex: 1;
+    width: auto;
+    min-width: 0;
+    padding: 2px 0;
   }
   .stub-list li {
     grid-template-columns: 1fr auto;
@@ -2514,60 +2585,19 @@ button:disabled {
     font-size: 13px;
   }
 }
-/* IRS limit checks under paycheck items. */
-.limit-check {
-  margin-top: 10px;
-  max-width: 640px;
-}
-.limit-meter {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  overflow: hidden;
-}
-.limit-meter span {
-  display: block;
-  height: 100%;
-  background: var(--retire);
-}
-.limit-check.is-over .limit-meter span {
-  background: var(--tax);
-}
-.limit-line {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: var(--text-2);
-}
-.limit-line strong {
-  color: var(--text);
-  font-weight: 600;
-}
 .limit-over {
   color: var(--tax);
   font-weight: 500;
 }
-p.limit-over {
-  margin: 4px 0 0;
-  font-size: 13px;
-}
 .limit-notes {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   padding-left: 18px;
   font-size: 12px;
   color: var(--text-3);
 }
-/* Limit plan: cumulative contributions through the year. */
-.limit-plan {
-  margin: 12px 0 4px;
-}
-.limit-headline {
-  margin: 0 0 8px;
-  font-size: 14px;
-}
 .limit-chart {
   position: relative;
-  height: 120px;
+  height: 88px;
   border-bottom: 1px solid var(--line);
   touch-action: pan-y;
 }
@@ -2628,55 +2658,8 @@ p.limit-over {
 }
 .lc-months {
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   font-size: 11px;
   color: var(--text-3);
   padding-top: 4px;
-}
-@media (max-width: 600px) {
-  .lc-months span:nth-child(even) {
-    visibility: hidden;
-  }
-}
-.lc-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 16px;
-  margin: 8px 0;
-  font-size: 12px;
-  color: var(--text-2);
-}
-.lc-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.lc-key {
-  width: 22px;
-  height: 0;
-  border-top: 2px solid var(--chart-you);
-}
-.lc-key.lc-projected {
-  border-top: 3px dotted var(--chart-you);
-}
-.lc-key.lc-limit-key {
-  border-top: 1px dashed var(--text-3);
-}
-.limit-target {
-  margin: 6px 0;
-  font-size: 14px;
-}
-.limit-target button {
-  margin-left: 6px;
-  padding: 4px 10px;
-  font-size: 13px;
-}
-.lc-table {
-  border-top: 0;
-  padding: 4px 0;
-  font-size: 13px;
-}
-.lc-table summary {
-  font-weight: 400;
-  color: var(--text-2);
 }
