@@ -236,3 +236,37 @@ test("a paycheck steps from gross pay down to the deposit", () => {
   assertEqual(empty.steps.length, 0);
   assertEqual(empty.deposit, 0);
 });
+
+test("profile facts show what the projection models, including paystub elections", () => {
+  const s = Scenario.defaults();
+  s.compensation.salary = 0;
+  s.taxProfile.settings.state = "NY";
+  s.employerPlan.espp.enabled = true;
+  s.employerPlan.espp.rate = 0.05;
+  // Elections read from a paystub; the annual plan settings stay at zero.
+  s.uploads.elections = {
+    traditional: { mode: "percent", value: 0.08, sourceDate: "2026-09-18" },
+    espp: { mode: "percent", value: 0.12, sourceDate: "2026-09-18" },
+  };
+  const payroll = {
+    salary: 130000,
+    contributions: {
+      traditional: 10400,
+      roth: 0,
+      mega: 0,
+      hsa: 2600,
+      hsaEmployer: 520,
+    },
+  };
+  const facts = UI.facts(s, payroll);
+  const fact = (id) => by(facts, id);
+  assertEqual(fact("salary").value, "$130,000 a year");
+  assert(!fact("salary").missing);
+  assertEqual(fact("retirement").value, "$10,400 pre-tax");
+  assertEqual(fact("retirement").source, "From your paystubs");
+  // Employee $2,600 plus employer $520.
+  assertEqual(fact("hsa").value, "$3,120 a year");
+  assertEqual(fact("espp").value, "12% of pay");
+  assertEqual(fact("espp").source, "From your paystubs");
+  assertEqual(fact("tax").value, "Single · NY");
+});

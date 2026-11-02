@@ -2350,3 +2350,21 @@ button:disabled {
 #setup {
   scroll-margin-top: 88px;
 }
+.facts dd small {
+  display: block;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.danger {
+  color: var(--tax);
+  border-color: var(--tax);
+}
+.danger:hover {
+  background: var(--tax);
+  border-color: var(--tax);
+  color: var(--on-ink);
+}
+#reset-dialog {
+  width: min(460px, calc(100vw - 32px));
+}

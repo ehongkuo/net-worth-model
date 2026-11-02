@@ -141,8 +141,10 @@
       employer: sum(["employer", "hsaEmployer"]),
     };
   }
-  // The inputs behind the numbers, each pointing at the setup step that edits it.
-  function facts(s) {
+  // The inputs behind the numbers, each pointing at the setup step that edits
+  // it. With the projection's payroll, amounts are what the model uses, which
+  // includes per-paycheck elections read from paystubs.
+  function facts(s, payroll) {
     const usd = (n) =>
       n.toLocaleString("en-US", {
         style: "currency",
@@ -160,21 +162,36 @@
       monthly: "Once a month",
     };
     const filing = { single: "Single", married: "Married filing jointly" };
+    const c = payroll?.contributions,
+      elections = s.uploads?.elections || {};
+    const fromPaystub = (keys) =>
+      keys.some((k) => elections[k] && !elections[k].manual)
+        ? "From your paystubs"
+        : "";
     const saving = [
-      r.traditional > 0 && `${usd(r.traditional)} pre-tax`,
-      r.roth > 0 && `${usd(r.roth)} Roth`,
-      r.megaEnabled && r.mega > 0 && `${usd(r.mega)} after-tax`,
-    ].filter(Boolean);
+      [c ? c.traditional : r.traditional, "pre-tax"],
+      [c ? c.roth : r.roth, "Roth"],
+      [c ? c.mega : r.megaEnabled && r.mega, "after-tax"],
+    ]
+      .filter(([v]) => v > 0)
+      .map(([v, kind]) => `${usd(v)} ${kind}`);
+    const salary = payroll?.salary > 0 ? payroll.salary : comp.salary;
+    const esppRate =
+      elections.espp?.mode === "percent"
+        ? elections.espp.value
+        : plan.espp.rate;
     const grants = (comp.grants || []).filter(
       (g) => g.value > 0 || g.shares > 0,
     );
-    const hsa = (plan.hsa.employee || 0) + (plan.hsa.employer || 0);
+    const hsa = c
+      ? (c.hsa || 0) + (c.hsaEmployer || 0)
+      : (plan.hsa.employee || 0) + (plan.hsa.employer || 0);
     return [
       {
         id: "salary",
         label: "Salary",
-        value: comp.salary > 0 ? `${usd(comp.salary)} a year` : "Not set",
-        missing: !(comp.salary > 0),
+        value: salary > 0 ? `${usd(salary)} a year` : "Not set",
+        missing: !(salary > 0),
         step: 2,
         section: "plan-compensation",
       },
@@ -195,6 +212,7 @@
         id: "retirement",
         label: "401(k)",
         value: saving.length ? saving.join(" · ") : "Not contributing",
+        source: fromPaystub(["traditional", "roth", "mega"]),
         step: 2,
         section: "plan-retirement",
       },
@@ -202,6 +220,7 @@
         id: "hsa",
         label: "HSA",
         value: hsa > 0 ? `${usd(hsa)} a year` : "None",
+        source: fromPaystub(["hsa"]),
         step: 2,
         section: "plan-hsa",
       },
@@ -209,8 +228,9 @@
         id: "espp",
         label: "ESPP",
         value: plan.espp.enabled
-          ? `${Math.round(plan.espp.rate * 100)}% of pay`
+          ? `${Math.round(esppRate * 100)}% of pay`
           : "Not enrolled",
+        source: plan.espp.enabled ? fromPaystub(["espp"]) : "",
         step: 2,
         section: "plan-espp",
       },

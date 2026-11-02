@@ -850,6 +850,12 @@ function renderSetupForm() {
 // (activeElement is <body>). Re-render after focus lands so setup() can
 // restore it to the field the user moved to.
 const deferUntilFocusMoves = (fn) => setTimeout(fn);
+// A new profile models the current year (the engine starts at 2026).
+function freshScenario() {
+  const s = Scenario.defaults();
+  s.taxProfile.year = Math.max(s.taxProfile.year, new Date().getFullYear());
+  return s;
+}
 function commit(next) {
   try {
     const normalized = Scenario.normalize(next),
@@ -1472,6 +1478,27 @@ $("import").onchange = async (event) => {
   }
   event.target.value = "";
 };
+$("reset").onclick = () => {
+  closeScenarioMenu();
+  $("reset-dialog").showModal();
+};
+$("reset-export").onclick = () => $("export").click();
+$("reset-cancel").onclick = () => $("reset-dialog").close();
+// Clears the saved scenario and every per-session choice, then shows the
+// welcome screen as on a first visit.
+$("reset-confirm").onclick = () => {
+  $("reset-dialog").close();
+  drafts = [];
+  keptValues = [];
+  profileStep = 0;
+  showLearned = false;
+  gapsPrompted = "";
+  compPeriod = "year";
+  compOpen.clear();
+  view = "welcome";
+  commit(freshScenario());
+  scrollTo(0, 0);
+};
 $("inspect").onclick = () => {
   $("scenario-json").textContent = Scenario.serialize(scenario);
   $("backup").hidden = !localStorage.getItem(BACKUP);
@@ -1534,14 +1561,7 @@ try {
     const migrated = Scenario.migrate(JSON.parse(legacy));
     scenario = migrated.scenario;
     warnings = migrated.warnings;
-  } else {
-    scenario = Scenario.defaults();
-    // A new profile models the current year (the engine starts at 2026).
-    scenario.taxProfile.year = Math.max(
-      scenario.taxProfile.year,
-      new Date().getFullYear(),
-    );
-  }
+  } else scenario = freshScenario();
   view = Profile.initialView(scenario);
   result = Projection.calculate(scenario);
   setup();
@@ -1595,10 +1615,11 @@ function compensationView() {
 function factsView() {
   return `<section class="you-card" aria-labelledby="you-title"><h2 id="you-title">You</h2><dl class="facts">${Presentation.facts(
     scenario,
+    Profile.hasIncome(scenario) ? result.ongoing.payroll : null,
   )
     .map(
       (f) =>
-        `<div class="${f.missing ? "fact-missing" : ""}"><dt>${escape(f.label)}</dt><dd>${escape(f.value)}</dd><button type="button" class="link-button" data-fact-step="${f.step}" data-fact-section="${f.section || ""}" aria-label="${f.missing ? "Add" : "Edit"} ${escape(f.label)}">${f.missing ? "Add" : "Edit"}</button></div>`,
+        `<div class="${f.missing ? "fact-missing" : ""}"><dt>${escape(f.label)}</dt><dd>${escape(f.value)}${f.source ? `<small>${escape(f.source)}</small>` : ""}</dd><button type="button" class="link-button" data-fact-step="${f.step}" data-fact-section="${f.section || ""}" aria-label="${f.missing ? "Add" : "Edit"} ${escape(f.label)}">${f.missing ? "Add" : "Edit"}</button></div>`,
     )
     .join("")}</dl></section>`;
 }
