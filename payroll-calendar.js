@@ -261,8 +261,55 @@
     rows.sort((a, b) => a.date.localeCompare(b.date));
     const last = records.at(-1);
     if (last && p.useYtd !== false) {
-      const history = rows.filter((x) => x.date <= last.date),
+      // An off-cycle payslip's YTD can already include regular paychecks paid
+      // after the last uploaded one (same pay run). Its salary YTD says how
+      // many, and those paychecks are history, not forecast.
+      const lastRegular = records
+          .filter((r) => (r.kind || "regular") === "regular")
+          .at(-1),
+        unitSalary = cents(lastRegular?.current?.salary);
+      let cutoff = last.date;
+      if (
+        last !== lastRegular &&
+        unitSalary > 0 &&
+        last.ytd?.salary != null &&
+        lastRegular.ytd?.salary != null
+      ) {
+        const extra =
+          cents(last.ytd.salary) -
+          cents(lastRegular.ytd.salary) -
+          cents(last.current?.salary);
+        const k = Math.round(extra / unitSalary);
+        if (k >= 1 && Math.abs(extra - k * unitSalary) <= k) {
+          const next = rows
+            .filter(
+              (x) =>
+                x.kind === "regular" &&
+                x.date > lastRegular.date &&
+                x.source !== "uploaded",
+            )
+            .slice(0, k);
+          if (next.length === k && next.at(-1).date > cutoff)
+            cutoff = next.at(-1).date;
+        }
+      }
+      const coveredBy = (record) => (record === last ? cutoff : record.date);
+      const history = rows.filter((x) => x.date <= cutoff),
         missing = history.filter((x) => x.source !== "uploaded");
+      // A YTD that is a whole number of the latest per-paycheck amounts means
+      // the same amount on that many paychecks, ending with the latest: it
+      // started then, and earlier paychecks had none. Salary sets when pay
+      // started, which bounds every other item.
+      let paidFrom = null;
+      const wholeChecks = (key, residual, candidates) => {
+        const unit = cents(lastRegular?.current?.[key]);
+        if (!(unit > 0) || !(residual > 0)) return null;
+        const k = Math.round(residual / unit),
+          regular = candidates.filter((x) => x.kind === "regular");
+        if (k < 1 || k >= regular.length || Math.abs(residual - k * unit) > k)
+          return null;
+        return regular.slice(-k);
+      };
       for (const key of [
         ...fields,
         "taxablePayroll",
@@ -271,7 +318,7 @@
       ]) {
         const snapshot = records.filter((r) => r.ytd?.[key] != null).at(-1);
         if (!snapshot) continue;
-        const through = history.filter((x) => x.date <= snapshot.date);
+        const through = history.filter((x) => x.date <= coveredBy(snapshot));
         // Withholding on RSU checks isn't spread over salary checks. Their
         // taxable wages stay in the totals that track the wage-base limits.
         const equity = key.startsWith("taxable")
@@ -303,10 +350,17 @@
         }
         const eligibleHistory = missing.filter(
           (x) =>
-            x.date <= snapshot.date &&
+            x.date <= coveredBy(snapshot) &&
+            (!paidFrom || x.date >= paidFrom) &&
             (key !== "espp" || targets.esppByDate?.[x.date] != null),
         );
-        if (eligibleHistory.length)
+        for (const x of missing) if (paidFrom && x.date < paidFrom) x[key] = 0;
+        const started = wholeChecks(key, residual, eligibleHistory);
+        if (started) {
+          for (const x of eligibleHistory) x[key] = 0;
+          distribute(started, key, amount(residual));
+          if (key === "salary") paidFrom = started[0].date;
+        } else if (eligibleHistory.length)
           distribute(eligibleHistory, key, amount(residual));
         else if (residual)
           warnings.push(

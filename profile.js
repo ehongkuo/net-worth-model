@@ -275,18 +275,20 @@
       totals[k] ?? (elections[k] ? equivalents(s, k, elections[k]).year : 0);
     const age = s.taxProfile.age,
       ageKnown = known("taxProfile.age");
-    const latest = [...(s.uploads.records || [])]
-      .filter(
-        (x) =>
-          (x.kind || "regular") === "regular" &&
-          x.date.startsWith(String(year)),
-      )
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .at(-1);
-    const ytdOf = (keys) =>
-      latest && keys.some((k) => latest.ytd?.[k] != null)
+    // The newest year-to-date for these keys, from any payslip: an off-cycle
+    // payslip's YTD can include regular paychecks not uploaded yet.
+    const thisYear = [...(s.uploads.records || [])]
+      .filter((x) => x.date.startsWith(String(year)))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    let latest = null;
+    const ytdOf = (keys) => {
+      latest = thisYear
+        .filter((x) => keys.some((k) => x.ytd?.[k] != null))
+        .at(-1);
+      return latest
         ? keys.reduce((n, k) => n + (latest.ytd?.[k] || 0), 0)
         : null;
+    };
     const notes = [];
     let check;
     if (key === "traditional" || key === "roth") {

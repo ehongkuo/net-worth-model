@@ -182,3 +182,27 @@ test("year totals keep amounts over a limit so the check can flag them", () => {
   assert(c.over);
   assertEqual(c.remaining, -1500);
 });
+
+test("the year-to-date note uses the newest payslip, off-cycle included", () => {
+  const s = scenario({ age: 35 });
+  s.uploads.elections.traditional = fixed(950);
+  s.uploads.records = [
+    {
+      id: "a",
+      date: "2026-09-04",
+      kind: "regular",
+      current: { traditional: 950 },
+      ytd: { traditional: 12350 },
+    },
+    {
+      id: "b",
+      date: "2026-09-17",
+      kind: "equity",
+      current: { rsu: 1000 },
+      ytd: { traditional: 13300 },
+    },
+  ];
+  const c = Profile.limitCheck(s, "traditional", { traditional: 19950 });
+  assertEqual(c.ytd, 13300);
+  assertEqual(c.ytdDate, "2026-09-17");
+});

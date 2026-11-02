@@ -1690,9 +1690,9 @@ function limitView(key, c, plan) {
     : "";
   return `<div class="limit-check${c.over ? " is-over" : ""}"><div class="limit-meter" role="img" aria-label="${escape(`${c.label}: ${dollars(c.used)} of ${dollars(c.limit)} limit`)}"><span style="width:${share}%"></span></div><p class="limit-line">${escape(c.label)} in ${c.year}: <strong>${dollars(c.used)}</strong> of your ${c.approx ? "about " : ""}<strong>${dollars(c.limit)}</strong> limit · ${status}</p>${consequence}${plan?.points.length ? limitChart(key, plan) : ""}<ul class="limit-notes">${c.notes.map((n) => `<li>${escape(n)}</li>`).join("")}</ul></div>`;
 }
-// Cumulative contributions through the year against the limit: so far
-// (solid), the current rate (dashed) and the path that lands on the limit
-// by the last paycheck (dotted), with the amount that gets there.
+// Cumulative contributions over the calendar year against the limit: solid
+// for what paystubs confirm or imply, dotted for the projection at the
+// current rate, plus the per-paycheck amount that lands on the limit.
 function limitChart(key, p) {
   const year = Number(scenario.taxProfile.year),
     t0 = Date.UTC(year, 0, 1),
@@ -1704,11 +1704,7 @@ function limitChart(key, p) {
   const done = [start, ...p.points.filter((q) => q.actual)],
     from = done.at(-1),
     ahead = [from, ...p.points.filter((q) => !q.actual)];
-  // Paychecks spread from a year-to-date total have guessed timing; they're
-  // drawn faintly, and the paystub that reported the total is marked.
-  const lastGuess = done.findLastIndex((q) => q.estimated),
-    guessed = lastGuess > 0 ? done.slice(0, lastGuess + 2) : [],
-    known = lastGuess > 0 ? done.slice(lastGuess + 1) : done;
+  const started = p.points.find((q) => q.actual && q.value > 0)?.date;
   const path = (pts) =>
     pts
       .map(
@@ -1745,7 +1741,15 @@ function limitChart(key, p) {
   const points = JSON.stringify(
     p.points.map((q) => [q.date, q.value, q.total + p.prior]),
   );
-  return `<div class="limit-plan"><p class="limit-headline">${escape(headline)}</p><div class="limit-chart" data-limit-chart="${escape(points)}" data-limit-target="${showTarget ? escape(JSON.stringify([from.date, from.total + p.prior, p.lastDate, p.limit])) : ""}" role="img" aria-label="${escape(`${p.label}: ${dollars(from.total + p.prior)} so far, ${dollars(end)} by year end at the current rate, limit ${dollars(p.limit)}`)}"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line class="lc-limit" x1="0" x2="100" y1="${y(p.limit - p.prior).toFixed(2)}" y2="${y(p.limit - p.prior).toFixed(2)}"/>${guessed.length > 1 ? `<path class="lc-line lc-actual lc-estimated" d="${path(guessed)}"/>` : ""}${known.length > 1 ? `<path class="lc-line lc-actual" d="${path(known)}"/>` : ""}${ahead.length > 1 ? `<path class="lc-line lc-rate" d="${path(ahead)}"/>` : ""}${showTarget ? `<path class="lc-line lc-target" d="M${x(from.date).toFixed(2)},${y(from.total).toFixed(2)}L${x(p.lastDate).toFixed(2)},${y(p.limit - p.prior).toFixed(2)}"/>` : ""}<line class="lc-cursor" x1="0" x2="0" y1="0" y2="100" hidden/></svg><span class="lc-limit-label" style="top:${y(p.limit - p.prior).toFixed(2)}%">Limit ${dollars(p.limit)}</span>${p.asOf ? `<span class="lc-dot" style="left:${x(p.asOf).toFixed(2)}%;top:${y(from.total).toFixed(2)}%"></span><span class="lc-dot-label" style="left:${x(p.asOf).toFixed(2)}%;top:${y(from.total).toFixed(2)}%">${dollars(from.total + p.prior)} by ${escape(longDate(p.asOf).replace(/, \d{4}$/, ""))}</span>` : ""}<div class="lc-tip" hidden></div></div><div class="lc-months" aria-hidden="true">${["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"].map((m) => `<span>${m}</span>`).join("")}</div><div class="lc-legend">${done.length > 1 ? `<span><i class="lc-key lc-actual"></i>So far${p.asOf ? ` (through ${escape(longDate(p.asOf).replace(/, \d{4}$/, ""))})` : ""}</span>` : ""}<span><i class="lc-key lc-rate"></i>At your current rate</span>${showTarget ? `<span><i class="lc-key lc-target"></i>To reach your limit</span>` : ""}</div>${target}${trueUp}${lastGuess > 0 ? `<p class="cf-note">Before ${escape(longDate(p.asOf).replace(/, \d{4}$/, ""))}, only your year-to-date total is known, so it's spread evenly (faint line). Add earlier paystubs to show when your contributions actually started.</p>` : ""}<details class="lc-table"><summary>Paycheck by paycheck</summary>${table(
+  const md = (d) => longDate(d).replace(/, \d{4}$/, "");
+  const limitY = y(p.limit - p.prior).toFixed(2);
+  const months = Array.from({ length: 12 }, (_, m) =>
+    new Date(Date.UTC(year, m, 1)).toLocaleString("en-US", {
+      month: "short",
+      timeZone: "UTC",
+    }),
+  );
+  return `<div class="limit-plan"><p class="limit-headline">${escape(headline)}</p><div class="limit-chart" data-limit-chart="${escape(points)}" role="img" aria-label="${escape(`${p.label}: ${dollars(from.total + p.prior)} so far, ${dollars(end)} by year end at the current rate, limit ${dollars(p.limit)}`)}"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line class="lc-limit" x1="0" x2="100" y1="${limitY}" y2="${limitY}"/>${done.length > 1 ? `<path class="lc-line lc-actual" d="${path(done)}"/>` : ""}${ahead.length > 1 ? `<path class="lc-line lc-projected" d="${path(ahead)}"/>` : ""}<line class="lc-cursor" x1="0" x2="0" y1="0" y2="100" hidden/></svg><span class="lc-limit-label" style="top:${limitY}%">Limit ${dollars(p.limit)}</span><div class="lc-tip" hidden></div></div><div class="lc-months" aria-hidden="true">${months.map((m) => `<span>${m}</span>`).join("")}</div><div class="lc-legend">${done.length > 1 ? `<span><i class="lc-key lc-actual"></i>From paystubs${started ? `, since ${escape(md(started))}` : ""}</span>` : ""}<span><i class="lc-key lc-projected"></i>Projected</span><span><i class="lc-key lc-limit-key"></i>Limit</span></div>${target}${trueUp}<details class="lc-table"><summary>Paycheck by paycheck</summary>${table(
     ["Paycheck", "This check", "Total this year"],
     p.points.map((q) => [
       `${longDate(q.date)}${q.actual ? "" : " (projected)"}`,
@@ -1780,12 +1784,9 @@ function paycheckItemNote(keys) {
     : "";
 }
 // Crosshair and tooltip for a limit chart: the nearest paycheck's amount and
-// running total, and where the path to the limit would be on that date.
+// running total.
 function bindLimitChart(chart) {
-  const points = JSON.parse(chart.dataset.limitChart),
-    target = chart.dataset.limitTarget
-      ? JSON.parse(chart.dataset.limitTarget)
-      : null;
+  const points = JSON.parse(chart.dataset.limitChart);
   const year = Number(scenario.taxProfile.year),
     t0 = Date.UTC(year, 0, 1),
     t1 = Date.UTC(year + 1, 0, 1);
@@ -1802,13 +1803,7 @@ function bindLimitChart(chart) {
     cursor.setAttribute("x1", pos);
     cursor.setAttribute("x2", pos);
     cursor.hidden = false;
-    let path = "";
-    if (target && date >= target[0]) {
-      const share =
-        (at(date) - at(target[0])) / (at(target[2]) - at(target[0]) || 1);
-      path = `<span>Path to limit: ${dollars(target[1] + (target[3] - target[1]) * share)}</span>`;
-    }
-    tip.innerHTML = `<strong>${escape(longDate(date))}</strong><span>This check: ${money(value)}</span><span>Total: ${dollars(total)}</span>${path}`;
+    tip.innerHTML = `<strong>${escape(longDate(date))}</strong><span>This check: ${money(value)}</span><span>Total: ${dollars(total)}</span>`;
     tip.style.left = `${Math.min(Math.max(pos, 12), 78)}%`;
     tip.hidden = false;
   };
