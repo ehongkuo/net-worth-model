@@ -2354,6 +2354,7 @@ button:disabled {
 /* Steps scrolled into view stop below the sticky header. */
 .profile-steps,
 .plan-section,
+#plan-espp,
 #setup {
   scroll-margin-top: 88px;
 }

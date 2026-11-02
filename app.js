@@ -271,27 +271,11 @@ function quickQuestions() {
               : ""
           }<button data-open-grants>Add grant details</button>`,
     ],
+    // Prices and offering dates are set in one place, the ESPP section.
     espp: espp.enabled
       ? [
           "ESPP",
-          field(
-            "employerPlan.espp.offerPrice",
-            "Company share price today",
-            "number",
-            "A starting estimate for the offering, purchase and sale prices. Set the offering-start price and expected prices separately under Pay & equity when you know them.",
-            {
-              also: [
-                "employerPlan.espp.purchasePrice",
-                "employerPlan.espp.salePrice",
-              ],
-            },
-          ) +
-            field(
-              "employerPlan.espp.start",
-              "Current offering started",
-              "date",
-            ) +
-            field("employerPlan.espp.periodMonths", "Months per offering"),
+          `<button data-open-espp class="primary">Set up ESPP prices and dates</button>`,
         ]
       : null,
   };
@@ -781,7 +765,10 @@ function renderSetupForm() {
     section(
       "pay",
       "Pay & equity",
-      compensation + (espp ? `<h4 class="plan-subhead">ESPP</h4>${espp}` : ""),
+      compensation +
+        (espp
+          ? `<h4 class="plan-subhead" id="plan-espp">ESPP</h4>${espp}`
+          : ""),
       ["allowance", "espp"],
     ) +
     section(
@@ -979,6 +966,16 @@ function renderSetupForm() {
       next.compensation.grants.push(grant);
       commit(next);
     };
+  $("setup")
+    .querySelectorAll("[data-open-espp]")
+    .forEach(
+      (el) =>
+        (el.onclick = () => {
+          profileStep = 2;
+          renderProfile();
+          $("plan-espp")?.scrollIntoView({ block: "start" });
+        }),
+    );
   $("setup")
     .querySelectorAll("[data-open-grants]")
     .forEach(
