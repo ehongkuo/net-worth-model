@@ -24,6 +24,8 @@ function table(headers, rows) {
 }
 // Paths already drawn in the current form render; each field appears once.
 let shownPaths = null;
+// The gaps last shown in the pop-up; it opens again only when they change.
+let gapsPrompted = "";
 function field(path, label, type = "number", hint = "", { also = [] } = {}) {
   if (shownPaths?.has(path)) return "";
   const enginePath = path.startsWith("employerPlan.")
@@ -93,6 +95,10 @@ function quickQuestions() {
     Presentation.missing(scenario).map((m) => [m.id, m.why]),
   );
   const espp = scenario.employerPlan.espp;
+  const vests = PaystubParser.vestHistory(
+    scenario.uploads.records,
+    scenario.taxProfile.year,
+  );
   const items = {
     spending: [
       "Monthly spending",
@@ -143,6 +149,20 @@ function quickQuestions() {
         ["single", "Just me (self-only)"],
         ["family", "Me and family"],
       ]),
+    ],
+    rsu: [
+      "Your RSU grants",
+      scenario.compensation.grants.length
+        ? `<p class="cf-note">Grant added. Set its share count, prices and dates under Pay & stock grants.</p><button data-open-grants>Edit grant details</button>`
+        : `<p class="cf-note">${
+            vests.vests.length
+              ? `Your latest vest was ${escape(money(vests.vests.at(-1).value))} on ${escape(vests.vests.at(-1).date)}. We can keep that pace every ${vests.interval || 3} months for four years as a starting point, then you can edit it to match your grant.`
+              : "Upload an RSU vest payslip (often a separate “off-cycle” payslip) to start from your vests, or add your grant details."
+          }</p>${
+            vests.vests.length
+              ? '<button id="grant-from-vests" class="primary">Start from my vests</button>'
+              : ""
+          }<button data-open-grants>Add grant details</button>`,
     ],
     espp: espp.enabled
       ? [
@@ -629,7 +649,7 @@ function renderSetupForm() {
   );
   $("setup").innerHTML =
     `<div data-profile-step="1" class="profile-panel">${quick}<h2>Tax details</h2>${tax}</div>` +
-    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck. Two consecutive checks help us identify your pay schedule.</p>${uploads}</div>` +
+    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck, and the one before it to confirm your pay schedule. Add RSU vest and bonus payslips too: they're often separate “off-cycle” payslips, and they show your vests and how they're taxed. You can select several PDFs at once.</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
     section("retirement", "Retirement & IRA", retirement, [
       "mega",
@@ -748,6 +768,26 @@ function renderSetupForm() {
           commit(next);
         });
     });
+  if ($("grant-from-vests"))
+    $("grant-from-vests").onclick = () => {
+      const next = structuredClone(scenario),
+        grant = Profile.grantFromVests(
+          PaystubParser.vestHistory(next.uploads.records, next.taxProfile.year),
+        );
+      if (!grant) return;
+      next.compensation.grants.push(grant);
+      commit(next);
+    };
+  $("setup")
+    .querySelectorAll("[data-open-grants]")
+    .forEach(
+      (el) =>
+        (el.onclick = () => {
+          profileStep = 2;
+          renderProfile();
+          $("plan-compensation")?.scrollIntoView({ block: "start" });
+        }),
+    );
   $("add-grant").onclick = () => {
     const next = structuredClone(scenario);
     next.compensation.grants.push({
@@ -1123,13 +1163,15 @@ function download(text, name) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-async function readPaystubs(event) {
+// "Add more" keeps the paystubs already read and in review.
+async function readPaystubs(event, append = false) {
   const status = $("upload-status");
   status.textContent = "Reading locally…";
-  drafts = [];
+  if (!append) drafts = [];
   try {
     const files = [...event.target.files];
-    if (files.length > 12) throw new Error("Choose up to 12 PDFs.");
+    if (files.length + drafts.length > 12)
+      throw new Error("Choose up to 12 PDFs.");
     const pdfjs = await import("./vendor/pdf.mjs");
     pdfjs.GlobalWorkerOptions.workerSrc = "./vendor/pdf.worker.mjs";
     for (const file of files) {
@@ -1178,7 +1220,8 @@ async function readPaystubs(event) {
         }
         const record = PaystubParser.parse(pages, scenario.uploads.records);
         record.id = id;
-        drafts.push(record);
+        // The same file chosen twice is read once.
+        if (!drafts.some((d) => d.id === id)) drafts.push(record);
       } finally {
         await loadingTask.destroy();
       }
@@ -1188,7 +1231,8 @@ async function readPaystubs(event) {
     reviewUploads();
   } catch (error) {
     status.textContent = error.message;
-    drafts = [];
+    if (append) reviewUploads();
+    else drafts = [];
   }
 }
 function reviewUploads() {
@@ -1199,7 +1243,13 @@ function reviewUploads() {
   const checks = drafts
     .map(
       (r, i) =>
-        `<h3>Paycheck ${i + 1}</h3><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}</p><details ${PaystubParser.validate(r).valid ? "" : "open"}><summary>Review extracted amounts and categories</summary><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
+        `<h3>${escape(PaystubParser.kindLabels[r.kind] || "Paycheck")} · ${escape(r.date)}</h3><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">${
+          r.kind === "equity"
+            ? `RSU vest ${money(r.current.rsu)} · Shares delivered ${money(r.current.rsuOffset || 0)} · Tax withheld ${money(r.summary?.current?.taxes || 0)}`
+            : r.kind === "bonus"
+              ? `Bonus ${money(r.current.bonus)} · Deposited cash ${money(r.netPay)}`
+              : `Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}`
+        }</p><details ${PaystubParser.validate(r).valid ? "" : "open"}><summary>Review extracted amounts and categories</summary><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
           .map(
             (l, j) =>
               `<tr><td>${escape(l.label)}</td><td><select data-mapping="${i}:${j}"><option value="">Choose</option>${Object.entries(
@@ -1216,6 +1266,8 @@ function reviewUploads() {
                         review: "Confirm schedule",
                         paycheck: "Every paycheck",
                         monthly: "First paycheck each month",
+                        quarterly: "Every 3 months",
+                        annual: "Once a year",
                         once: "This payment only",
                       },
                     )
@@ -1234,7 +1286,31 @@ function reviewUploads() {
           )}</tbody></table></div></details><p>${PaystubParser.validate(r).errors.map(escape).join(" ") || "Amounts reconcile."}</p>`,
     )
     .join("");
-  const schedule = `<label class="check"><input id="apply-schedule" type="checkbox" checked>Fill salary and payday schedule${preview.schedule.confirmed ? " from check dates" : " using the selected pay frequency (confirm this in your profile)"}</label>`;
+  const hints = PaystubParser.uploadHints([
+      ...scenario.uploads.records.filter(
+        (x) => !drafts.some((d) => d.date === x.date && d.kind === x.kind),
+      ),
+      ...drafts,
+    ]),
+    gapItems = hints
+      .map(
+        (h) =>
+          `<li><strong>${escape(h.ask)}</strong><span>${escape(h.gap)}</span>${h.tip ? `<small>${escape(h.tip)}</small>` : ""}</li>`,
+      )
+      .join(""),
+    hintList = hints.length
+      ? `<div class="upload-hints"><h3>Paystubs that would fill gaps</h3><ol class="gap-list">${gapItems}</ol><label class="button">Add more paystubs<input data-more-paystubs type="file" accept="application/pdf" multiple hidden></label></div>`
+      : "";
+  const kinds = Object.entries(
+    drafts.reduce((n, r) => ((n[r.kind] = (n[r.kind] || 0) + 1), n), {}),
+  )
+    .map(
+      ([k, n]) =>
+        `${n} ${{ regular: "regular paycheck", equity: "RSU vest", bonus: "bonus check" }[k] || "paycheck"}${n === 1 ? "" : "s"}`,
+    )
+    .join(", ");
+  // Off-cycle checks alone carry no salary or payday schedule to fill.
+  const schedule = `<label class="check"${drafts.some((r) => r.kind === "regular") ? "" : " hidden"}><input id="apply-schedule" type="checkbox" checked>Fill salary and payday schedule${preview.schedule.confirmed ? " from check dates" : " using the selected pay frequency (confirm this in your profile)"}</label>`;
   // When every check reconciles there is nothing to decide: show a one-line
   // summary and keep line-by-line details one click away.
   const clean =
@@ -1242,8 +1318,14 @@ function reviewUploads() {
     drafts.every((r) => PaystubParser.validate(r).valid) &&
     preview.schedule.confirmed;
   $("upload-review").innerHTML = clean
-    ? `<p class="review-summary"><strong>${drafts.length} paycheck${drafts.length === 1 ? "" : "s"} read</strong> · ${drafts.map((r) => escape(r.date)).join(", ")} · all totals reconcile</p><button id="apply-upload" class="primary">Use these paychecks</button><details class="review-details"><summary>Check what we read</summary>${checks}${schedule}</details>`
-    : `${checks}${schedule}<button id="apply-upload">Apply reviewed paychecks</button>`;
+    ? `<p class="review-summary"><strong>Read ${escape(kinds)}</strong> · ${drafts
+        .map((r) => r.date)
+        .sort()
+        .map(escape)
+        .join(
+          ", ",
+        )} · all totals reconcile</p><button id="apply-upload" class="primary">Use these paychecks</button>${hintList}<details class="review-details"><summary>Check what we read</summary>${checks}${schedule}</details>`
+    : `${checks}${schedule}<button id="apply-upload">Apply reviewed paychecks</button>${hintList}`;
   $("upload-review")
     .querySelectorAll("[data-benefit-cap]")
     .forEach(
@@ -1263,6 +1345,7 @@ function reviewUploads() {
         (el.onchange = () => {
           const [i, j] = el.dataset.benefitSchedule.split(":");
           drafts[i].lines[j].schedule = el.value;
+          drafts[i].lines[j].scheduleSet = true;
           PaystubParser.rebuild(drafts[i]);
           reviewUploads();
         }),
@@ -1298,6 +1381,15 @@ function reviewUploads() {
           reviewUploads();
         }),
     );
+  const gapKey = hints.map((h) => h.ask).join("|");
+  if (hints.length && gapKey !== gapsPrompted) {
+    gapsPrompted = gapKey;
+    $("gap-list").innerHTML = gapItems;
+    if (!$("gap-dialog").open) $("gap-dialog").showModal();
+  } else if (!hints.length && $("gap-dialog").open) $("gap-dialog").close();
+  $("upload-review")
+    .querySelectorAll("[data-more-paystubs]")
+    .forEach((el) => (el.onchange = (event) => readPaystubs(event, true)));
   $("apply-upload").disabled =
     !drafts.length || drafts.some((r) => !PaystubParser.validate(r).valid);
   $("apply-upload").onclick = () => {
@@ -1357,6 +1449,11 @@ $("inspect").onclick = () => {
   $("scenario-dialog").showModal();
 };
 $("close-inspect").onclick = () => $("scenario-dialog").close();
+$("gap-skip").onclick = () => $("gap-dialog").close();
+$("gap-upload").onchange = (event) => {
+  $("gap-dialog").close();
+  readPaystubs(event, true);
+};
 $("backup").onclick = () =>
   download(localStorage.getItem(BACKUP), "net-worth-original-scenario.json");
 document.querySelectorAll("[data-view]").forEach(

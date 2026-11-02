@@ -263,10 +263,10 @@
         ? { sourceDate, basis, inferred: true }
         : { sourceDate, basis };
     };
-    for (const [path, { value, basis }] of Object.entries(
+    for (const [path, { value, basis, sourceDate }] of Object.entries(
       suggestion.inferred || {},
     ))
-      assign(path, value, basis, date, true);
+      assign(path, value, basis, sourceDate || date, true);
     conflicts.push(...applyElections(s, suggestion));
     const v = suggestion.record?.current || {};
     if (v.espp > 0)
@@ -351,6 +351,41 @@
       date: latest?.date,
       remaining,
       total,
+    };
+  }
+  // A starting grant that repeats the latest uploaded vest every vesting
+  // interval for four years, dated so this year's earlier vests (counted from
+  // the YTD total) fall inside it. It is an estimate to edit, not a record.
+  function grantFromVests(history) {
+    const U =
+      typeof module !== "undefined" && module.exports
+        ? require("./util")
+        : root.Util;
+    const latest = history.vests.at(-1);
+    if (!latest) return null;
+    const interval = history.interval || 3,
+      months = 48,
+      first = history.vests[0],
+      shown = history.vests.reduce((n, v) => n + v.value, 0),
+      earlier = Math.max(
+        0,
+        Math.min(
+          Math.floor((months - 1) / interval) - (history.vests.length - 1),
+          Math.round((history.ytd - shown) / latest.value),
+        ),
+      );
+    return {
+      name: "Estimated from paystubs",
+      value: Math.round(((latest.value * months) / interval) * 100) / 100,
+      grantPrice: 100,
+      vestPrice: 100,
+      start: U.addMonths(first.date, -interval * (earlier + 1)),
+      months,
+      cliff: 0,
+      interval,
+      saleMode: "cover",
+      repeat: false,
+      evenVesting: true,
     };
   }
   function grantPreview(g) {
@@ -463,6 +498,7 @@
     edit,
     employerFunding,
     grantPreview,
+    grantFromVests,
     fieldState,
     confirm,
     displayValue,

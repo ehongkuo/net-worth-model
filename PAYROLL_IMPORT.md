@@ -17,12 +17,36 @@ The parser supports recognized text-based payroll tables, with manual category m
 Applying uploads fills observed plan participation and the ESPP rate. Recurring retirement and HSA elections appear in their plan sections; benefits and withholding remain visible in the paycheck-derived numbers. Source dates identify uploaded or inferred values. Explicit edits are retained across later uploads, with conflicts reported after Apply. Annual contribution overrides remain subject to IRS and plan limits.
 
 
+## Off-cycle checks
+
+RSU vests and bonuses are often paid on their own payslip. A check with no
+salary is classified as an RSU vest (RSU income) or a bonus check. Off-cycle
+checks never supply salary, pay schedule or recurring elections. An RSU check's
+income is offset by a post-tax "stock deposit" line for the shares delivered, so
+it nets to zero cash.
+
+An RSU check supplies the federal and state withholding rates on vests; a bonus
+check supplies bonus rates, month and size. Vests themselves are forecast from
+grants: the RSU check is not a payroll row, and its withholding is excluded from
+the YTD amounts spread over earlier salary checks. When RSU income appears
+without a grant, setup offers a starting grant that repeats the latest vest every
+vesting interval for four years.
+
+After reading, a pop-up names each gap the paystubs leave and the paystub that
+would close it: the previous regular check, an RSU or bonus payslip that YTD
+totals imply, and benefits seen only in YTD. Paystubs added from it join the
+same review. It opens again only when the gaps change, and the list stays in
+the review.
+
 ## Benefit elections
 
 Reviewed benefit entries preserve their printed label, category, current amount,
 YTD, recurrence and optional employer annual cap. Matching uses both payroll
 section and label. A later upload reuses that classification; a changed section
 requires review. Transit and parking require a schedule choice before import.
+Across two or more regular uploads, a benefit paid on every check repeats every
+paycheck; otherwise the typical gap between payments sets monthly, quarterly or
+annual, anchored to the months it was paid. A schedule you choose is kept.
 Monthly deductions run on the first scheduled paycheck of each month. A zero on
 a later paycheck does not cancel a monthly election. Choose “This payment only”
 when a payment should not recur.

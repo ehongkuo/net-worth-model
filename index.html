@@ -52,8 +52,11 @@
           </p>
           <ol class="welcome-steps">
             <li>
-              <strong>Upload a paystub</strong
-              ><span>We read your pay, contributions and taxes.</span>
+              <strong>Upload your paystubs</strong
+              ><span
+                >Your latest paycheck, plus any RSU vest or bonus payslips. We
+                read your pay, contributions and taxes.</span
+              >
             </li>
             <li>
               <strong>See your picture</strong
@@ -64,7 +67,7 @@
               ><span>A few questions a paystub can't answer.</span>
             </li>
           </ol>
-          <button id="start-upload" class="primary">Upload a paystub</button>
+          <button id="start-upload" class="primary">Upload paystubs</button>
           <button id="start-profile">Enter details instead</button>
           <button id="welcome-import">Import an existing scenario</button>
           <p class="muted">
@@ -156,6 +159,25 @@
       <pre id="scenario-json"></pre>
       <button id="close-inspect">Close</button
       ><button id="backup">Download original saved scenario</button>
+    </dialog>
+    <dialog id="gap-dialog" aria-labelledby="gap-title">
+      <h2 id="gap-title">A few more paystubs would fill some gaps</h2>
+      <p class="cf-note">
+        Here's what the paystubs you added can't tell us yet. Adding these now
+        makes your results more accurate.
+      </p>
+      <ol id="gap-list" class="gap-list"></ol>
+      <div class="dialog-actions">
+        <label class="button primary"
+          >Add paystubs<input
+            id="gap-upload"
+            type="file"
+            accept="application/pdf"
+            multiple
+            hidden
+        /></label>
+        <button id="gap-skip">Continue without them</button>
+      </div>
     </dialog>
     <script src="util.js"></script>
     <script src="tax-engine.js"></script>

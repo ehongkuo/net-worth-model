@@ -4,6 +4,10 @@
     typeof module !== "undefined" && module.exports
       ? require("./util")
       : root.Util;
+  const Parser = () =>
+    typeof module !== "undefined" && module.exports
+      ? require("./paystub-parser")
+      : root.PaystubParser;
   function notices(warnings = []) {
     const result = { alerts: [], history: [], tax: [], assumptions: [] };
     for (const text of new Set(warnings)) {
@@ -124,6 +128,19 @@
     "employerPlan.espp.enabled": ["ESPP", "yes"],
     "employerPlan.espp.rate": ["ESPP contribution", "percent"],
     "compensation.bonusPercent": ["Bonus", "percent"],
+    "taxProfile.settings.rsuFederalRate": [
+      "RSU federal withholding",
+      "percent",
+    ],
+    "taxProfile.settings.rsuStateRate": ["RSU state withholding", "percent"],
+    "taxProfile.settings.bonusFederalRate": [
+      "Bonus federal withholding",
+      "percent",
+    ],
+    "taxProfile.settings.bonusStateRate": [
+      "Bonus state withholding",
+      "percent",
+    ],
     "compensation.bonusMonth": ["Bonus month", "month"],
   };
   const ELECTIONS = {
@@ -205,6 +222,22 @@
         basis: `Paycheck on ${e.sourceDate}`,
       });
     }
+    const v = Parser().vestHistory(
+      s.uploads?.records || [],
+      s.taxProfile?.year,
+    );
+    if (v.ytd > 0)
+      rows.push({
+        path: "compensation.grants",
+        label: "RSU vests so far this year",
+        value:
+          usd(Math.round(v.ytd)) +
+          (v.vests.length
+            ? ` · latest ${usd(Math.round(v.vests.at(-1).value))} on ${v.vests.at(-1).date}`
+            : ""),
+        source: "From paystub",
+        basis: `Year-to-date RSU income through ${v.ytdDate}`,
+      });
     return rows;
   }
   // What a paystub can't tell us, most impactful first. Each item names the
@@ -281,6 +314,21 @@
         label: "HSA coverage (self-only or family)",
         why: "Sets your HSA limit; a paystub only proves family coverage late in the year.",
         path: "employerPlan.hsa.coverage",
+      });
+    // A paystub shows past vests, never the grants behind future ones.
+    const vests = Parser().vestHistory(
+      s.uploads?.records || [],
+      s.taxProfile?.year,
+    );
+    if (
+      vests.ytd > 0 &&
+      !(s.compensation?.grants || []).some((g) => g.value > 0 || g.shares > 0)
+    )
+      out.push({
+        id: "rsu",
+        label: "Your RSU grants",
+        why: `Your paystubs show ${usd(Math.round(vests.ytd))} of RSU vests this year. Without your grants, future vests aren't forecast.`,
+        path: "compensation.grants",
       });
     const e = s.employerPlan?.espp;
     if (

@@ -1958,3 +1958,78 @@ button:disabled {
 .learned-kept li {
   margin: 6px 0;
 }
+.upload-hints {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.08);
+}
+.upload-hints h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+.upload-hints ul {
+  padding-left: 18px;
+  margin: 4px 0 10px;
+}
+.quick-question button + button {
+  margin-left: 8px;
+}
+#gap-dialog {
+  width: min(560px, calc(100vw - 32px));
+  padding: 20px 24px;
+}
+#gap-dialog h2 {
+  margin: 0 0 6px;
+  font-size: 1.15rem;
+}
+.gap-list {
+  list-style: none;
+  counter-reset: gap;
+  padding: 0;
+  margin: 12px 0;
+}
+.gap-list li {
+  counter-increment: gap;
+  position: relative;
+  padding: 10px 12px 10px 44px;
+  margin: 8px 0;
+  border: 1px solid #2b3b52;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.5);
+}
+.gap-list li::before {
+  content: counter(gap);
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(56, 189, 248, 0.2);
+  color: #7dd3fc;
+  font-size: 0.8rem;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+}
+.gap-list strong,
+.gap-list span,
+.gap-list small {
+  display: block;
+}
+.gap-list span {
+  color: #cbd5e1;
+  margin-top: 2px;
+}
+.gap-list small {
+  color: #9cafc7;
+  margin-top: 4px;
+}
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
