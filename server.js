@@ -48,7 +48,9 @@ function createServer({ root = __dirname } = {}) {
           ? "text/css"
           : "text/html";
       res.writeHead(200, {
-        "Content-Type": `${mime}; charset=utf-8`,
+        "Content-Type": file.endsWith(".woff2")
+          ? "font/woff2"
+          : `${mime}; charset=utf-8`,
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
       });

@@ -649,7 +649,7 @@ function renderSetupForm() {
   );
   $("setup").innerHTML =
     `<div data-profile-step="1" class="profile-panel">${quick}<h2>Tax details</h2>${tax}</div>` +
-    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck, and the one before it to confirm your pay schedule. Add RSU vest and bonus payslips too: they're often separate “off-cycle” payslips, and they show your vests and how they're taxed. You can select several PDFs at once.</p>${uploads}</div>` +
+    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p>${scenario.uploads.records.length ? `${scenario.uploads.records.length} paystub${scenario.uploads.records.length === 1 ? "" : "s"} saved. Add more to fill gaps: the paycheck before your latest confirms your pay schedule, and RSU vest or bonus payslips show how those are taxed.` : "Choose your latest regular paycheck, and the one before it to confirm your pay schedule. Add RSU vest and bonus payslips too: they're often separate “off-cycle” payslips, and they show your vests and how they're taxed. You can select several PDFs at once."}</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
     section("retirement", "Retirement & IRA", retirement, [
       "mega",
@@ -1095,11 +1095,11 @@ function renderProjection() {
   const rows = result.rows,
     real = $("real").checked,
     series = [
-      ["Cash", "#38bdf8", (b) => b.cash + b.esppPending],
-      ["Equity", "#fbbf24", (b) => b.brokerage + b.companyEquity],
+      ["Cash", "var(--cash)", (b) => b.cash + b.esppPending],
+      ["Equity", "var(--equity)", (b) => b.brokerage + b.companyEquity],
       [
         "Retirement + HSA",
-        "#a78bfa",
+        "var(--retire)",
         (b) => b.pretax401k + b.rothAccounts + b.traditionalIRA + b.hsa,
       ],
     ];
@@ -1121,11 +1121,11 @@ function renderProjection() {
         .reverse()
         .join(" L")} Z`;
       previous = totals;
-      return `<path d="${path}" fill="${color}" opacity=".6"><title>${name}</title></path>`;
+      return `<path d="${path}" style="fill:${color}" opacity=".6"><title>${name}</title></path>`;
     })
     .join("");
   $("projection-chart").innerHTML =
-    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Projected assets by class">${areas}<text x="50" y="18" fill="#e2e8f0">${escape(money(max))}</text><text x="50" y="325" fill="#94a3b8">Starting balances</text><text x="780" y="325" fill="#94a3b8">Age ${rows.at(-1).age}</text></svg><p>${series.map(([n, color]) => `<span style="color:${color};margin-right:18px">● ${n}</span>`).join("")}</p>`;
+    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Projected assets by class">${areas}<text x="50" y="18" style="fill:var(--text)">${escape(money(max))}</text><text x="50" y="325" style="fill:var(--text-2)">Starting balances</text><text x="780" y="325" style="fill:var(--text-2)">Age ${rows.at(-1).age}</text></svg><p>${series.map(([n, color]) => `<span style="color:${color};margin-right:18px">● ${n}</span>`).join("")}</p>`;
   $("year").max = rows.length - 1;
   const selected = rows[Math.min(Number($("year").value), rows.length - 1)],
     factor = real ? selected.inflationFactor : 1;
@@ -1523,6 +1523,122 @@ try {
     `Saved scenario could not be loaded: ${error.message}. Your original data has not been overwritten. Import a corrected scenario to continue.`;
 }
 
+// Money colors, by what form the money takes. Tokens live in style.css.
+const MONEY_COLOR = {
+  pay: "cash",
+  cash: "cash",
+  equity: "equity",
+  kept: "equity",
+  espp: "equity",
+  rsu: "equity",
+  employer: "employer",
+  retirement: "retire",
+  tax: "tax",
+  benefits: "benefit",
+};
+const dollars = (v) =>
+  (Number(v) || 0).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+const longDate = (iso) =>
+  new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+// Per-viewer display choices on the profile; not part of the scenario.
+let compPeriod = "year";
+const compOpen = new Set();
+function compensationView() {
+  const { payroll, flow } = result.ongoing;
+  const c = Presentation.compensation(
+    CompactFlow.build(payroll, flow, Scenario.engineInput(scenario)),
+  );
+  if (!(c.total > 0)) return "";
+  const per = compPeriod === "month" ? 12 : 1,
+    unit = compPeriod === "month" ? "a month" : "a year";
+  const pct = (v) => {
+    const n = (v / c.total) * 100;
+    return n > 0 && n < 0.5 ? "<1%" : `${Math.round(n)}%`;
+  };
+  const bar = (groups, label) =>
+    `<div class="comp-bar-row"><span class="comp-bar-label">${label}</span><div class="comp-bar" role="img" aria-label="${escape(`${label}: ${groups.map((g) => `${g.label} ${pct(g.value)}`).join(", ")}`)}">${groups
+      .filter((g) => g.value > 0)
+      .map(
+        (g) =>
+          `<span style="flex-grow:${g.value};background:var(--${MONEY_COLOR[g.id]})" title="${escape(g.label)}: ${dollars(g.value / per)}">${g.value / c.total >= 0.08 ? pct(g.value) : ""}</span>`,
+      )
+      .join("")}</div></div>`;
+  const ledger = (title, groups) =>
+    `<div class="ledger"><h3>${title}</h3>${groups
+      .filter((g) => Math.abs(g.value) > 0.5)
+      .map(
+        (g) =>
+          `<details class="ledger-group" data-comp-group="${g.id}" ${compOpen.has(g.id) ? "open" : ""}><summary><i style="background:var(--${MONEY_COLOR[g.id]})"></i><span>${escape(g.label)}</span><em>${pct(g.value)}</em><strong>${dollars(g.value / per)}</strong></summary><dl>${g.items.map((i) => `<div><dt>${escape(i.label)}</dt><dd>${dollars(i.value / per)}</dd></div>`).join("")}</dl></details>`,
+      )
+      .join(
+        "",
+      )}<div class="ledger-total"><span>Total</span><strong>${dollars(c.total / per)}</strong></div></div>`;
+  const pay = c.sources.find((g) => g.id === "pay").value,
+    equity = c.sources.find((g) => g.id === "equity").value,
+    employer = c.sources.find((g) => g.id === "employer").value;
+  const parts = [
+    `${dollars(pay / per)} cash pay`,
+    equity > 0.5 && `${dollars(equity / per)} in equity`,
+    employer > 0.5 && `${dollars(employer / per)} from your employer`,
+  ].filter(Boolean);
+  return `<section class="comp" aria-labelledby="comp-title"><div class="comp-head"><div><p class="eyebrow" id="comp-title">Total compensation</p><p class="comp-total"><strong>${dollars(c.total / per)}</strong> <span>${unit}</span></p><p class="comp-sub">${parts.join(" + ")}</p></div><div class="segmented" role="group" aria-label="Show amounts"><button type="button" data-comp-period="year" aria-pressed="${compPeriod === "year"}">Per year</button><button type="button" data-comp-period="month" aria-pressed="${compPeriod === "month"}">Per month</button></div></div><div class="comp-bars">${bar(c.sources, "You earn")}${bar(c.uses, "It goes to")}</div><div class="comp-ledgers">${ledger("What you earn", c.sources)}${ledger("Where it goes", c.uses)}</div><p class="cf-note">At your current earning pace, before living expenses. Equity uses your assumed share prices.</p></section>`;
+}
+function factsView() {
+  return `<section class="you-card" aria-labelledby="you-title"><h2 id="you-title">You</h2><dl class="facts">${Presentation.facts(
+    scenario,
+  )
+    .map(
+      (f) =>
+        `<div class="${f.missing ? "fact-missing" : ""}"><dt>${escape(f.label)}</dt><dd>${escape(f.value)}</dd><button type="button" class="link-button" data-fact-step="${f.step}" data-fact-section="${f.section || ""}" aria-label="${f.missing ? "Add" : "Edit"} ${escape(f.label)}">${f.missing ? "Add" : "Edit"}</button></div>`,
+    )
+    .join("")}</dl></section>`;
+}
+function paycheckView(profile) {
+  const p = Presentation.paycheck(profile.last),
+    width = (v) => (p.gross > 0 ? Math.min(100, (v / p.gross) * 100) : 0);
+  const row = (label, value, id, sign) =>
+    `<tr class="${id ? "" : "wf-total"}"><th>${sign ? `<span class="wf-sign">${sign}</span>` : ""}${escape(label)}</th><td class="wf-track"><span style="width:${width(value)}%;background:var(--${id ? MONEY_COLOR[id] : "ink"})"></span></td><td>${money(value)}</td></tr>`;
+  const schedule = profile.schedule.confirmed
+    ? `Paid every ${profile.schedule.frequency === "weekly" ? "week" : "two weeks"}, inferred from check dates.`
+    : "Pay frequency needs confirmation.";
+  return `<section class="paycheck-card" aria-labelledby="paycheck-title"><div class="paycheck-head"><h2 id="paycheck-title">Latest paycheck</h2><span class="mono">${escape(longDate(profile.last.date))}</span></div><table class="waterfall"><tbody>${row("Gross pay", p.gross, "pay")}${p.steps.map((s) => row(s.label, s.value, s.id, "−")).join("")}${row("Deposited", p.deposit, "", "=")}</tbody></table><p class="cf-note">${p.employer > 0 ? `Your employer also put in ${money(p.employer)} for retirement and HSA. ` : ""}${profile.records} paycheck${profile.records === 1 ? "" : "s"} saved. ${schedule}</p></section>`;
+}
+function bindProfileOverview() {
+  document.querySelectorAll("[data-comp-period]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        compPeriod = b.dataset.compPeriod;
+        renderProfile();
+      }),
+  );
+  document
+    .querySelectorAll("[data-comp-group]")
+    .forEach(
+      (d) =>
+        (d.ontoggle = () =>
+          d.open
+            ? compOpen.add(d.dataset.compGroup)
+            : compOpen.delete(d.dataset.compGroup)),
+    );
+  document.querySelectorAll("[data-fact-step]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        profileStep = Number(b.dataset.factStep);
+        renderProfile();
+        const target = b.dataset.factSection && $(b.dataset.factSection);
+        (target || $("setup")).scrollIntoView({ block: "start" });
+      }),
+  );
+}
 function renderProfile() {
   const profile = Profile.describe(scenario),
     v = profile.last?.current || {};
@@ -1549,24 +1665,15 @@ function renderProfile() {
       : profileStep === 1
         ? "Continue to plan details"
         : "Continue with what I have";
-  if (Profile.hasIncome(scenario)) {
-    const { payroll, flow } = result.ongoing;
-    const graph = CompactFlow.build(
-      payroll,
-      flow,
-      Scenario.engineInput(scenario),
-    );
-    const cards = Presentation.overview(payroll, flow, graph.buckets);
-    $("profile-overview").innerHTML =
-      `<div class="overview-heading"><span>Monthly earning pace</span><small>Asset additions before expenses</small></div><div class="profile-overview-grid">${cards.map((c) => `<div class="overview-metric metric-${c.kind}" title="${escape(c.note)}"><span>${escape(c.label)}</span><strong>${money(c.value)}</strong></div>`).join("")}</div>`;
-  } else $("profile-overview").innerHTML = "";
-  const date = profile.last?.date;
+  $("profile-overview").innerHTML =
+    (Profile.hasIncome(scenario) ? compensationView() : "") + factsView();
   $("profile-summary").innerHTML =
     profileStep !== 0
       ? ""
       : profile.last
-        ? `<div class="profile-preview"><div><h2>Latest paycheck</h2><p>${escape(date)}</p></div><div class="profile-metrics"><div><span>Cash deposited</span><strong>${money(profile.snapshot.cash)}</strong></div><div><span>Retirement + HSA</span><strong>${money(profile.snapshot.retirement + profile.snapshot.hsa)}</strong></div><div><span>ESPP cash set aside</span><strong>${money(profile.snapshot.espp)}</strong></div></div><p class="cf-note">${profile.records} paycheck${profile.records === 1 ? "" : "s"} saved · ${profile.schedule.confirmed ? "Every " + (profile.schedule.frequency === "weekly" ? "week" : "two weeks") + " inferred from check dates." : "Pay frequency needs confirmation."}</p></div>`
+        ? paycheckView(profile)
         : `<div class="profile-empty"><strong>A paycheck fills in most of your profile.</strong><p>Upload a text-based PDF to extract earnings, deductions, withholding and YTD totals. Your documents stay on this device.</p></div>`;
+  bindProfileOverview();
   const rows = [];
   if (profile.last) {
     rows.push([

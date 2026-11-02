@@ -42,54 +42,186 @@
       notes: NOTE_BUCKETS.flatMap((k) => (inline.includes(k) ? [] : n[k])),
     };
   }
-  function overview(payroll, flow, buckets) {
-    const assets = (id) => (buckets.find((b) => b.id === id)?.value || 0) / 12;
+  // Total compensation, top down: what you earn (cash pay, equity, money the
+  // employer puts in) and where each dollar goes. Built from one CompactFlow
+  // graph so both sides reconcile to the same total.
+  function compensation(g) {
+    const p = g.payroll,
+      c = p.contributions || {};
+    const items = (rows) => rows.filter((r) => Math.abs(r.value) > 0.005);
+    const group = (id, label, rows) => {
+      const list = items(rows);
+      return {
+        id,
+        label,
+        items: list,
+        value: list.reduce((s, r) => s + r.value, 0),
+      };
+    };
+    const parts = (id) => g.buckets.find((b) => b.id === id)?.parts || [];
+    const rename = {
+      "Spendable cash": "To your bank account",
+      "Pending ESPP contributions": "Waiting to buy ESPP shares",
+      "Future-tax cash reserve": "Set aside for taxes still due",
+      "Retained RSUs": "RSU shares you keep",
+      "Projected ESPP equity (not yet purchased)":
+        "ESPP shares (not yet bought)",
+      "Traditional / Roth 401(k) and employer funding": "401(k)",
+    };
+    const relabel = (rows) =>
+      rows.map((r) => ({ label: rename[r.label] || r.label, value: r.value }));
+    const match = Math.min(Math.max(0, c.employer || 0), g.employer);
+    const sources = [
+      group("pay", "Cash pay", [
+        { label: "Base salary", value: p.salary || 0 },
+        { label: "Bonus", value: p.bonus || 0 },
+        { label: "Allowances", value: p.cashAllowance || 0 },
+        { label: "Other cash (ESPP sales, refunds)", value: g.otherCash || 0 },
+      ]),
+      group("equity", "Equity", [
+        { label: "RSUs vested", value: g.rsuGross || 0 },
+        {
+          label: "ESPP discount on shares kept",
+          value: (g.esppValue || 0) - (g.esppCost || 0),
+        },
+      ]),
+      group("employer", "From your employer", [
+        { label: "401(k) match", value: match },
+        { label: "HSA contribution", value: g.employer - match },
+      ]),
+    ];
+    const uses = [
+      group("tax", "Taxes", [
+        { label: "Withheld from pay", value: g.cashTax || 0 },
+        { label: "RSU shares sold for taxes", value: g.rsuCover || 0 },
+      ]),
+      group("retirement", "Retirement & HSA", relabel(parts("retirement"))),
+      group("benefits", "Health & benefits", [
+        { label: "Pre-tax premiums", value: g.benefits || 0 },
+        { label: "After-tax deductions", value: g.postBenefits || 0 },
+      ]),
+      group("kept", "Equity you keep", relabel(parts("equity"))),
+      group("cash", "Cash to you", relabel(parts("cash"))),
+    ];
+    return {
+      sources,
+      uses,
+      total: sources.reduce((s, r) => s + r.value, 0),
+    };
+  }
+  // One paycheck as a short waterfall: gross pay, what comes out, the deposit.
+  function paycheck(record) {
+    const v = record.current || {};
+    const sum = (keys) => keys.reduce((s, k) => s + (v[k] || 0), 0);
+    const gross = sum([
+      "salary",
+      "bonus",
+      "rsu",
+      "allowance",
+      "taxableAllowance",
+    ]);
+    const steps = [
+      ["tax", "Taxes", ["federal", "state", "local", "ss", "medicare", "sdi"]],
+      [
+        "retirement",
+        "Retirement & HSA",
+        ["traditional", "roth", "mega", "hsa"],
+      ],
+      ["benefits", "Health & benefits", ["health", "post"]],
+      ["espp", "ESPP", ["espp"]],
+      ["rsu", "RSU shares (not cash)", ["rsuOffset"]],
+    ]
+      .map(([id, label, keys]) => ({ id, label, value: sum(keys) }))
+      .filter((s) => Math.abs(s.value) > 0.005);
+    const out = steps.reduce((s, r) => s + r.value, 0);
+    return {
+      gross,
+      steps,
+      deposit: Math.round((gross - out) * 100) / 100,
+      employer: sum(["employer", "hsaEmployer"]),
+    };
+  }
+  // The inputs behind the numbers, each pointing at the setup step that edits it.
+  function facts(s) {
+    const usd = (n) =>
+      n.toLocaleString("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0,
+      });
+    const comp = s.compensation,
+      tax = s.taxProfile.settings,
+      plan = s.employerPlan,
+      r = plan.retirement;
+    const schedules = {
+      weekly: "Every week",
+      biweekly: "Every two weeks",
+      semimonthly: "Twice a month",
+      monthly: "Once a month",
+    };
+    const filing = { single: "Single", married: "Married filing jointly" };
+    const saving = [
+      r.traditional > 0 && `${usd(r.traditional)} pre-tax`,
+      r.roth > 0 && `${usd(r.roth)} Roth`,
+      r.megaEnabled && r.mega > 0 && `${usd(r.mega)} after-tax`,
+    ].filter(Boolean);
+    const grants = (comp.grants || []).filter(
+      (g) => g.value > 0 || g.shares > 0,
+    );
+    const hsa = (plan.hsa.employee || 0) + (plan.hsa.employer || 0);
     return [
       {
-        id: "pay",
-        label: "Cash pay",
-        value:
-          ((payroll.salary || 0) +
-            (payroll.bonus || 0) +
-            (payroll.cashAllowance || 0)) /
-          12,
-        kind: "cash",
-        note: "Salary, bonus and cash allowances",
+        id: "salary",
+        label: "Salary",
+        value: comp.salary > 0 ? `${usd(comp.salary)} a year` : "Not set",
+        missing: !(comp.salary > 0),
+        step: 2,
+        section: "plan-compensation",
       },
       {
-        id: "rsu",
-        label: "RSUs vested",
-        value: (payroll.rsuGross || 0) / 12,
-        kind: "equity",
-        note: "Gross value at assumed share prices",
+        id: "schedule",
+        label: "Paid",
+        value: schedules[comp.frequency] || comp.frequency,
+        step: 0,
       },
       {
         id: "tax",
-        label: "Taxes",
-        value: flow.taxes.total / 12,
-        kind: "tax",
-        note: "Estimated federal, state and payroll tax",
-      },
-      {
-        id: "cash",
-        label: "Cash added",
-        value: assets("cash"),
-        kind: "cash",
-        note: "Before expenses; includes pending ESPP cash and tax reserves",
-      },
-      {
-        id: "equity",
-        label: "Equity added",
-        value: assets("equity"),
-        kind: "equity",
-        note: "Retained RSUs and ESPP shares",
+        label: "Files taxes as",
+        value: `${filing[tax.filing] || tax.filing} · ${tax.state || "state not set"}`,
+        missing: !tax.state,
+        step: 1,
       },
       {
         id: "retirement",
-        label: "Retirement + HSA",
-        value: assets("retirement"),
-        kind: "retirement",
-        note: "Employee and employer funding",
+        label: "401(k)",
+        value: saving.length ? saving.join(" · ") : "Not contributing",
+        step: 2,
+        section: "plan-retirement",
+      },
+      {
+        id: "hsa",
+        label: "HSA",
+        value: hsa > 0 ? `${usd(hsa)} a year` : "None",
+        step: 2,
+        section: "plan-hsa",
+      },
+      {
+        id: "espp",
+        label: "ESPP",
+        value: plan.espp.enabled
+          ? `${Math.round(plan.espp.rate * 100)}% of pay`
+          : "Not enrolled",
+        step: 2,
+        section: "plan-espp",
+      },
+      {
+        id: "grants",
+        label: "RSU grants",
+        value: grants.length
+          ? `${grants.length} grant${grants.length === 1 ? "" : "s"}`
+          : "None",
+        step: 2,
+        section: "plan-compensation",
       },
     ];
   }
@@ -356,7 +488,9 @@
     forView,
     INLINE,
     NOTE_BUCKETS,
-    overview,
+    compensation,
+    facts,
+    paycheck,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Presentation = api;

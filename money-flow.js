@@ -1,11 +1,11 @@
 (function (root) {
   "use strict";
   const colors = {
-    cash: "#38bdf8",
-    loss: "#fb7185",
-    asset: "#a78bfa",
-    equity: "#fbbf24",
-    funding: "#fb923c",
+    cash: "var(--cash)",
+    loss: "var(--tax)",
+    asset: "var(--retire)",
+    equity: "var(--equity)",
+    funding: "var(--equity-2)",
   };
   function buildFlow(p, f) {
     const nodes = [],
