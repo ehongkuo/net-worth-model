@@ -1164,12 +1164,16 @@ main {
 }
 [data-profile-step="0"] {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 0 24px;
 }
 [data-profile-step="0"] > h2,
 [data-profile-step="0"] > p,
-[data-profile-step="0"] > details {
+[data-profile-step="0"] > details,
+[data-profile-step="0"] > .stub-card,
+[data-profile-step="0"] > .linked-group,
+[data-profile-step="0"] > #upload-status,
+[data-profile-step="0"] > #upload-review {
   grid-column: 1/-1;
 }
 [data-profile-step="0"] > .field {
@@ -2367,4 +2371,143 @@ button:disabled {
 }
 #reset-dialog {
   width: min(460px, calc(100vw - 32px));
+}
+/* Paychecks panel: paystub list and linked paycheck amounts. */
+.panel-intro {
+  color: var(--text-2);
+  max-width: 70ch;
+}
+.stub-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 16px;
+  margin: 16px 0;
+}
+.stub-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.stub-card-head h3 {
+  margin: 0;
+}
+.profile-panel .stub-card-head .button {
+  margin: 0;
+  padding: 7px 14px;
+  font-size: 14px;
+}
+.stub-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.stub-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.stub-kind {
+  color: var(--text-2);
+}
+.field-origin {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.linked-group > .cf-note {
+  margin: -4px 0 8px;
+}
+.linked-amount {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.linked-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+}
+.linked-head small {
+  color: var(--text-2);
+  font-size: 13px;
+}
+.unit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.unit-eq {
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+.unit-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: var(--surface);
+}
+.unit-input:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.unit-input.is-entered {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.unit-input input {
+  width: 9ch;
+  border: 0;
+  padding: 8px 0;
+  background: none;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.unit-input input:focus-visible {
+  outline: none;
+}
+.unit-input input:disabled {
+  color: var(--text-3);
+}
+.unit-input .affix {
+  color: var(--text-2);
+}
+.unit-input .unit {
+  color: var(--text-2);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.paycheck-item-note {
+  grid-column: 1 / -1;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+}
+@media (max-width: 600px) {
+  .unit-row {
+    display: grid;
+    gap: 6px;
+  }
+  .unit-eq {
+    display: none;
+  }
+  .unit-input input {
+    flex: 1;
+  }
+  .stub-list li {
+    grid-template-columns: 1fr auto;
+  }
+  .stub-kind {
+    grid-row: 2;
+    font-size: 13px;
+  }
 }

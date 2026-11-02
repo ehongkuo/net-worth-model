@@ -148,6 +148,81 @@
       };
     }
   }
+  // A paycheck item can be entered in whatever unit the user has on hand.
+  // Percents stay percents (they follow raises and bonuses); every dollar unit
+  // is stored as an unrounded per-paycheck amount so the entry reads back
+  // exactly. `unit` remembers which one the user typed.
+  const CHECKS_PER_YEAR = {
+    weekly: 52,
+    biweekly: 26,
+    semimonthly: 24,
+    monthly: 12,
+  };
+  const AMOUNT_UNITS = ["percent", "check", "month", "year"];
+  function amountUnits(key) {
+    if (["traditional", "roth", "mega", "espp"].includes(key))
+      return ["percent", "check", "year"];
+    if (key === "hsa") return ["check", "year"];
+    return ["check", "month", "year"];
+  }
+  function payBasis(s, key) {
+    const c = s.compensation,
+      n = CHECKS_PER_YEAR[c.frequency] || 26,
+      salary = c.salary > 0 ? c.salary : describe(s).schedule.salary || 0;
+    const bonusEligible =
+      key === "espp"
+        ? s.employerPlan.espp.bonusEligible
+        : ["traditional", "roth", "mega"].includes(key) &&
+          s.employerPlan.retirement.bonusEligible;
+    return {
+      n,
+      check: salary / n,
+      eligibleYear:
+        salary + (bonusEligible ? salary * (c.bonusPercent || 0) : 0),
+    };
+  }
+  function equivalents(s, key, election) {
+    const b = payBasis(s, key),
+      value = Number(election?.value) || 0;
+    const percent = election?.mode === "percent";
+    const check = percent ? value * b.check : value,
+      year = percent ? value * b.eligibleYear : value * b.n;
+    return {
+      percent: percent ? value : b.check > 0 ? value / b.check : null,
+      check,
+      month: year / 12,
+      year,
+      checks: b.n,
+    };
+  }
+  function setElection(s, key, unit, value) {
+    if (!AMOUNT_UNITS.includes(unit)) throw new Error(`Unknown unit: ${unit}`);
+    const b = payBasis(s, key),
+      amount = Math.max(0, Number(value) || 0);
+    const perCheck =
+      unit === "year"
+        ? amount / b.n
+        : unit === "month"
+          ? (amount * 12) / b.n
+          : amount;
+    s.uploads.elections[key] = {
+      ...s.uploads.elections[key],
+      mode: unit === "percent" ? "percent" : "fixed",
+      value: unit === "percent" ? amount : perCheck,
+      unit,
+      manual: true,
+    };
+    if (key === "espp" && unit === "percent") {
+      write(s, "employerPlan.espp.rate", amount);
+      s.uploads.manualFields = [
+        ...new Set([
+          ...(s.uploads.manualFields || []),
+          "employerPlan.espp.rate",
+        ]),
+      ];
+    }
+    return s;
+  }
   // Payroll elections from a suggestion, except ones the user overrode or set
   // as annual amounts. Returns conflict notes. (applyUpload also copies a
   // percent ESPP election into employerPlan.espp.rate; re-reading elections
@@ -487,6 +562,9 @@
     return value;
   }
   const api = {
+    amountUnits,
+    equivalents,
+    setElection,
     describe,
     hasIncome,
     initialView,

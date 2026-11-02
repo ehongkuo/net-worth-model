@@ -42,6 +42,34 @@ const MONEY_COLOR = {
   tax: "tax",
   benefits: "benefit",
 };
+// Paycheck items: what to call them and the units each can be entered in.
+const UNIT_LABEL = {
+  percent: "of pay",
+  check: "per paycheck",
+  month: "per month",
+  year: "per year",
+};
+const PAY_ITEMS = {
+  traditional: ["Pre-tax 401(k)", ""],
+  roth: ["Roth 401(k)", ""],
+  mega: ["After-tax 401(k)", "Often used for a mega backdoor Roth."],
+  hsa: ["HSA", "Your contribution. Your employer's is counted separately."],
+  espp: ["ESPP", "Set aside from pay to buy company stock."],
+  health: ["Pre-tax benefits", "Health, dental, vision, FSA and commuter."],
+  post: [
+    "After-tax deductions",
+    "Coverage paid after tax, like extra life insurance.",
+  ],
+  allowance: [
+    "Reimbursements",
+    "Untaxed cash, like a phone or internet allowance.",
+  ],
+  taxableAllowance: ["Taxable allowances", "Cash stipends taxed as pay."],
+  imputed: [
+    "Taxable perks",
+    "Not cash: adds to taxable pay, like employer-paid life insurance.",
+  ],
+};
 const dollars = (v) =>
   (Number(v) || 0).toLocaleString("en-US", {
     style: "currency",
@@ -81,8 +109,9 @@ function field(path, label, type = "number", hint = "", { also = [] } = {}) {
       : election?.sourceDate
         ? `From ${election.sourceDate} paycheck. ${election.mode === "percent" ? "Inferred from base salary plus bonus when configured eligible." : "Observed amount per paycheck."}`
         : "";
+  const sourceDate = source?.sourceDate || election?.sourceDate;
   const sourceInfo = provenance
-    ? `<details class="field-source" data-key="source:${path}"><summary>Source</summary>${escape(provenance)}</details>`
+    ? `<small class="field-origin" title="${escape(provenance)}">${manual ? "Your entry" : sourceDate ? `From your ${escape(longDate(sourceDate))} paystub` : escape(provenance)}</small>`
     : "";
   shownPaths?.add(path);
   const value = get(scenario, path),
@@ -322,21 +351,12 @@ function renderSetupForm() {
           field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check"),
       ),
   );
-  const electionField = (key) => {
-    const v = scenario.uploads.elections[key];
-    return v
-      ? field(
-          `uploads.elections.${key}.value`,
-          `${PaystubParser.labels[key]} (${v.mode === "percent" ? "of eligible pay" : "per paycheck"})`,
-          v.mode === "percent" ? "percent" : "number",
-        )
-      : "";
-  };
+
   const funding = Profile.employerFunding(scenario, result?.rows[1]?.payroll);
   const fundingSummary = `<div class="funding-summary"><h3>Employer retirement funding</h3>${table(["Reported YTD", "Projected remaining", "Projected annual total"], [[funding.ytd == null ? "No YTD uploaded" : money(funding.ytd), money(funding.remaining), money(funding.total)]])}<p class="cf-note">${funding.date ? `YTD through ${escape(funding.date)}. ` : ""}Reported YTD is already included in the projection. An annual target or matching rule sets expected future funding.</p></div>`;
   const retirement =
     fundingSummary +
-    ["traditional", "roth", "mega"].map(electionField).join("") +
+    paycheckItemNote(["traditional", "roth", "mega"]) +
     field(
       r + "employerAnnual",
       "Fixed annual employer funding (excluding formula match)",
@@ -384,7 +404,7 @@ function renderSetupForm() {
           : ""),
     );
   const hsa =
-    electionField("hsa") +
+    paycheckItemNote(["hsa"]) +
     choices(
       "HSA eligibility & funding",
       field(h + "eligible", "HSA eligible", "check") +
@@ -406,12 +426,8 @@ function renderSetupForm() {
         (plan.espp.enabled
           ? // A per-paycheck dollar election from a paystub drives payroll; the
             // percent rate only applies when the election is a percentage.
-            (scenario.uploads.elections.espp &&
-            scenario.uploads.elections.espp.mode !== "percent"
-              ? field(
-                  "uploads.elections.espp.value",
-                  "ESPP contribution per paycheck",
-                )
+            (scenario.uploads.elections.espp
+              ? paycheckItemNote(["espp"])
               : field(e + "rate", "Payroll contribution", "percent")) +
             field(
               e + "bonusEligible",
@@ -558,41 +574,59 @@ function renderSetupForm() {
     `<div id="grant-timeline" class="grant-preview"></div>` +
     grants +
     '<button id="add-grant">Add RSU grant</button>';
-  const planElections = ["traditional", "roth", "mega", "hsa", "espp"];
-  const elections = Object.entries(scenario.uploads.elections)
-    // Plan elections are edited in their plan sections (401(k), HSA, ESPP).
-    .filter(([key]) => !planElections.includes(key))
-    .map(([key, v]) =>
-      field(
-        `uploads.elections.${key}.value`,
-        `${PaystubParser.labels[key]} (${v.mode === "percent" ? "percent of eligible wages" : "per paycheck"})`,
-        v.mode === "percent" ? "percent" : "number",
-      ),
-    )
-    .join("");
+  const records = [...scenario.uploads.records].sort((x, y) =>
+    y.date.localeCompare(x.date),
+  );
+  const schedule = Profile.describe(scenario).schedule;
+  const scheduleNote =
+    records.length && !schedule.confirmed
+      ? `<p class="plan-review-note">One paystub can't show how often you're paid. Add the paycheck before your latest one, or choose your schedule below.</p>`
+      : "";
+  const stubs = `<section class="stub-card"><div class="stub-card-head"><h3>Your paystubs</h3><label class="button">${records.length ? "Add paystubs" : "Choose paystub PDFs"}<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label></div>${
+    records.length
+      ? `<ul class="stub-list">${records
+          .map(
+            (r) =>
+              `<li><span>${escape(longDate(r.date))}</span><span class="stub-kind">${escape(PaystubParser.kindLabels[r.kind || "regular"] || "Paycheck")}</span><strong>${money(r.netPay)}</strong></li>`,
+          )
+          .join("")}</ul>`
+      : ""
+  }<p class="cf-note">PDFs are read on this device and never uploaded. You review every amount before it's saved.</p></section>`;
+  const linked = (keys) => keys.map(linkedField).join("");
   const uploads =
-    `<p class="cf-note">Review extracted amounts before saving. Documents stay on this device.</p><label class="button">Read paystub PDFs<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label><p>${scenario.uploads.records.length} saved paycheck observations</p><div id="upload-status" role="status"></div><div id="upload-review"></div>${Profile.describe(
-      scenario,
-    )
-      .questions.filter((q) => q.id === "schedule")
-      .map((q) => `<p class="plan-review-note">${escape(q.why)}</p>`)
-      .join("")}` +
+    stubs +
+    `<div id="upload-status" role="status"></div><div id="upload-review"></div>` +
+    scheduleNote +
     compactGroup(
-      "Salary & pay schedule",
+      "Your pay",
       field(c + "salary", "Annual base salary") +
-        field(c + "frequency", "Pay frequency", [
+        field(c + "frequency", "How often you're paid", [
           ["biweekly", "Every two weeks"],
-          ["semimonthly", "Twice monthly"],
-          ["monthly", "Monthly"],
-          ["weekly", "Weekly"],
+          ["semimonthly", "Twice a month"],
+          ["monthly", "Once a month"],
+          ["weekly", "Every week"],
         ]) +
         field(c + "firstPayday", "A recent payday", "date"),
     ) +
-    (elections
-      ? compactGroup("Other recurring paycheck items", elections)
-      : "") +
-    (scenario.uploads.records.length
-      ? ""
+    (records.length
+      ? linkedGroup(
+          "Taken out of each paycheck",
+          "Enter whichever number you have. The others fill in.",
+          linked([
+            "traditional",
+            "roth",
+            "mega",
+            "hsa",
+            "espp",
+            "health",
+            "post",
+          ]),
+        ) +
+        linkedGroup(
+          "Added to your pay",
+          "",
+          linked(["allowance", "taxableAllowance", "imputed"]),
+        )
       : compactGroup(
           "Contributions & benefits without a paystub",
           fallback +
@@ -619,19 +653,6 @@ function renderSetupForm() {
               PaystubParser.labels[b.category],
               money(b.current),
               b.schedule,
-            ]),
-          ),
-        )
-      : "") +
-    (scenario.uploads.records.length
-      ? compactGroup(
-          "Saved paychecks",
-          table(
-            ["Date", "Kind", "Net pay"],
-            scenario.uploads.records.map((x) => [
-              x.date,
-              x.kind,
-              money(x.netPay),
             ]),
           ),
         )
@@ -678,7 +699,7 @@ function renderSetupForm() {
   );
   $("setup").innerHTML =
     `<div data-profile-step="1" class="profile-panel">${quick}<h2>Tax details</h2>${tax}</div>` +
-    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p>${scenario.uploads.records.length ? `${scenario.uploads.records.length} paystub${scenario.uploads.records.length === 1 ? "" : "s"} saved. Add more to fill gaps: the paycheck before your latest confirms your pay schedule, and RSU vest or bonus payslips show how those are taxed.` : "Choose your latest regular paycheck, and the one before it to confirm your pay schedule. Add RSU vest and bonus payslips too: they're often separate “off-cycle” payslips, and they show your vests and how they're taxed. You can select several PDFs at once."}</p>${uploads}</div>` +
+    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p class="panel-intro">${scenario.uploads.records.length ? "Your pay and what comes out of each check. Add more paystubs to fill gaps: the paycheck before your latest confirms your schedule, and RSU vest or bonus payslips show how those are taxed." : "Start with your latest regular paycheck and the one before it. Add RSU vest and bonus payslips too: they're often separate “off-cycle” payslips. You can select several PDFs at once."}</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
     section("retirement", "Retirement & IRA", retirement, [
       "mega",
@@ -759,6 +780,35 @@ function renderSetupForm() {
               set(next, path, value);
             commit(next);
           })),
+    );
+  $("setup")
+    .querySelectorAll("[data-linked]")
+    .forEach(
+      (el) =>
+        (el.onchange = () =>
+          deferUntilFocusMoves(() => {
+            const next = structuredClone(scenario),
+              unit = el.dataset.unit;
+            Profile.setElection(
+              next,
+              el.dataset.linked,
+              unit,
+              (Number(el.value) || 0) / (unit === "percent" ? 100 : 1),
+            );
+            commit(next);
+          })),
+    );
+  $("setup")
+    .querySelectorAll("[data-goto-step]")
+    .forEach(
+      (el) =>
+        (el.onclick = () => {
+          profileStep = Number(el.dataset.gotoStep);
+          renderProfile();
+          document
+            .querySelector(".profile-steps")
+            .scrollIntoView({ block: "start" });
+        }),
     );
   GrantTimeline.render(
     $("grant-timeline"),
@@ -1572,6 +1622,61 @@ try {
     `Saved scenario could not be loaded: ${error.message}. Your original data has not been overwritten. Import a corrected scenario to continue.`;
 }
 
+// One paycheck item with linked inputs: type the number you have in any unit
+// and the others are computed. The unit you typed is stored and highlighted.
+function linkedField(key) {
+  const e = scenario.uploads.elections[key];
+  if (!e) return "";
+  const [label, hint] = PAY_ITEMS[key] || [PaystubParser.labels[key], ""];
+  const eq = Profile.equivalents(scenario, key, e),
+    units = Profile.amountUnits(key),
+    entered = e.unit || (e.mode === "percent" ? "percent" : "check");
+  const shown = (u) =>
+    eq[u] == null
+      ? ""
+      : Number((u === "percent" ? eq[u] * 100 : eq[u]).toFixed(2));
+  const inputs = units
+    .map(
+      (u) =>
+        `<label class="unit-input${u === entered ? " is-entered" : ""}">${u === "percent" ? "" : '<span class="affix">$</span>'}<input type="number" step="any" min="0" inputmode="decimal" data-linked="${key}" data-unit="${u}" data-key="linked:${key}:${u}" value="${shown(u)}" ${u === "percent" && eq.percent == null ? 'disabled placeholder="Add salary"' : ""} aria-label="${escape(label)}, ${UNIT_LABEL[u]}">${u === "percent" ? '<span class="affix">%</span>' : ""}<span class="unit">${UNIT_LABEL[u]}</span></label>`,
+    )
+    .join('<span class="unit-eq" aria-hidden="true">=</span>');
+  const bonusNote =
+    e.mode === "percent" && eq.year - eq.check * eq.checks > 0.005
+      ? " Per year includes your bonus."
+      : "";
+  const origin = e.manual
+    ? `You entered this ${entered === "percent" ? "as a percent of pay" : UNIT_LABEL[entered]}.`
+    : e.sourceDate
+      ? `From your ${longDate(e.sourceDate)} paystub.`
+      : "";
+  return `<div class="linked-amount"><div class="linked-head"><strong>${escape(label)}</strong>${hint ? `<small>${escape(hint)}</small>` : ""}</div><div class="unit-row">${inputs}</div>${origin || bonusNote ? `<small class="field-origin">${escape(origin + bonusNote)}</small>` : ""}</div>`;
+}
+function linkedGroup(title, note, body) {
+  return body
+    ? `<section class="paycheck-group linked-group"><h3>${escape(title)}</h3>${note ? `<p class="cf-note">${escape(note)}</p>` : ""}${body}</section>`
+    : "";
+}
+// A plan section's pointer to the paycheck item it depends on.
+function paycheckItemNote(keys) {
+  const parts = keys
+    .filter((k) => scenario.uploads.elections[k])
+    .map((k) => {
+      const e = scenario.uploads.elections[k],
+        eq = Profile.equivalents(scenario, k, e);
+      const unit = e.unit || (e.mode === "percent" ? "percent" : "check");
+      const amount =
+        unit === "percent"
+          ? `${Number((e.value * 100).toFixed(2))}% of pay (${money(eq.check)} per paycheck)`
+          : unit === "check"
+            ? `${money(eq.check)} per paycheck`
+            : `${money(eq[unit])} ${UNIT_LABEL[unit]} (${money(eq.check)} per paycheck)`;
+      return `${escape((PAY_ITEMS[k] || [k])[0])}: ${amount}`;
+    });
+  return parts.length
+    ? `<p class="paycheck-item-note">${parts.join(" · ")}. <button type="button" class="link-button" data-goto-step="0">Change in Your paychecks</button></p>`
+    : "";
+}
 function compensationView() {
   const { payroll, flow } = result.ongoing;
   const c = Presentation.compensation(
