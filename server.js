@@ -2,30 +2,8 @@
 const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { siteFiles, emptyDefaults } = require("./site-files");
 
-const files = new Set([
-  "index.html",
-  "style.css",
-  "app.js",
-  "presentation.js",
-  "util.js",
-  "input-rules.js",
-  "profile.js",
-  "scenario.js",
-  "projection.js",
-  "compensation.js",
-  "equity-schedule.js",
-  "grant-timeline.js",
-  "money-flow.js",
-  "compact-flow.js",
-  "tax-engine.js",
-  "tax-ui.js",
-  "development-defaults.js",
-  "payroll-calendar.js",
-  "paystub-parser.js",
-  "node_modules/pdfjs-dist/build/pdf.mjs",
-  "node_modules/pdfjs-dist/build/pdf.worker.mjs",
-]);
 function createServer({ root = __dirname } = {}) {
   return http.createServer(async (req, res) => {
     const send = (code, value) => {
@@ -57,10 +35,11 @@ function createServer({ root = __dirname } = {}) {
       if (req.method !== "GET" && req.method !== "HEAD")
         return send(405, { error: "Method not allowed." });
       const file = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-      if (!files.has(file)) return send(404, { error: "Not found." });
-      const data = await fs.readFile(path.join(root, file)).catch((error) => {
+      if (!siteFiles.has(file)) return send(404, { error: "Not found." });
+      const source = path.join(root, siteFiles.get(file));
+      const data = await fs.readFile(source).catch((error) => {
         if (file === "development-defaults.js" && error.code === "ENOENT")
-          return Buffer.from("// No local development preset.\n");
+          return Buffer.from(emptyDefaults);
         throw error;
       });
       const mime = /\.m?js$/.test(file)

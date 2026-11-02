@@ -3,3 +3,5 @@ development-defaults.js
 package-lock.json
 *.md
 *.png
+dist/
+.wrangler/

@@ -1116,9 +1116,8 @@ async function readPaystubs(event) {
   try {
     const files = [...event.target.files];
     if (files.length > 12) throw new Error("Choose up to 12 PDFs.");
-    const pdfjs = await import("./node_modules/pdfjs-dist/build/pdf.mjs");
-    pdfjs.GlobalWorkerOptions.workerSrc =
-      "./node_modules/pdfjs-dist/build/pdf.worker.mjs";
+    const pdfjs = await import("./vendor/pdf.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = "./vendor/pdf.worker.mjs";
     for (const file of files) {
       if (file.size > 15 * 1024 * 1024)
         throw new Error("Each PDF must be smaller than 15 MB.");

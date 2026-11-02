@@ -1,0 +1,14 @@
+// Cloudflare Workers config: serves the static build in dist/ as assets.
+// No Worker script runs. Scenarios and paystubs stay in the visitor's browser.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "net-worth-model",
+  "compatibility_date": "2026-10-01",
+  // Serve production at <name>.<subdomain>.workers.dev, and give each
+  // non-production build its own preview URL.
+  "workers_dev": true,
+  "preview_urls": true,
+  "assets": {
+    "directory": "./dist",
+  },
+}
