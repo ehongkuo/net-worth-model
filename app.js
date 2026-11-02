@@ -26,6 +26,35 @@ function table(headers, rows) {
 let shownPaths = null;
 // The gaps last shown in the pop-up; it opens again only when they change.
 let gapsPrompted = "";
+// Per-viewer display choices on the profile; not part of the scenario.
+let compPeriod = "year";
+const compOpen = new Set();
+// Money colors, by what form the money takes. Tokens live in style.css.
+const MONEY_COLOR = {
+  pay: "cash",
+  cash: "cash",
+  equity: "equity",
+  kept: "equity",
+  espp: "equity",
+  rsu: "equity",
+  employer: "employer",
+  retirement: "retire",
+  tax: "tax",
+  benefits: "benefit",
+};
+const dollars = (v) =>
+  (Number(v) || 0).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+const longDate = (iso) =>
+  new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 function field(path, label, type = "number", hint = "", { also = [] } = {}) {
   if (shownPaths?.has(path)) return "";
   const enginePath = path.startsWith("employerPlan.")
@@ -1523,35 +1552,6 @@ try {
     `Saved scenario could not be loaded: ${error.message}. Your original data has not been overwritten. Import a corrected scenario to continue.`;
 }
 
-// Money colors, by what form the money takes. Tokens live in style.css.
-const MONEY_COLOR = {
-  pay: "cash",
-  cash: "cash",
-  equity: "equity",
-  kept: "equity",
-  espp: "equity",
-  rsu: "equity",
-  employer: "employer",
-  retirement: "retire",
-  tax: "tax",
-  benefits: "benefit",
-};
-const dollars = (v) =>
-  (Number(v) || 0).toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  });
-const longDate = (iso) =>
-  new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-// Per-viewer display choices on the profile; not part of the scenario.
-let compPeriod = "year";
-const compOpen = new Set();
 function compensationView() {
   const { payroll, flow } = result.ongoing;
   const c = Presentation.compensation(
