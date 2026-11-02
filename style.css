@@ -2415,6 +2415,69 @@ button:disabled {
 .stub-kind {
   color: var(--text-2);
 }
+.review-card {
+  border-color: var(--line-strong);
+}
+.review-list {
+  margin-bottom: 4px;
+}
+.stub-list .review-row {
+  display: block;
+  padding: 0;
+}
+.review-row details {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.review-row summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto 9.5em;
+  gap: 12px;
+  padding: 8px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.review-row summary::-webkit-details-marker {
+  display: none;
+}
+.review-state {
+  color: var(--ok);
+  font-size: 14px;
+  text-align: right;
+}
+.has-error .review-state {
+  color: var(--warn);
+  font-weight: 500;
+}
+.review-body {
+  padding: 4px 0 12px;
+}
+.review-error {
+  color: var(--warn);
+}
+.review-schedule {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--text-2);
+}
+.review-hints {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  color: var(--text-2);
+}
+.profile-panel .review-hints .button {
+  margin: 0;
+  padding: 5px 12px;
+  font-size: 14px;
+  white-space: nowrap;
+}
 .field-origin {
   display: block;
   margin-top: 4px;
@@ -2579,6 +2642,13 @@ button:disabled {
   }
   .stub-list li {
     grid-template-columns: 1fr auto;
+  }
+  .review-row summary {
+    grid-template-columns: 1fr auto;
+  }
+  .review-state {
+    grid-row: 2;
+    grid-column: 2;
   }
   .stub-kind {
     grid-row: 2;

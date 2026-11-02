@@ -591,8 +591,8 @@ function renderSetupForm() {
               `<li><span>${escape(longDate(r.date))}</span><span class="stub-kind">${escape(PaystubParser.kindLabels[r.kind || "regular"] || "Paycheck")}</span><strong>${money(r.netPay)}</strong></li>`,
           )
           .join("")}</ul>`
-      : ""
-  }<p class="cf-note">PDFs are read on this device and never uploaded. You review every amount before it's saved.</p></section>`;
+      : `<p class="cf-note">PDFs are read on this device and never uploaded.</p>`
+  }</section>`;
   // This calendar year's totals: year-to-date from paystubs plus the rest of
   // the year, so mid-year starts and changes are counted correctly.
   const yearRow = result?.rows.find(
@@ -707,7 +707,7 @@ function renderSetupForm() {
   );
   $("setup").innerHTML =
     `<div data-profile-step="1" class="profile-panel">${quick}<h2>Tax details</h2>${tax}</div>` +
-    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p class="panel-intro">${scenario.uploads.records.length ? "Your pay and what comes out of each check. Add more paystubs to fill gaps: the paycheck before your latest confirms your schedule, and RSU vest or bonus payslips show how those are taxed." : "Start with your latest regular paycheck and the one before it. Add RSU vest and bonus payslips too: they're often separate “off-cycle” payslips. You can select several PDFs at once."}</p>${uploads}</div>` +
+    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p class="panel-intro">${scenario.uploads.records.length ? "Your pay and what comes out of each check." : "Add your latest paycheck and the one before it, plus any RSU vest or bonus payslips."}</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
     section(
       "pay",
@@ -1337,8 +1337,7 @@ async function readPaystubs(event, append = false) {
         await loadingTask.destroy();
       }
     }
-    status.textContent =
-      "Review categories and printed totals before applying.";
+    status.textContent = "";
     reviewUploads();
   } catch (error) {
     status.textContent = error.message;
@@ -1347,55 +1346,57 @@ async function readPaystubs(event, append = false) {
   }
 }
 function reviewUploads() {
-  const preview = Profile.describe({
-    ...scenario,
-    uploads: { ...scenario.uploads, records: drafts },
-  });
   const checks = drafts
-    .map(
-      (r, i) =>
-        `<h3>${escape(PaystubParser.kindLabels[r.kind] || "Paycheck")} · ${escape(r.date)}</h3><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">${
-          r.kind === "equity"
-            ? `RSU vest ${money(r.current.rsu)} · Shares delivered ${money(r.current.rsuOffset || 0)} · Tax withheld ${money(r.summary?.current?.taxes || 0)}`
-            : r.kind === "bonus"
-              ? `Bonus ${money(r.current.bonus)} · Deposited cash ${money(r.netPay)}`
-              : `Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}`
-        }</p><details ${PaystubParser.validate(r).valid ? "" : "open"}><summary>Review extracted amounts and categories</summary><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
-          .map(
-            (l, j) =>
-              `<tr><td>${escape(l.label)}</td><td><select data-mapping="${i}:${j}"><option value="">Choose</option>${Object.entries(
-                PaystubParser.labels,
+    .map((r, i) => {
+      const v = PaystubParser.validate(r);
+      return `<li class="review-row${v.valid ? "" : " has-error"}"><details ${v.valid ? "" : "open"}><summary><span>${escape(longDate(r.date))}</span><span class="stub-kind">${escape(PaystubParser.kindLabels[r.kind] || "Paycheck")}</span><strong>${money(
+        r.kind === "equity"
+          ? r.current.rsu
+          : r.kind === "bonus"
+            ? r.current.bonus
+            : r.netPay,
+      )}</strong><span class="review-state">${v.valid ? "✓ Totals match" : "Needs a fix"}</span></summary><div class="review-body"><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">${
+        r.kind === "equity"
+          ? `RSU vest ${money(r.current.rsu)} · Shares delivered ${money(r.current.rsuOffset || 0)} · Tax withheld ${money(r.summary?.current?.taxes || 0)}`
+          : r.kind === "bonus"
+            ? `Bonus ${money(r.current.bonus)} · Deposited cash ${money(r.netPay)}`
+            : `Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}`
+      }</p><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
+        .map(
+          (l, j) =>
+            `<tr><td>${escape(l.label)}</td><td><select data-mapping="${i}:${j}"><option value="">Choose</option>${Object.entries(
+              PaystubParser.labels,
+            )
+              .map(
+                ([k, v]) =>
+                  `<option value="${k}" ${l.key === k ? "selected" : ""}>${escape(v)}</option>`,
               )
-                .map(
-                  ([k, v]) =>
-                    `<option value="${k}" ${l.key === k ? "selected" : ""}>${escape(v)}</option>`,
-                )
-                .join("")}</select>${
-                PaystubParser.benefitTypes[l.key]
-                  ? `<label>Repeats<select data-benefit-schedule="${i}:${j}">${Object.entries(
-                      {
-                        review: "Confirm schedule",
-                        paycheck: "Every paycheck",
-                        monthly: "First paycheck each month",
-                        quarterly: "Every 3 months",
-                        annual: "Once a year",
-                        once: "This payment only",
-                      },
+              .join("")}</select>${
+              PaystubParser.benefitTypes[l.key]
+                ? `<label>Repeats<select data-benefit-schedule="${i}:${j}">${Object.entries(
+                    {
+                      review: "Confirm schedule",
+                      paycheck: "Every paycheck",
+                      monthly: "First paycheck each month",
+                      quarterly: "Every 3 months",
+                      annual: "Once a year",
+                      once: "This payment only",
+                    },
+                  )
+                    .map(
+                      ([k, v]) =>
+                        `<option value="${k}" ${(l.schedule || (["commuter", "parking"].includes(l.key) ? "review" : "paycheck")) === k ? "selected" : ""}>${v}</option>`,
                     )
-                      .map(
-                        ([k, v]) =>
-                          `<option value="${k}" ${(l.schedule || (["commuter", "parking"].includes(l.key) ? "review" : "paycheck")) === k ? "selected" : ""}>${v}</option>`,
-                      )
-                      .join(
-                        "",
-                      )}</select></label><label>Employer annual cap (optional)<input type="number" min="0" step=".01" data-benefit-cap="${i}:${j}" value="${l.annualCap ?? ""}"></label>`
-                  : ""
-              }</td><td><input aria-label="Current ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:current" value="${l.current ?? ""}"></td><td><input aria-label="YTD ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:ytd" value="${l.ytd ?? ""}"></td></tr>`,
-          )
-          .join(
-            "",
-          )}</tbody></table></div></details><p>${PaystubParser.validate(r).errors.map(escape).join(" ") || "Amounts reconcile."}</p>`,
-    )
+                    .join(
+                      "",
+                    )}</select></label><label>Employer annual cap (optional)<input type="number" min="0" step=".01" data-benefit-cap="${i}:${j}" value="${l.annualCap ?? ""}"></label>`
+                : ""
+            }</td><td><input aria-label="Current ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:current" value="${l.current ?? ""}"></td><td><input aria-label="YTD ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:ytd" value="${l.ytd ?? ""}"></td></tr>`,
+        )
+        .join(
+          "",
+        )}</tbody></table></div>${v.valid ? "" : `<p class="review-error">${v.errors.map(escape).join(" ")}</p>`}</div></details></li>`;
+    })
     .join("");
   const hints = PaystubParser.uploadHints([
       ...scenario.uploads.records.filter(
@@ -1409,34 +1410,16 @@ function reviewUploads() {
           `<li><strong>${escape(h.ask)}</strong><span>${escape(h.gap)}</span>${h.tip ? `<small>${escape(h.tip)}</small>` : ""}</li>`,
       )
       .join(""),
+    // The gap dialog explains each ask; here a short reminder is enough.
     hintList = hints.length
-      ? `<div class="upload-hints"><h3>Paystubs that would fill gaps</h3><ol class="gap-list">${gapItems}</ol><label class="button">Add more paystubs<input data-more-paystubs type="file" accept="application/pdf" multiple hidden></label></div>`
+      ? `<div class="review-hints"><span>Would also help: ${hints.map((h) => escape(h.ask)).join(" · ")}</span><label class="button">Add more<input data-more-paystubs type="file" accept="application/pdf" multiple hidden></label></div>`
       : "";
-  const kinds = Object.entries(
-    drafts.reduce((n, r) => ((n[r.kind] = (n[r.kind] || 0) + 1), n), {}),
-  )
-    .map(
-      ([k, n]) =>
-        `${n} ${{ regular: "regular paycheck", equity: "RSU vest", bonus: "bonus check" }[k] || "paycheck"}${n === 1 ? "" : "s"}`,
-    )
-    .join(", ");
   // Off-cycle checks alone carry no salary or payday schedule to fill.
-  const schedule = `<label class="check"${drafts.some((r) => r.kind === "regular") ? "" : " hidden"}><input id="apply-schedule" type="checkbox" checked>Fill salary and payday schedule${preview.schedule.confirmed ? " from check dates" : " using the selected pay frequency (confirm this in your profile)"}</label>`;
-  // When every check reconciles there is nothing to decide: show a one-line
-  // summary and keep line-by-line details one click away.
-  const clean =
-    drafts.length &&
-    drafts.every((r) => PaystubParser.validate(r).valid) &&
-    preview.schedule.confirmed;
-  $("upload-review").innerHTML = clean
-    ? `<p class="review-summary"><strong>Read ${escape(kinds)}</strong> · ${drafts
-        .map((r) => r.date)
-        .sort()
-        .map(escape)
-        .join(
-          ", ",
-        )} · all totals reconcile</p><button id="apply-upload" class="primary">Use these paychecks</button>${hintList}<details class="review-details"><summary>Check what we read</summary>${checks}${schedule}</details>`
-    : `${checks}${schedule}<button id="apply-upload">Apply reviewed paychecks</button>${hintList}`;
+  const schedule = `<label class="check review-schedule"${drafts.some((r) => r.kind === "regular") ? "" : " hidden"}><input id="apply-schedule" type="checkbox" checked>Also update salary and pay schedule</label>`;
+  // One row per paystub; a row opens to its line items only when asked, or
+  // on its own when its totals don't add up.
+  $("upload-review").innerHTML =
+    `<section class="stub-card review-card"><div class="stub-card-head"><h3>Ready to add</h3><button id="apply-upload" class="primary">Use ${drafts.length === 1 ? "this paystub" : `these ${drafts.length} paystubs`}</button></div><ul class="stub-list review-list">${checks}</ul>${schedule}${hintList}</section>`;
   $("upload-review")
     .querySelectorAll("[data-benefit-cap]")
     .forEach(
