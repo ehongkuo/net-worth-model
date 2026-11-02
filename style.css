@@ -62,6 +62,9 @@
   --other: #8a5a2b;
   --other-2: #6b6f2a;
   --other-3: #a0525f;
+  /* Chart series, validated for colorblind separation on each surface. */
+  --chart-you: #2f62a6;
+  --chart-target: #1d7448;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -99,6 +102,8 @@
     --other: #c99a6a;
     --other-2: #b8bc6a;
     --other-3: #d98c98;
+    --chart-you: #5f8dd6;
+    --chart-target: #3fa56e;
   }
 }
 body {
@@ -2553,4 +2558,147 @@ p.limit-over {
   padding-left: 18px;
   font-size: 12px;
   color: var(--text-3);
+}
+/* Limit plan: cumulative contributions through the year. */
+.limit-plan {
+  margin: 12px 0 4px;
+}
+.limit-headline {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.limit-chart {
+  position: relative;
+  height: 140px;
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  touch-action: pan-y;
+}
+.limit-chart svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.lc-line {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+.lc-actual {
+  stroke: var(--chart-you);
+}
+.lc-rate {
+  stroke: var(--chart-you);
+  stroke-dasharray: 6 4;
+}
+.lc-target {
+  stroke: var(--chart-target);
+  stroke-dasharray: 2 3;
+}
+.lc-limit {
+  stroke: var(--text-3);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+.lc-cursor {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.lc-limit-label {
+  position: absolute;
+  right: 0;
+  transform: translateY(-120%);
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface);
+  padding: 0 4px;
+}
+.lc-tip {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: var(--surface);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.lc-months {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  padding-top: 2px;
+}
+.lc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.lc-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lc-key {
+  width: 22px;
+  height: 0;
+  border-top: 2px solid var(--chart-you);
+}
+.lc-key.lc-rate {
+  border-top-style: dashed;
+}
+.lc-key.lc-target {
+  border-top: 2px dotted var(--chart-target);
+}
+.limit-target {
+  margin: 6px 0;
+  font-size: 14px;
+}
+.limit-target button {
+  margin-left: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.lc-table {
+  border-top: 0;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.lc-table summary {
+  font-weight: 400;
+  color: var(--text-2);
+}
+.lc-estimated {
+  opacity: 0.4;
+}
+.lc-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chart-you);
+  box-shadow: 0 0 0 2px var(--surface);
+  transform: translate(-50%, -50%);
+}
+.lc-dot-label {
+  position: absolute;
+  transform: translate(-50%, -170%);
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  background: var(--surface);
+  padding: 0 3px;
 }

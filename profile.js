@@ -401,6 +401,80 @@
       notes,
     };
   }
+  // A limited item's path through the calendar year, paycheck by paycheck:
+  // what's in so far, where the current rate ends up (payroll stops at the
+  // limit), and the per-paycheck amount from the next check that lands on the
+  // limit by the last paycheck of the year.
+  function limitPlan(s, key, payroll) {
+    if (!["traditional", "roth", "mega", "hsa"].includes(key)) return null;
+    const year = String(s.taxProfile.year),
+      keys = ["traditional", "roth"].includes(key)
+        ? ["traditional", "roth"]
+        : [key];
+    const rows = (payroll?.payrollCalendar?.rows || [])
+      .filter((r) => r.date.startsWith(year))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const check = limitCheck(s, key, yearTotals(payroll)),
+      prior =
+        keys.length === 2
+          ? Math.max(0, s.employerPlan.retirement.priorDeferrals || 0)
+          : 0;
+    const cents = (v) => Math.round((Number(v) || 0) * 100);
+    let running = 0;
+    const points = rows.map((r) => {
+      const value = keys.reduce((n, k) => n + cents(r[k]), 0);
+      running += value;
+      return {
+        date: r.date,
+        value: value / 100,
+        total: running / 100,
+        actual: r.source !== "forecast",
+        // Spread from a year-to-date total: the timing is a guess.
+        estimated: r.source === "history-estimate",
+      };
+    });
+    const done = points.filter((x) => x.actual).at(-1),
+      asOf = done?.date ?? null,
+      soFar = done?.total ?? 0;
+    const future = rows.filter(
+      (r) => r.source === "forecast" && (!asOf || r.date > asOf),
+    );
+    // The other half of a shared limit keeps its current plan.
+    const other =
+      keys.length === 2
+        ? future.reduce(
+            (n, r) =>
+              n + cents(r[key === "traditional" ? "roth" : "traditional"]),
+            0,
+          ) / 100
+        : 0;
+    const room = Math.max(0, check.limit - prior - soFar - other);
+    const perCheck = future.length
+      ? Math.ceil((room / future.length) * 100 - 1e-6) / 100
+      : null;
+    const basis = payBasis(s, key);
+    const reached = points.findIndex(
+      (x) => x.total + prior >= check.limit - 0.005,
+    );
+    return {
+      label: check.label,
+      limit: check.limit,
+      prior,
+      points,
+      asOf,
+      soFar,
+      future: future.length,
+      lastDate: points.at(-1)?.date ?? null,
+      endTotal: points.at(-1)?.total ?? 0,
+      reachDate:
+        reached >= 0 && reached < points.length - 1
+          ? points[reached].date
+          : null,
+      perCheck,
+      percent:
+        perCheck != null && basis.check > 0 ? perCheck / basis.check : null,
+    };
+  }
   // Payroll elections from a suggestion, except ones the user overrode or set
   // as annual amounts. Returns conflict notes. (applyUpload also copies a
   // percent ESPP election into employerPlan.espp.rate; re-reading elections
@@ -740,6 +814,7 @@
     return value;
   }
   const api = {
+    limitPlan,
     yearTotals,
     limitCheck,
     amountUnits,
