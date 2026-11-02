@@ -592,7 +592,13 @@ function renderSetupForm() {
           .join("")}</ul>`
       : ""
   }<p class="cf-note">PDFs are read on this device and never uploaded. You review every amount before it's saved.</p></section>`;
-  const linked = (keys) => keys.map(linkedField).join("");
+  // This calendar year's totals: year-to-date from paystubs plus the rest of
+  // the year, so mid-year starts and changes are counted correctly.
+  const yearRow = result?.rows.find(
+    (x, i) => i > 0 && x.year === scenario.taxProfile.year,
+  );
+  const totals = Profile.yearTotals(yearRow?.payroll);
+  const linked = (keys) => keys.map((k) => linkedField(k, totals)).join("");
   const uploads =
     stubs +
     `<div id="upload-status" role="status"></div><div id="upload-review"></div>` +
@@ -1624,7 +1630,7 @@ try {
 
 // One paycheck item with linked inputs: type the number you have in any unit
 // and the others are computed. The unit you typed is stored and highlighted.
-function linkedField(key) {
+function linkedField(key, totals) {
   const e = scenario.uploads.elections[key];
   if (!e) return "";
   const [label, hint] = PAY_ITEMS[key] || [PaystubParser.labels[key], ""];
@@ -1650,7 +1656,23 @@ function linkedField(key) {
     : e.sourceDate
       ? `From your ${longDate(e.sourceDate)} paystub.`
       : "";
-  return `<div class="linked-amount"><div class="linked-head"><strong>${escape(label)}</strong>${hint ? `<small>${escape(hint)}</small>` : ""}</div><div class="unit-row">${inputs}</div>${origin || bonusNote ? `<small class="field-origin">${escape(origin + bonusNote)}</small>` : ""}</div>`;
+  // Pre-tax and Roth share one limit, shown once under pre-tax.
+  const limit =
+    key === "roth" && scenario.uploads.elections.traditional
+      ? null
+      : Profile.limitCheck(scenario, key, totals);
+  return `<div class="linked-amount"><div class="linked-head"><strong>${escape(label)}</strong>${hint ? `<small>${escape(hint)}</small>` : ""}</div><div class="unit-row">${inputs}</div>${origin || bonusNote ? `<small class="field-origin">${escape(origin + bonusNote)}</small>` : ""}${limit ? limitView(key, limit) : ""}</div>`;
+}
+// A yearly total against its IRS limit, with how that limit was set.
+function limitView(key, c) {
+  const share = c.limit > 0 ? Math.min(100, (c.used / c.limit) * 100) : 100;
+  const status = c.over
+    ? `<span class="limit-over">${dollars(-c.remaining)} over</span>`
+    : `${dollars(c.remaining)} left`;
+  const consequence = c.over
+    ? `<p class="limit-over">${key === "espp" ? "Money past the limit is usually refunded at purchase." : "Payroll stops this contribution once you reach the limit, and the projection stops it there too."}</p>`
+    : "";
+  return `<div class="limit-check${c.over ? " is-over" : ""}"><div class="limit-meter" role="img" aria-label="${escape(`${c.label}: ${dollars(c.used)} of ${dollars(c.limit)} limit`)}"><span style="width:${share}%"></span></div><p class="limit-line">${escape(c.label)} in ${c.year}: <strong>${dollars(c.used)}</strong> of your ${c.approx ? "about " : ""}<strong>${dollars(c.limit)}</strong> limit · ${status}</p>${consequence}<ul class="limit-notes">${c.notes.map((n) => `<li>${escape(n)}</li>`).join("")}</ul></div>`;
 }
 function linkedGroup(title, note, body) {
   return body

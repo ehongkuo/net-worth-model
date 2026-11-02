@@ -223,6 +223,184 @@
     }
     return s;
   }
+  // This calendar year's employee totals before IRS caps (year-to-date from
+  // paystubs plus the remaining paychecks), and the employer's deposits.
+  function yearTotals(payroll) {
+    const requested = payroll?.payrollCalendar?.requested || {},
+      c = payroll?.contributions || {};
+    return {
+      traditional: requested.traditional,
+      roth: requested.roth,
+      mega: requested.mega,
+      hsa: requested.hsa,
+      espp: payroll?.espp?.contributions,
+      employer: c.employer || 0,
+      hsaEmployer: c.hsaEmployer || 0,
+    };
+  }
+  // How an item's yearly total compares with its IRS limit: the general limit
+  // (`global`) and the user's own (`limit`), adjusted for age, coverage,
+  // eligible months, employer money and other employers. `totals` comes from
+  // yearTotals; without it the entered rate is annualized.
+  function limitCheck(s, key, totals = {}) {
+    if (!["traditional", "roth", "mega", "hsa", "espp"].includes(key))
+      return null;
+    const TaxEngine =
+      typeof module !== "undefined" && module.exports
+        ? require("./tax-engine")
+        : root.TaxEngine;
+    const year = s.taxProfile.year,
+      l = TaxEngine.limits(year, s.taxProfile.settings),
+      r = s.employerPlan.retirement,
+      h = s.employerPlan.hsa,
+      e = s.employerPlan.espp,
+      elections = s.uploads.elections || {};
+    const known = (path) =>
+      Object.hasOwn(s.uploads.confirmedFields || {}, path) ||
+      (s.uploads.manualFields || []).includes(path) ||
+      Boolean(s.uploads.fieldSources?.[path]);
+    const usd = (n) =>
+      n.toLocaleString("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0,
+      });
+    const day = (iso) =>
+      new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      });
+    const total = (k) =>
+      totals[k] ?? (elections[k] ? equivalents(s, k, elections[k]).year : 0);
+    const age = s.taxProfile.age,
+      ageKnown = known("taxProfile.age");
+    const latest = [...(s.uploads.records || [])]
+      .filter(
+        (x) =>
+          (x.kind || "regular") === "regular" &&
+          x.date.startsWith(String(year)),
+      )
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .at(-1);
+    const ytdOf = (keys) =>
+      latest && keys.some((k) => latest.ytd?.[k] != null)
+        ? keys.reduce((n, k) => n + (latest.ytd?.[k] || 0), 0)
+        : null;
+    const notes = [];
+    let check;
+    if (key === "traditional" || key === "roth") {
+      const catchup = !ageKnown
+        ? 0
+        : age >= 60 && age <= 63
+          ? l.superCatchup
+          : age >= 50
+            ? l.catchup
+            : 0;
+      const prior = Math.max(0, r.priorDeferrals || 0);
+      notes.push(
+        `${year} IRS limit: ${usd(l.deferral)} for pre-tax and Roth 401(k) together.`,
+      );
+      if (catchup)
+        notes.push(
+          `You can add ${usd(catchup)} more as a catch-up at ${age >= 60 && age <= 63 ? "60 to 63" : "50 or older"}.`,
+        );
+      else if (!ageKnown)
+        notes.push(
+          `Add your age: at 50 or older the limit is ${usd(l.catchup)} higher.`,
+        );
+      if (prior)
+        notes.push(
+          `Includes ${usd(prior)} from a previous employer this year.`,
+        );
+      check = {
+        label: "Pre-tax + Roth 401(k)",
+        global: l.deferral,
+        limit: l.deferral + catchup,
+        used: total("traditional") + total("roth") + prior,
+        ytd: ytdOf(["traditional", "roth"]),
+      };
+    } else if (key === "mega") {
+      const deferred = Math.min(
+          l.deferral,
+          total("traditional") + total("roth"),
+        ),
+        employer = totals.employer || 0;
+      const room = Math.max(0, l.total401k - deferred - employer),
+        cap = r.megaAnnualCap == null ? Infinity : Math.max(0, r.megaAnnualCap);
+      notes.push(
+        `${year} IRS limit: ${usd(l.total401k)} for all 401(k) money, yours and your employer's. After your ${usd(deferred)} and your employer's ${usd(employer)}, ${usd(room)} is left.`,
+      );
+      if (cap < room) notes.push(`Your plan caps after-tax at ${usd(cap)}.`);
+      check = {
+        label: "After-tax 401(k)",
+        global: l.total401k,
+        limit: Math.min(room, cap),
+        used: total("mega"),
+        ytd: ytdOf(["mega"]),
+      };
+    } else if (key === "hsa") {
+      const family = h.coverage === "family",
+        months = Math.min(12, Math.max(0, h.eligibleMonths ?? 12)),
+        catchup = ageKnown && age >= 55 ? l.hsaCatchup : 0,
+        base = family ? l.hsaFamily : l.hsaSingle,
+        employer = totals.hsaEmployer || 0,
+        prior = Math.max(0, h.prior || 0);
+      const full = h.eligible ? ((base + catchup) * months) / 12 : 0;
+      notes.push(
+        `${year} IRS limit: ${usd(l.hsaSingle)} self-only or ${usd(l.hsaFamily)} family, including your employer's deposits.`,
+      );
+      if (!h.eligible) notes.push("You're marked as not HSA eligible.");
+      else {
+        if (!known("employerPlan.hsa.coverage"))
+          notes.push(
+            `Assumes ${family ? "family" : "self-only"} coverage. Confirm it under Complete the picture.`,
+          );
+        if (catchup)
+          notes.push(`Includes a ${usd(catchup)} catch-up at 55 or older.`);
+        if (months < 12) notes.push(`Prorated for ${months} eligible months.`);
+        if (employer)
+          notes.push(
+            `Your employer puts in ${usd(employer)}, which counts toward it.`,
+          );
+        if (prior)
+          notes.push(`Less ${usd(prior)} contributed elsewhere this year.`);
+      }
+      check = {
+        label: "HSA",
+        global: base,
+        limit: Math.max(0, full - employer - prior),
+        used: total("hsa"),
+        ytd: ytdOf(["hsa"]),
+      };
+    } else {
+      const limit = l.espp * (1 - Math.min(0.99, Math.max(0, e.discount || 0)));
+      notes.push(
+        `The IRS allows ${usd(l.espp)} of stock a year, valued at the offering-date price. With your ${Math.round((e.discount || 0) * 100)}% discount that's about ${usd(limit)} in contributions. Plans often cap the percent of pay too.`,
+      );
+      check = {
+        label: "ESPP",
+        global: l.espp,
+        limit,
+        used: total("espp"),
+        ytd: ytdOf(["espp"]),
+        approx: true,
+      };
+    }
+    if (check.ytd != null && check.ytd > 0)
+      notes.push(
+        `Includes ${usd(check.ytd)} already in this year, from your ${day(latest.date)} paystub, plus the rest of the year at your current rate.`,
+      );
+    const remaining = Math.round((check.limit - check.used) * 100) / 100;
+    return {
+      ...check,
+      year,
+      ytdDate: check.ytd != null ? latest.date : null,
+      remaining,
+      over: remaining < -0.005,
+      notes,
+    };
+  }
   // Payroll elections from a suggestion, except ones the user overrode or set
   // as annual amounts. Returns conflict notes. (applyUpload also copies a
   // percent ESPP election into employerPlan.espp.rate; re-reading elections
@@ -562,6 +740,8 @@
     return value;
   }
   const api = {
+    yearTotals,
+    limitCheck,
     amountUnits,
     equivalents,
     setElection,

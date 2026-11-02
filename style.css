@@ -2511,3 +2511,46 @@ button:disabled {
     font-size: 13px;
   }
 }
+/* IRS limit checks under paycheck items. */
+.limit-check {
+  margin-top: 10px;
+  max-width: 640px;
+}
+.limit-meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.limit-meter span {
+  display: block;
+  height: 100%;
+  background: var(--retire);
+}
+.limit-check.is-over .limit-meter span {
+  background: var(--tax);
+}
+.limit-line {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.limit-line strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.limit-over {
+  color: var(--tax);
+  font-weight: 500;
+}
+p.limit-over {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.limit-notes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-3);
+}
