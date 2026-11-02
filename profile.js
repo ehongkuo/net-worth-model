@@ -356,7 +356,7 @@
       else {
         if (!known("employerPlan.hsa.coverage"))
           notes.push(
-            `Assumes ${family ? "family" : "self-only"} coverage. Confirm it under Complete the picture.`,
+            `Assumes ${family ? "family" : "self-only"} coverage. Confirm it under From your employer.`,
           );
         if (catchup)
           notes.push(`Includes a ${usd(catchup)} catch-up at 55 or older.`);

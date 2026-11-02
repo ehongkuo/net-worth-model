@@ -192,8 +192,7 @@
         label: "Salary",
         value: salary > 0 ? `${usd(salary)} a year` : "Not set",
         missing: !(salary > 0),
-        step: 2,
-        section: "plan-compensation",
+        step: 0,
       },
       {
         id: "schedule",
@@ -214,7 +213,7 @@
         value: saving.length ? saving.join(" · ") : "Not contributing",
         source: fromPaystub(["traditional", "roth", "mega"]),
         step: 2,
-        section: "plan-retirement",
+        section: "plan-employer",
       },
       {
         id: "hsa",
@@ -222,7 +221,7 @@
         value: hsa > 0 ? `${usd(hsa)} a year` : "None",
         source: fromPaystub(["hsa"]),
         step: 2,
-        section: "plan-hsa",
+        section: "plan-employer",
       },
       {
         id: "espp",
@@ -232,7 +231,7 @@
           : "Not enrolled",
         source: plan.espp.enabled ? fromPaystub(["espp"]) : "",
         step: 2,
-        section: "plan-espp",
+        section: "plan-pay",
       },
       {
         id: "grants",
@@ -241,7 +240,7 @@
           ? `${grants.length} grant${grants.length === 1 ? "" : "s"}`
           : "None",
         step: 2,
-        section: "plan-compensation",
+        section: "plan-pay",
       },
     ];
   }

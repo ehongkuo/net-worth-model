@@ -211,7 +211,7 @@ function quickQuestions() {
     rsu: [
       "Your RSU grants",
       scenario.compensation.grants.length
-        ? `<p class="cf-note">Grant added. Set its share count, prices and dates under Pay & stock grants.</p><button data-open-grants>Edit grant details</button>`
+        ? `<p class="cf-note">Grant added. Set its share count, prices and dates under Pay & equity.</p><button data-open-grants>Edit grant details</button>`
         : `<p class="cf-note">${
             vests.vests.length
               ? `Your latest vest was ${escape(money(vests.vests.at(-1).value))} on ${escape(vests.vests.at(-1).date)}. We can keep that pace every ${vests.interval || 3} months for four years as a starting point, then you can edit it to match your grant.`
@@ -229,7 +229,7 @@ function quickQuestions() {
             "employerPlan.espp.offerPrice",
             "Company share price today",
             "number",
-            "A starting estimate for the offering, purchase and sale prices. Set the offering-start price and expected prices separately under Complete the picture when you know them.",
+            "A starting estimate for the offering, purchase and sale prices. Set the offering-start price and expected prices separately under Pay & equity when you know them.",
             {
               also: [
                 "employerPlan.espp.purchasePrice",
@@ -318,16 +318,25 @@ function renderSetupForm() {
           "Annual estimated tax payments",
         ) +
         field(t + "settings.capitalLossCarry", "Capital loss carryforward"),
+    ) +
+    group(
+      "Your W-4 (optional)",
+      field(t + "settings.withholdingMethod", "Forecast withholding", [
+        ["annual-estimate", "Estimated annual tax"],
+        ["w4", "W-4 payroll method"],
+      ]) +
+        field(t + "settings.w4Credits", "W-4 annual credits") +
+        field(t + "settings.w4OtherIncome", "W-4 other income") +
+        field(t + "settings.w4Deductions", "W-4 deductions") +
+        field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check"),
     );
   // Settings that describe the model rather than the user, gathered in one
   // collapsed group so setup never asks for them.
   const modelAssumptions = group(
-    "Model assumptions",
+    "Inflation, returns and future limits",
     field(p + "years", "Projection years") +
       field(p + "inflation", "Annual inflation", "percent") +
       field(p + "marketReturn", "Annual nominal investment return", "percent") +
-      field(c + "salaryGrowth", "Annual salary growth", "percent") +
-      field(c + "stockGrowth", "Annual company stock growth", "percent") +
       field(t + "settings.limitGrowth", "Future IRS limit growth", "percent") +
       field(
         t + "settings.bracketGrowth",
@@ -338,23 +347,13 @@ function renderSetupForm() {
         t + "settings.caGrowth2026",
         "California 2026 bracket adjustment",
         "percent",
-      ) +
-      choices(
-        "Your W-4 (optional)",
-        field(t + "settings.withholdingMethod", "Forecast withholding", [
-          ["annual-estimate", "Estimated annual tax"],
-          ["w4", "W-4 payroll method"],
-        ]) +
-          field(t + "settings.w4Credits", "W-4 annual credits") +
-          field(t + "settings.w4OtherIncome", "W-4 other income") +
-          field(t + "settings.w4Deductions", "W-4 deductions") +
-          field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check"),
       ),
   );
 
   const funding = Profile.employerFunding(scenario, result?.rows[1]?.payroll);
   const fundingSummary = `<div class="funding-summary"><h3>Employer retirement funding</h3>${table(["Reported YTD", "Projected remaining", "Projected annual total"], [[funding.ytd == null ? "No YTD uploaded" : money(funding.ytd), money(funding.remaining), money(funding.total)]])}<p class="cf-note">${funding.date ? `YTD through ${escape(funding.date)}. ` : ""}Reported YTD is already included in the projection. An annual target or matching rule sets expected future funding.</p></div>`;
-  const retirement =
+  // Your employer's 401(k) rules; your own IRA is saving outside work.
+  const employerRetirement =
     fundingSummary +
     paycheckItemNote(["traditional", "roth", "mega"]) +
     field(
@@ -382,27 +381,27 @@ function renderSetupForm() {
               "Blank means no employer cap beyond IRS limits.",
             )
           : ""),
-    ) +
-    choices(
-      "IRA contributions",
-      field(r + "iraMode", "IRA strategy", [
-        ["backdoor", "Backdoor Roth IRA"],
-        ["roth", "Direct Roth IRA"],
-        ["traditional", "Traditional IRA"],
-      ]) +
-        field(r + "maxIra", "Maximize annual IRA contribution", "check") +
-        (!plan.retirement.maxIra
-          ? field(r + "ira", "Annual IRA contribution")
-          : "") +
-        (plan.retirement.iraMode === "backdoor"
-          ? field(
-              r + "iraPretaxBalance",
-              "Other pre-tax IRA balance",
-              "number",
-              "Starting Traditional IRA balances also enter the pro-rata calculation.",
-            ) + field(r + "iraBasis", "Existing nondeductible IRA basis")
-          : ""),
     );
+  const ira = choices(
+    "IRA contributions",
+    field(r + "iraMode", "IRA strategy", [
+      ["backdoor", "Backdoor Roth IRA"],
+      ["roth", "Direct Roth IRA"],
+      ["traditional", "Traditional IRA"],
+    ]) +
+      field(r + "maxIra", "Maximize annual IRA contribution", "check") +
+      (!plan.retirement.maxIra
+        ? field(r + "ira", "Annual IRA contribution")
+        : "") +
+      (plan.retirement.iraMode === "backdoor"
+        ? field(
+            r + "iraPretaxBalance",
+            "Other pre-tax IRA balance",
+            "number",
+            "Starting Traditional IRA balances also enter the pro-rata calculation.",
+          ) + field(r + "iraBasis", "Existing nondeductible IRA basis")
+        : ""),
+  );
   const hsa =
     paycheckItemNote(["hsa"]) +
     choices(
@@ -571,6 +570,8 @@ function renderSetupForm() {
         new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
       ]),
     ) +
+    field(c + "salaryGrowth", "Annual raise", "percent") +
+    field(c + "stockGrowth", "Company stock growth per year", "percent") +
     `<div id="grant-timeline" class="grant-preview"></div>` +
     grants +
     '<button id="add-grant">Add RSU grant</button>';
@@ -679,21 +680,21 @@ function renderSetupForm() {
       field(p + "monthlyExpenses." + key, key[0].toUpperCase() + key.slice(1)),
     )
     .join("");
-  const projection =
+  const retirementPlan =
     field(p + "retirementAge", "Retirement age") +
     field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
     field(p + "socialSecurityStartAge", "Social Security start age") +
-    group("Starting balances", balances) +
-    group(
-      "Monthly living expenses",
+    choices(
+      "Monthly spending",
       (scenario.projection.monthlyExpenses.other > 0 &&
       Object.entries(scenario.projection.monthlyExpenses).some(
         ([key, v]) => key !== "other" && v > 0,
       )
         ? '<p class="plan-review-note">Your spending total is saved as Other (under About you, or below). Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
-        : "") + expenses,
-    ) +
-    modelAssumptions;
+        : '<p class="cf-note">Leave out anything already taken from your paycheck, like insurance premiums.</p>') +
+        expenses,
+    );
+  const savings = ira + choices("What you have today", balances);
   const review = Profile.describe(scenario).questions;
   const section = (id, title, body, questionIds = []) => {
     const notes = review.filter((q) => questionIds.includes(q.id));
@@ -708,19 +709,21 @@ function renderSetupForm() {
     `<div data-profile-step="1" class="profile-panel">${quick}<h2>Tax details</h2>${tax}</div>` +
     `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p class="panel-intro">${scenario.uploads.records.length ? "Your pay and what comes out of each check. Add more paystubs to fill gaps: the paycheck before your latest confirms your schedule, and RSU vest or bonus payslips show how those are taxed." : "Start with your latest regular paycheck and the one before it. Add RSU vest and bonus payslips too: they're often separate “off-cycle” payslips. You can select several PDFs at once."}</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
-    section("retirement", "Retirement & IRA", retirement, [
-      "mega",
-      "employer",
-    ]) +
-    section("hsa", "HSA", hsa, ["hsa"]) +
-    section("espp", "ESPP", espp, ["espp"]) +
-    section("compensation", "Pay & stock grants", compensation, ["allowance"]) +
     section(
-      "projection",
-      "Lifetime & spending",
-      '<p class="cf-note">Expenses exclude benefits already deducted from pay.</p>' +
-        projection,
+      "pay",
+      "Pay & equity",
+      compensation + (espp ? `<h4 class="plan-subhead">ESPP</h4>${espp}` : ""),
+      ["allowance", "espp"],
     ) +
+    section(
+      "employer",
+      "From your employer",
+      employerRetirement + `<h4 class="plan-subhead">HSA</h4>${hsa}`,
+      ["mega", "employer", "hsa"],
+    ) +
+    section("savings", "Saving outside work", savings) +
+    section("retirement", "Retirement & spending", retirementPlan) +
+    section("assumptions", "Assumptions", modelAssumptions) +
     `</div></div>`;
   $("setup")
     .querySelectorAll("details")
@@ -887,7 +890,7 @@ function renderSetupForm() {
         (el.onclick = () => {
           profileStep = 2;
           renderProfile();
-          $("plan-compensation")?.scrollIntoView({ block: "start" });
+          $("plan-pay")?.scrollIntoView({ block: "start" });
         }),
     );
   $("add-grant").onclick = () => {
