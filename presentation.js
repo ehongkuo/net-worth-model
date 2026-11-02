@@ -253,6 +253,13 @@
         why: "Paystubs rarely show it; it changes your tax brackets.",
         path: "taxProfile.settings.filing",
       });
+    if (!s.taxProfile?.settings?.state)
+      out.push({
+        id: "state",
+        label: "State income tax",
+        why: "Until you choose a state, no state income tax is included.",
+        path: "taxProfile.settings.state",
+      });
     if (
       s.taxProfile?.settings?.filing === "married" &&
       !confirmed("taxProfile.settings.spouseIncome") &&

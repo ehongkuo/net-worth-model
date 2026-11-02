@@ -120,6 +120,19 @@ function quickQuestions() {
         ["married", "Married filing jointly"],
       ]),
     ],
+    state: [
+      "State income tax",
+      field("taxProfile.settings.state", "Where you pay income tax", [
+        ["CA", "California"],
+        ["none", "A state with no income tax"],
+        ["custom", "Another state (effective rate)"],
+      ]) +
+        field(
+          "taxProfile.settings.customStateRate",
+          "State effective rate",
+          "percent",
+        ),
+    ],
     spouse: [
       "Spouse income",
       field("taxProfile.settings.spouseIncome", "Spouse's annual wages"),
@@ -917,6 +930,7 @@ function render() {
       c,
       result.ongoing.payroll,
       result.ongoing.flow,
+      { stateUnset: !scenario.taxProfile.settings.state },
     );
     renderEsppComparison(
       Compensation.esppSaleComparison(c, result.ongoing.payroll, {
