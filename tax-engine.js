@@ -8,7 +8,7 @@
   function defaults() {
     return {
       filing: "single",
-      state: "CA",
+      state: "none",
       spouseIncome: 0,
       otherIncome: 0,
       federalDeduction: 0,

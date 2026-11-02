@@ -24,7 +24,7 @@ npm start
 npm test
 ```
 
-Open http://127.0.0.1:5190. The server uses a fixed port and serves an explicit allowlist of app files. PDFs are parsed locally. Scanned PDFs require OCR and are not supported by this importer.
+Open http://127.0.0.1:5190. The server uses a fixed port and serves the app files listed in `site-files.js`. PDFs are parsed locally. Scanned PDFs require OCR and are not supported by this importer.
 
 ## Scenario as the source of truth
 
@@ -33,6 +33,31 @@ Open http://127.0.0.1:5190. The server uses a fixed port and serves an explicit 
 Older `{config, events}` exports migrate on load. The original saved document is retained locally and can be downloaded from Inspect scenario. Life events are excluded with a notice. The original browser storage key is left intact. A new scenario key is written only after a successful edit or import.
 
 Personal presets can be imported through the scenario importer. The app does not automatically populate new sessions from the ignored `development-defaults.js` file. Saved browser data is preserved.
+
+## Deploying
+
+The app is a static site hosted on Cloudflare Workers, set up like the home co-buy calculator. `npm run build` copies the files listed in `site-files.js` into `dist/`, along with pdf.js and the `_headers` security headers. `wrangler.jsonc` serves `dist/` as static assets, so no server code runs. Scenarios and paystubs stay in each visitor's browser. The build always writes an empty `development-defaults.js`, so a local personal preset is never published.
+
+Browser storage belongs to one origin. The deployed site starts empty: export a scenario from http://127.0.0.1:5190 and import it there.
+
+### One-time setup
+
+In the Cloudflare dashboard, go to **Workers & Pages → Create application → Import a repository**, connect GitHub (choose **Only select repositories**), pick this repo, and set the **Production** build settings:
+
+| Setting | Value |
+| --- | --- |
+| Project name | `net-worth-model` (must match `name` in `wrangler.jsonc`) |
+| Root directory | `/` |
+| Build command | `npm run build` |
+| Deploy command | `npx wrangler deploy` |
+
+The site is served at `https://net-worth-model.<your-subdomain>.workers.dev`. For PR previews, add a **Preview builds** trigger for all branches except `main` with deploy command `npx wrangler versions upload`, as in the co-buy calculator.
+
+### How updates ship
+
+- Merging to `main` deploys production. Files are served with `max-age=0, must-revalidate`, so visitors get the new version on their next load.
+- To roll back, open the Worker's **Deployments** tab and choose **Rollback** on an earlier version.
+- `.github/workflows/ci.yml` runs tests and a build on every PR and push to `main`. Turn on branch protection for `main` and require the `test` check.
 
 ## Calculation path
 

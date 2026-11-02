@@ -113,11 +113,12 @@ test("setup lists what a paystub can't answer, most important first", () => {
   assert(
     UI.missing(s)
       .map((m) => m.id)
-      .join() === "spending,balances,age,filing",
+      .join() === "spending,balances,age,filing,state",
   );
   s.projection.monthlyExpenses.housing = 2000;
   s.projection.startingBalances.cash = 5000;
   s.taxProfile.settings.filing = "married";
+  s.taxProfile.settings.state = "CA";
   s.uploads.confirmedFields = {
     "taxProfile.age": 30,
     "taxProfile.settings.filing": "married",

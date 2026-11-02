@@ -6,7 +6,12 @@ const {
   assertEqual,
 } = require("./harness");
 const C = require("../compensation");
-const config = (patch = {}) => C.merge(C.defaults(), patch);
+// Expected values below assume this synthetic salary unless a test sets one.
+const config = (patch = {}) =>
+  C.merge(
+    C.merge(C.defaults(), { salary: 165000, tax: { state: "CA" } }),
+    patch,
+  );
 describe("compensation and cash flow", () => {
   test("published 2026 limits are independent of projection growth", () => {
     const l = C.limits(2026, { limitGrowth: 0.1 });

@@ -62,7 +62,7 @@ function field(path, label, type = "number", hint = "", { also = [] } = {}) {
     return `<div class="profile-cell state-${state.kind}"><label class="check">${badge}<input ${attrs} type="checkbox" ${value ? "checked" : ""}>${escape(label)}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${sourceInfo}${approve}</div>`;
   const choices = Array.isArray(type) ? type : null;
   const control = choices
-    ? `<select ${attrs}>${choices
+    ? `<select ${attrs}>${value == null || value === "" ? '<option value="" selected disabled>Choose</option>' : ""}${choices
         .map((v) => {
           const [key, text] = Array.isArray(v) ? v : [v, v];
           return `<option value="${key}" ${String(value) === String(key) ? "selected" : ""}>${escape(text)}</option>`;
@@ -119,6 +119,19 @@ function quickQuestions() {
         ["single", "Single"],
         ["married", "Married filing jointly"],
       ]),
+    ],
+    state: [
+      "State income tax",
+      field("taxProfile.settings.state", "Where you pay income tax", [
+        ["CA", "California"],
+        ["none", "A state with no income tax"],
+        ["custom", "Another state (effective rate)"],
+      ]) +
+        field(
+          "taxProfile.settings.customStateRate",
+          "State effective rate",
+          "percent",
+        ),
     ],
     spouse: [
       "Spouse income",
@@ -917,6 +930,7 @@ function render() {
       c,
       result.ongoing.payroll,
       result.ongoing.flow,
+      { stateUnset: !scenario.taxProfile.settings.state },
     );
     renderEsppComparison(
       Compensation.esppSaleComparison(c, result.ongoing.payroll, {
@@ -1116,9 +1130,8 @@ async function readPaystubs(event) {
   try {
     const files = [...event.target.files];
     if (files.length > 12) throw new Error("Choose up to 12 PDFs.");
-    const pdfjs = await import("./node_modules/pdfjs-dist/build/pdf.mjs");
-    pdfjs.GlobalWorkerOptions.workerSrc =
-      "./node_modules/pdfjs-dist/build/pdf.worker.mjs";
+    const pdfjs = await import("./vendor/pdf.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = "./vendor/pdf.worker.mjs";
     for (const file of files) {
       if (file.size > 15 * 1024 * 1024)
         throw new Error("Each PDF must be smaller than 15 MB.");
@@ -1402,7 +1415,6 @@ try {
       scenario.taxProfile.year,
       new Date().getFullYear(),
     );
-    scenario.compensation.salary = 0;
   }
   view = Profile.initialView(scenario);
   result = Projection.calculate(scenario);

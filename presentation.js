@@ -151,7 +151,13 @@
         })[v] || v,
       filing: () => (v === "married" ? "Married filing jointly" : "Single"),
       state: () =>
-        v === "CA" ? "California" : v === "none" ? "None" : "Other state",
+        v === "CA"
+          ? "California"
+          : v === "none"
+            ? "None"
+            : v
+              ? "Other state"
+              : "Not set",
       coverage: () => (v === "family" ? "Family" : "Self-only"),
       yes: () => (v ? "Yes" : "No"),
       month: () =>
@@ -246,6 +252,13 @@
         label: "Filing status",
         why: "Paystubs rarely show it; it changes your tax brackets.",
         path: "taxProfile.settings.filing",
+      });
+    if (!s.taxProfile?.settings?.state)
+      out.push({
+        id: "state",
+        label: "State income tax",
+        why: "Until you choose a state, no state income tax is included.",
+        path: "taxProfile.settings.state",
       });
     if (
       s.taxProfile?.settings?.filing === "married" &&

@@ -113,6 +113,7 @@ test("local tax reconciles and becomes its own rate, not the state's", () => {
   );
   // The model adds it to state tax and to each check's withholding.
   const s = Scenario.defaults();
+  s.compensation.salary = 120000;
   s.taxProfile.settings.state = "none";
   const before = require("../projection").calculate(s).ongoing.payroll;
   s.taxProfile.settings.localRate = 0.03;

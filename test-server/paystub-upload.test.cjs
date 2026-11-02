@@ -58,10 +58,7 @@ async function upload(bytes, parserError) {
       source.indexOf("async function readPaystubs("),
       source.indexOf("function reviewUploads()"),
     )
-    .replace(
-      'await import("./node_modules/pdfjs-dist/build/pdf.mjs")',
-      "pdfjsTest",
-    );
+    .replace('await import("./vendor/pdf.mjs")', "pdfjsTest");
   const context = vm.createContext({
     pdfjsTest: api,
     Uint8Array,

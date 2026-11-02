@@ -93,7 +93,7 @@ if (typeof module !== "undefined")
   };
 
 /* All source amounts come from the same engine result used by the monthly flow. */
-function renderTaxExplorer(container, config, payroll, flow) {
+function renderTaxExplorer(container, config, payroll, flow, options = {}) {
   const t = flow.taxes,
     a = t.audit,
     x = flow.taxAttribution;
@@ -237,7 +237,7 @@ function renderTaxExplorer(container, config, payroll, flow) {
     .join(
       "",
     )}</div>${stateBar("State income before deductions", "gross", stateBefore)}${stateBar("State income after pre-tax deductions", "afterPretax", stateComparison.afterPretax)}<div class="tax-chart-axis"><span>$0</span><span>${compact(stateMaximum)}</span></div><div class="deduction-strip">${line("Household deductions / adjustments", stateComparison.householdDeductions)}${line("State taxable income", t.stateTaxable, true)}</div>${detail("state-brackets", "State bracket calculations", stateDetails)}</div>`;
-  container.innerHTML = `<p class="tax-period">${a.year} · ${a.settings.filing === "married" ? "Married filing jointly" : "Single"} · ${a.settings.state === "CA" ? "California" : a.settings.state === "custom" ? "Custom state estimate" : "No state income tax"}</p>
+  container.innerHTML = `<p class="tax-period">${a.year} · ${a.settings.filing === "married" ? "Married filing jointly" : "Single"} · ${a.settings.state === "CA" ? "California" : a.settings.state === "custom" ? "Custom state estimate" : options.stateUnset ? "State not set" : "No state income tax"}</p>
     <section class="glass-card tax-overview"><h3>Income before tax</h3><div class="flow-mode-toggle" role="group" aria-label="Tax jurisdiction"><button type="button" data-tax-chart-mode="federal" aria-pressed="true">Federal</button><button type="button" data-tax-chart-mode="state" aria-pressed="false" ${a.settings.state === "none" ? "disabled" : ""}>State</button></div><div data-tax-chart="federal">
       <div class="tax-chart-scroll"><div class="tax-chart-plot"><div class="tax-chart-rates">${markerRows.map((r) => `<button type="button" style="left:${pct(r.start)}%;width:${pct(r.end - r.start)}%" data-tax-bracket="${x.afterRows.findIndex((b) => b.lower === r.lower)}" title="${safe(description(r))}" aria-label="${safe(description(r))}">${pct(r.end - r.start) > 6 ? percent(r.rate) : ""}</button>`).join("")}</div>${bar("Gross ordinary income", "gross", comparison.gross)}${bar("Income after pre-tax deductions", "afterPretax", comparison.afterPretax)}<div class="tax-chart-axis"><span>$0</span>${markerRows
         .slice(1)
