@@ -3,6 +3,8 @@
   const labels = {
     salary: "Base salary",
     bonus: "Bonus",
+    rsu: "RSU vest income",
+    rsuOffset: "RSU shares delivered (not cash)",
     allowance: "Cash allowance (not taxable)",
     imputed: "Noncash taxable benefit",
     traditional: "Traditional 401(k)",
@@ -115,11 +117,27 @@
         ? "imputed"
         : /regular salary|base salary|regular pay/i.test(label)
           ? "salary"
-          : /bonus/i.test(label)
-            ? "bonus"
-            : /connectivity allowance/i.test(label)
-              ? "allowance"
-              : null;
+          : /\bRSU\b|restricted stock|stock (vest|release|award|distribution)/i.test(
+                label,
+              )
+            ? "rsu"
+            : /bonus/i.test(label)
+              ? "bonus"
+              : /connectivity allowance/i.test(label)
+                ? "allowance"
+                : // Stipends are taxable unless paid as reimbursements.
+                  /stipend|allowance/i.test(label)
+                  ? "taxableAllowance"
+                  : null;
+    // Vested shares are paid as "income" and taken back as a post-tax line, so
+    // the check nets to zero cash.
+    if (
+      section === "Post Tax Deductions" &&
+      /\bRSU\b|stock (deposit|offset|delivery)|net shares|shares? (deposit|withheld)/i.test(
+        label,
+      )
+    )
+      return "rsuOffset";
     if (/mega|after.tax.*401|401.*after.tax/i.test(label)) return "mega";
     if (/401.*roth|roth.*401/i.test(label)) return "roth";
     if (/401.*pre.tax|traditional.*401/i.test(label)) return "traditional";
@@ -226,7 +244,9 @@
       );
       if (known) {
         line.key = known.category;
-        line.schedule = known.schedule;
+        // An inferred cadence is recomputed from all uploads, not copied.
+        if (!known.scheduleBasis) line.schedule = known.schedule;
+        if (known.scheduleSet) line.scheduleSet = true;
         line.annualCap = known.annualCap;
       }
     }
@@ -254,6 +274,7 @@
           current: line.current,
           ytd: line.ytd,
           annualCap: line.annualCap ?? null,
+          ...(line.scheduleSet ? { scheduleSet: true } : {}),
           schedule:
             line.schedule ||
             (["commuter", "parking"].includes(line.key)
@@ -261,7 +282,21 @@
               : "paycheck"),
         });
     }
+    record.kind = kindOf(record.current);
     return record;
+  }
+  // A check that pays no salary is off-cycle: an RSU vest or a bonus paid on
+  // its own. Off-cycle checks never supply recurring elections.
+  const kindLabels = {
+    regular: "Regular paycheck",
+    equity: "RSU vest",
+    bonus: "Bonus check",
+  };
+  function kindOf(current) {
+    if (current.salary > 0) return "regular";
+    if (current.rsu > 0) return "equity";
+    if (current.bonus > 0) return "bonus";
+    return "regular";
   }
   function validate(r) {
     const errors = [];
@@ -286,6 +321,7 @@
       gross = total(current, [
         "salary",
         "bonus",
+        "rsu",
         "allowance",
         "taxableAllowance",
       ]),
@@ -298,7 +334,7 @@
         "medicare",
         "sdi",
       ]),
-      posttax = total(current, ["roth", "mega", "espp", "post"]);
+      posttax = total(current, ["roth", "mega", "espp", "post", "rsuOffset"]);
     const computed = {
       gross,
       pretax,
@@ -316,7 +352,13 @@
         errors.push(`${k} does not reconcile to the printed total.`);
     if (r.summary?.ytd) {
       const y = r.ytd || {},
-        gross = total(y, ["salary", "bonus", "allowance", "taxableAllowance"]),
+        gross = total(y, [
+          "salary",
+          "bonus",
+          "rsu",
+          "allowance",
+          "taxableAllowance",
+        ]),
         pretax = total(y, ["traditional", "hsa", "health"]),
         taxes = total(y, [
           "federal",
@@ -326,7 +368,7 @@
           "medicare",
           "sdi",
         ]),
-        posttax = total(y, ["roth", "mega", "espp", "post"]);
+        posttax = total(y, ["roth", "mega", "espp", "post", "rsuOffset"]);
       const computedYtd = {
         gross,
         pretax,
@@ -364,11 +406,80 @@
       typeof module !== "undefined" && module.exports
         ? require("./tax-engine")
         : root.TaxEngine;
-    const sorted = [...records]
-        .filter((r) => (r.kind || "regular") === "regular")
-        .sort((a, b) => a.date.localeCompare(b.date)),
+    const all = [...records].sort((a, b) => a.date.localeCompare(b.date)),
+      sorted = all.filter((r) => (r.kind || "regular") === "regular"),
       last = sorted.at(-1);
-    if (!last) return {};
+    const inferred = {},
+      infer = (path, value, basis, sourceDate) =>
+        (inferred[path] = sourceDate
+          ? { value, basis, sourceDate }
+          : { value, basis });
+    // Off-cycle RSU and bonus checks show the flat supplemental withholding
+    // rates, since nothing else is paid on them.
+    for (const [kind, key, name] of [
+      ["equity", "rsu", "RSU"],
+      ["bonus", "bonus", "Bonus"],
+    ]) {
+      const check = all.findLast((r) => r.kind === kind && r.current[key] > 0);
+      if (!check) continue;
+      const v = check.current,
+        rate = (n) => Math.round((n / v[key]) * 10000) / 10000;
+      if (v.federal > 0)
+        infer(
+          `taxProfile.settings.${key}FederalRate`,
+          rate(v.federal),
+          `Federal tax withheld on your ${name} check of ${check.date}`,
+          check.date,
+        );
+      // Local tax is modelled separately, so it isn't folded in here.
+      if (v.state > 0)
+        infer(
+          `taxProfile.settings.${key}StateRate`,
+          rate(v.state),
+          `State tax withheld on your ${name} check of ${check.date}`,
+          check.date,
+        );
+    }
+    // An off-cycle check names the state too, when it is the only upload.
+    const src = last || all.at(-1);
+    // State: only a recognized state income tax line names it. An unrecognized
+    // or missing line is never read as "no state income tax".
+    const stateLine = (src?.lines || []).find((l) => l.key === "state");
+    const code = stateCode(stateLine?.label || "");
+    if (code === "CA")
+      infer(
+        "taxProfile.settings.state",
+        "CA",
+        `Withholding line "${stateLine.label}"`,
+        src.date,
+      );
+    else if (code && NO_INCOME_TAX.includes(code))
+      infer(
+        "taxProfile.settings.state",
+        "none",
+        `${code} has no state income tax`,
+        src.date,
+      );
+    else if (code) {
+      infer(
+        "taxProfile.settings.state",
+        "custom",
+        `Withholding line "${stateLine.label}"`,
+        src.date,
+      );
+      // State withholding also covers bonus and RSU income.
+      const wages =
+        (src.ytd.salary || 0) + (src.ytd.bonus || 0) + (src.ytd.rsu || 0);
+      if (wages > 0 && src.ytd.state > 0)
+        infer(
+          "taxProfile.settings.customStateRate",
+          Math.round((src.ytd.state / wages) * 10000) / 10000,
+          "Estimated from state tax withheld this year; adjust if you know your effective rate",
+          src.date,
+        );
+    }
+    if (!last)
+      return { elections: {}, inferred, withholding: {}, warnings: [] };
     const gap =
       sorted.length > 1
         ? (Date.parse(last.date) - Date.parse(sorted.at(-2).date)) / 86400000
@@ -385,11 +496,9 @@
       salary =
         Math.abs(snapped - rawSalary) <= count * 0.01 ? snapped : rawSalary,
       elections = {},
-      inferred = {},
       warnings = [];
     // Inferences are recorded even for values the user set or confirmed;
     // applyUpload keeps the user's value and reports the disagreement.
-    const infer = (path, value, basis) => (inferred[path] = { value, basis });
     const year = Number(last.date.slice(0, 4));
     // Only a check from the current calendar year describes the year being
     // modeled; older checks (e.g. last December's) never move the tax year.
@@ -403,38 +512,6 @@
         filing,
         "Withholding status printed on your paystub",
       );
-    // State: only a recognized state income tax line names it. An unrecognized
-    // or missing line is never read as "no state income tax".
-    const stateLine = (last.lines || []).find((l) => l.key === "state");
-    const code = stateCode(stateLine?.label || "");
-    if (code === "CA")
-      infer(
-        "taxProfile.settings.state",
-        "CA",
-        `Withholding line "${stateLine.label}"`,
-      );
-    else if (code && NO_INCOME_TAX.includes(code))
-      infer(
-        "taxProfile.settings.state",
-        "none",
-        `${code} has no state income tax`,
-      );
-    else if (code) {
-      infer(
-        "taxProfile.settings.state",
-        "custom",
-        `Withholding line "${stateLine.label}"`,
-      );
-      // State withholding also covers bonus and RSU income.
-      const wages =
-        (last.ytd.salary || 0) + (last.ytd.bonus || 0) + (last.ytd.rsu || 0);
-      if (wages > 0 && last.ytd.state > 0)
-        infer(
-          "taxProfile.settings.customStateRate",
-          Math.round((last.ytd.state / wages) * 10000) / 10000,
-          "Estimated from state tax withheld this year; adjust if you know your effective rate",
-        );
-    }
     // City, local and school income tax, as an effective rate like the state's.
     const localWages =
       (last.ytd.salary || 0) + (last.ytd.bonus || 0) + (last.ytd.rsu || 0);
@@ -473,7 +550,10 @@
           l.current > 0 &&
           /annual|performance|target|incentive/i.test(l.label),
       );
-    const bonusCheck = sorted.findLast(recurringBonus);
+    // An annual bonus is often paid on its own off-cycle check.
+    const bonusCheck = all
+      .filter((r) => ["regular", "bonus"].includes(r.kind || "regular"))
+      .findLast(recurringBonus);
     if (bonusCheck && salary > 0) {
       infer(
         "compensation.bonusMonth",
@@ -600,16 +680,49 @@
       record: last,
     };
   }
+  // How often a benefit is paid, from the regular checks it was seen on.
+  // Needs two checks; a benefit on every check is per paycheck, otherwise the
+  // typical gap between payments sets monthly, quarterly or annual.
+  function cadence(observations) {
+    const paid = observations.filter((o) => o.current > 0);
+    if (observations.length < 2 || !paid.length) return null;
+    if (paid.length === observations.length)
+      return {
+        schedule: "paycheck",
+        basis: `Paid on all ${paid.length} uploaded paychecks`,
+      };
+    if (paid.length < 2) return null;
+    const month = (d) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7));
+    const gaps = paid
+      .slice(1)
+      .map((o, i) => month(o.date) - month(paid[i].date))
+      .sort((a, b) => a - b);
+    const gap = gaps[Math.floor(gaps.length / 2)];
+    const schedule = { 1: "monthly", 3: "quarterly", 12: "annual" }[gap];
+    return schedule
+      ? {
+          schedule,
+          basis: `Paid on ${paid.length} of ${observations.length} uploaded paychecks, about every ${gap === 1 ? "month" : gap === 3 ? "3 months" : "year"}`,
+        }
+      : null;
+  }
+  const SPACED = ["monthly", "quarterly", "annual"];
   function benefitPlans(records) {
-    const plans = new Map();
-    for (const record of [...records].sort((a, b) =>
-      a.date.localeCompare(b.date),
-    ))
+    const plans = new Map(),
+      seen = new Map();
+    // Off-cycle checks don't show recurring benefits.
+    for (const record of [...records]
+      .filter((r) => (r.kind || "regular") === "regular")
+      .sort((a, b) => a.date.localeCompare(b.date)))
       for (const b of record.benefits || []) {
         if (!benefitTypes[b.category]) continue;
         const previous = plans.get(b.id);
+        const obs = seen.get(b.id) || [];
+        // A blank current cell on a regular check means it wasn't paid.
+        obs.push({ date: record.date, current: b.current || 0 });
+        seen.set(b.id, obs);
         const current =
-          b.schedule === "monthly" && !(b.current > 0) && previous
+          SPACED.includes(b.schedule) && !(b.current > 0) && previous
             ? previous.current
             : b.current;
         plans.set(b.id, {
@@ -618,11 +731,127 @@
           sourceDate: record.date,
         });
       }
+    for (const [id, plan] of plans) {
+      const obs = seen.get(id) || [],
+        lastPaid = obs.findLast((o) => o.current > 0);
+      // A schedule the user chose is kept; otherwise the uploads decide.
+      // Older saves don't flag a choice, but only a choice moves it off the
+      // per-paycheck default.
+      const chosen = plan.scheduleSet || plan.schedule !== "paycheck",
+        found = chosen ? null : cadence(obs);
+      if (found) {
+        plan.schedule = found.schedule;
+        plan.scheduleBasis = found.basis;
+      }
+      if (SPACED.includes(plan.schedule) && lastPaid)
+        plan.current = lastPaid.current;
+      if (lastPaid) plan.anchorMonth = Number(lastPaid.date.slice(5, 7));
+      // Seen only in YTD, or on one check: the amount or cadence is a guess.
+      if (!chosen && !found)
+        plan.hint = lastPaid
+          ? obs.length < 2
+            ? "Upload another paycheck to learn how often this is paid."
+            : "Paid on only one uploaded paycheck; upload another one that includes it to learn how often it's paid."
+          : plan.ytd > 0
+            ? "Paid earlier this year but not on this paycheck; upload a paycheck that includes it."
+            : null;
+    }
     return [...plans.values()];
   }
+  // RSU vests a year's uploads show: dated vest checks, and the YTD total any
+  // check prints (which may include vests that weren't uploaded).
+  function vestHistory(records, year) {
+    const inYear = [...records]
+      .filter((r) => Number(r.date.slice(0, 4)) === year)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const vests = inYear
+      .filter((r) => r.kind === "equity" && r.current?.rsu > 0)
+      .map((r) => ({ date: r.date, value: r.current.rsu }));
+    const snapshot = inYear.filter((r) => r.ytd?.rsu > 0).at(-1);
+    const month = (d) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7));
+    const gaps = vests
+      .slice(1)
+      .map((v, i) => month(v.date) - month(vests[i].date))
+      .filter((g) => g > 0)
+      .sort((a, b) => a - b);
+    return {
+      vests,
+      ytd: Math.max(
+        snapshot?.ytd.rsu || 0,
+        vests.reduce((n, v) => n + v.value, 0),
+      ),
+      ytdDate: snapshot?.date || vests.at(-1)?.date || "",
+      interval: gaps.length ? gaps[Math.floor(gaps.length / 2)] : null,
+    };
+  }
+  // Gaps these paystubs reveal, each with the paystub that would close it.
+  // Most people don't know an RSU vest or bonus is often its own payslip.
+  const usd = (n) =>
+    Number(n).toLocaleString("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 0,
+    });
+  const OFF_CYCLE_TIP =
+    "In your payroll portal it's usually listed separately from regular paychecks, named something like On Demand, Off-cycle or Supplemental.";
+  function uploadHints(records) {
+    const sorted = [...records].sort((a, b) => a.date.localeCompare(b.date)),
+      regular = sorted.filter((r) => (r.kind || "regular") === "regular"),
+      latest = sorted.at(-1),
+      year = latest?.date.slice(0, 4),
+      thisYear = sorted.filter((r) => r.date.slice(0, 4) === year),
+      hints = [];
+    if (!latest) return hints;
+    if (!regular.length)
+      hints.push({
+        id: "regular",
+        ask: "A regular paycheck",
+        gap: "Off-cycle checks like RSU vests don't show your salary, pay schedule or contributions.",
+      });
+    else if (regular.length === 1)
+      hints.push({
+        id: "previous",
+        ask: `The paycheck before ${regular[0].date}`,
+        gap: "Two checks in a row confirm how often you're paid and how often each benefit is paid.",
+      });
+    const ytd = thisYear.findLast((r) => r.ytd)?.ytd || {};
+    if (ytd.rsu > 0 && !thisYear.some((r) => r.kind === "equity"))
+      hints.push({
+        id: "rsu",
+        ask: "An RSU vest payslip",
+        gap: `Your year-to-date totals show ${usd(ytd.rsu)} of RSU income, but not when it vested or how it was taxed.`,
+        tip: OFF_CYCLE_TIP,
+      });
+    if (ytd.bonus > 0 && !thisYear.some((r) => r.current?.bonus > 0))
+      hints.push({
+        id: "bonus",
+        ask: "The payslip that paid your bonus",
+        gap: `Your year-to-date totals show a ${usd(ytd.bonus)} bonus, but not when it was paid or how it was taxed.`,
+        tip: "It may be a regular paycheck or its own off-cycle payslip.",
+      });
+    // With one regular check, the "previous" hint already covers cadence.
+    const unclear = benefitPlans(records).filter(
+      (plan) => plan.hint && (regular.length > 1 || !(plan.current > 0)),
+    );
+    if (unclear.length)
+      hints.push({
+        id: "benefit",
+        ask: `A paycheck that includes ${unclear.map((p) => p.label).join(", ")}`,
+        gap:
+          unclear.length === 1
+            ? `${unclear[0].label} was paid earlier this year, so we can't tell how much or how often.`
+            : "These were paid earlier this year, so we can't tell how much or how often.",
+      });
+    return hints;
+  }
   const api = {
+    kindLabels,
+    uploadHints,
+    vestHistory,
     benefitTypes,
     benefitPlans,
+    cadence,
+    kindOf,
     parse,
     rebuild,
     validate,

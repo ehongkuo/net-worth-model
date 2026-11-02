@@ -83,7 +83,15 @@
       ...Object.fromEntries(fields.map((k) => [k, 0])),
     }));
     distribute(rows, "salary", salary);
-    if (bonus) {
+    // An uploaded check that already paid the bonus in its month replaces
+    // the forecast one; an off-cycle bonus check isn't a regular row.
+    const bonusPaid = (p.records || []).some(
+      (r) =>
+        Number(r.date.slice(0, 4)) === year &&
+        Number(r.date.slice(5, 7)) === c.bonusMonth &&
+        r.current?.bonus > 0,
+    );
+    if (bonus && !bonusPaid) {
       const row =
         rows.find((x) => x.date === p.bonusDate) ||
         rows.find((x) => Number(x.date.slice(5, 7)) === c.bonusMonth);
@@ -179,12 +187,21 @@
           const first = rows.find(
             (x) => x.date.slice(0, 7) === row.date.slice(0, 7),
           );
-          const value =
-            b.schedule === "once" || b.schedule === "review"
-              ? 0
-              : b.schedule === "monthly" && first !== row
-                ? 0
-                : positive(b.current);
+          // Quarterly and annual payments land in the months the uploads
+          // showed them (the anchor), on that month's first paycheck.
+          const month = Number(row.date.slice(5, 7)),
+            anchor = b.anchorMonth || 1,
+            due =
+              b.schedule === "paycheck"
+                ? true
+                : b.schedule === "monthly"
+                  ? first === row
+                  : b.schedule === "quarterly"
+                    ? first === row && (month - anchor + 12) % 3 === 0
+                    : b.schedule === "annual"
+                      ? first === row && month === anchor
+                      : false;
+          const value = due ? positive(b.current) : 0;
           row[key] = (row[key] || 0) + value;
           row.benefitDetails.push({ ...b, value });
         }
@@ -195,7 +212,10 @@
     const records = (p.records || [])
       .filter((v) => validDate(v.date) && Number(v.date.slice(0, 4)) === year)
       .sort((a, b) => a.date.localeCompare(b.date));
+    // RSU vest checks come from the grant schedule, which models their taxes.
+    const equityChecks = records.filter((r) => r.kind === "equity");
     for (const record of records) {
+      if (record.kind === "equity") continue;
       let row = rows.find(
         (x) =>
           x.date === record.date &&
@@ -252,6 +272,16 @@
         const snapshot = records.filter((r) => r.ytd?.[key] != null).at(-1);
         if (!snapshot) continue;
         const through = history.filter((x) => x.date <= snapshot.date);
+        // Withholding on RSU checks isn't spread over salary checks. Their
+        // taxable wages stay in the totals that track the wage-base limits.
+        const equity = key.startsWith("taxable")
+          ? 0
+          : sum(
+              equityChecks
+                .filter((r) => r.date <= snapshot.date)
+                .map((r) => r.current),
+              key,
+            );
         const residual =
           cents(snapshot.ytd[key]) -
           cents(
@@ -259,7 +289,8 @@
               through.filter((x) => x.source === "uploaded"),
               key,
             ),
-          );
+          ) -
+          cents(equity);
         if (residual < 0) {
           warnings.push(
             `Uploaded ${key} exceeds the latest YTD snapshot; review the documents.`,

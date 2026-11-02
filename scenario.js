@@ -108,6 +108,8 @@
   const payrollFields = [
     "salary",
     "bonus",
+    "rsu",
+    "rsuOffset",
     "allowance",
     "taxableAllowance",
     "imputed",
@@ -248,6 +250,7 @@
               "current",
               "ytd",
               "schedule",
+              "scheduleSet",
               "annualCap",
             ]),
           ),
@@ -286,7 +289,16 @@
     };
     for (const record of scenario.uploads.records)
       for (const b of record.benefits) {
-        if (!["paycheck", "monthly", "once", "review"].includes(b.schedule))
+        if (
+          ![
+            "paycheck",
+            "monthly",
+            "quarterly",
+            "annual",
+            "once",
+            "review",
+          ].includes(b.schedule)
+        )
           throw new Error("Choose a valid benefit schedule.");
         if (
           b.annualCap != null &&
