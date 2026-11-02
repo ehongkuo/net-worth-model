@@ -117,7 +117,17 @@ function field(path, label, type = "number", hint = "", { also = [] } = {}) {
   const value = get(scenario, path),
     attrs = `data-path="${path}" data-type="${type}"${also.length ? ` data-also="${also.join(",")}"` : ""}`;
   const state = Profile.fieldState(scenario, path);
-  const { badge, approve } = Presentation.fieldBadge(state, path, label);
+  let { badge, approve } = Presentation.fieldBadge(state, path, label);
+  // Inside a review block one bar confirms every estimate; each field only
+  // flags a value that is missing.
+  if (quietReview) {
+    approve = "";
+    if (state.label !== "Needs input") {
+      badge = "";
+      if (state.kind === "review" || state.kind === "inferred")
+        state.kind = "estimate";
+    }
+  }
   if (type === "check")
     return `<div class="profile-cell state-${state.kind}"><label class="check">${badge}<input ${attrs} type="checkbox" ${value ? "checked" : ""}>${escape(label)}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${sourceInfo}${approve}</div>`;
   const choices = Array.isArray(type) ? type : null;
@@ -130,6 +140,45 @@ function field(path, label, type = "number", hint = "", { also = [] } = {}) {
         .join("")}</select>`
     : `<input ${attrs} type="${["date", "text"].includes(type) ? type : "number"}" step="any" value="${escape(Profile.displayValue(value, type === "number" && /(?:^taxProfile\.(?:year|age)$|\.(?:years|retirementAge|socialSecurityStartAge|eligibleMonths|periodMonths|holdMonths|cliff|interval|shareCap)$)/.test(path) ? "count" : type))}">`;
   return `<div class="profile-cell state-${state.kind}"><label class="field">${badge}<span>${escape(label)}${type === "percent" ? " (%)" : ""}</span>${control}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${sourceInfo}${approve}</div>`;
+}
+// The per-share price the engine uses, spelled out.
+function esppPriceNote(e) {
+  const offer = Math.max(0.01, e.offerPrice || 0),
+    market = Math.max(0.01, e.purchasePrice || 0),
+    d = Math.min(0.99, Math.max(0, e.discount || 0)),
+    base = e.lookback ? Math.min(offer, market) : market;
+  const which = !e.lookback
+    ? `the purchase-day price of ${money(market)}`
+    : offer <= market
+      ? `the ${money(offer)} offering price (lower than ${money(market)} on purchase day)`
+      : `the ${money(market)} purchase-day price (lower than the ${money(offer)} offering price)`;
+  return `<p class="grant-summary"><strong>You'd buy at ${money(base * (1 - d))} a share</strong>: ${Math.round(d * 100)}% off ${which}.</p>`;
+}
+let quietReview = false;
+// Fields whose values are still estimates (defaults or inferred from
+// paystubs) under one title, with a single bar to confirm them together.
+function reviewBlock(title, render, intro = "") {
+  quietReview = true;
+  let body;
+  try {
+    body = render();
+  } finally {
+    quietReview = false;
+  }
+  if (!body) return "";
+  const pending = [
+    ...new Set([...body.matchAll(/data-path="([^"]+)"/g)].map((m) => m[1])),
+  ].filter((p) => {
+    const st = Profile.fieldState(scenario, p);
+    return (
+      st.kind === "inferred" ||
+      (st.kind === "review" && st.label !== "Needs input")
+    );
+  });
+  const bar = pending.length
+    ? `<div class="review-bar state-review"><span>${pending.length === 1 ? "1 value is an estimate" : `${pending.length} values are estimates`}. Check them, then confirm.</span><button type="button" data-confirm-all="${escape(pending.join(","))}">Looks right</button></div>`
+    : "";
+  return `<fieldset class="choice-group review-block"><legend>${escape(title)}</legend>${intro}${bar}<div class="field-grid">${body}</div></fieldset>`;
 }
 const group = (title, body, open = false) =>
   `<details ${open ? "open" : ""}><summary>${escape(title)}</summary><div class="field-grid">${body}</div></details>`;
@@ -419,9 +468,10 @@ function renderSetupForm() {
           : ""),
     );
   const espp =
-    choices(
+    reviewBlock(
       "Participation",
-      field(e + "enabled", "Participate in ESPP", "check") +
+      () =>
+        field(e + "enabled", "Participate in ESPP", "check") +
         (plan.espp.enabled
           ? // A per-paycheck dollar election from a paystub drives payroll; the
             // percent rate only applies when the election is a percentage.
@@ -436,49 +486,61 @@ function renderSetupForm() {
           : ""),
     ) +
     (plan.espp.enabled
-      ? choices(
+      ? reviewBlock(
           "Offerings",
-          field(e + "start", "First offering start", "date") +
-            field(e + "end", "First offering end (optional)", "date") +
+          () =>
+            field(e + "start", "Current offering started", "date") +
             field(e + "periodMonths", "Months per offering") +
-            field(
-              e + "autoEnroll",
-              "Automatically enroll in subsequent offerings",
-              "check",
-            ) +
+            field(e + "end", "Current offering ends (optional)", "date") +
+            field(e + "autoEnroll", "Re-enroll in each new offering", "check") +
             field(
               e + "firstEnrollmentDate",
-              "First offering you participate in (optional)",
+              "First offering you joined (optional)",
               "date",
             ),
         ) +
-        choices(
-          "Purchase rules",
-          field(e + "discount", "Purchase discount", "percent") +
+        reviewBlock(
+          "Purchase price",
+          () =>
+            field(e + "discount", "Discount", "percent") +
             field(
               e + "lookback",
-              "Use lower of offering and purchase price",
+              "Lookback: pay the lower of the two prices",
               "check",
             ) +
-            field(e + "offerPrice", "Offering share price") +
-            field(e + "purchasePrice", "Expected purchase-date share price") +
             field(
-              e + "shareCap",
-              "Maximum shares per offering (0 means none)",
+              e + "offerPrice",
+              "Market price when the offering started",
+              "number",
+              "Before the discount.",
             ) +
+            (plan.espp.lookback
+              ? `<div class="profile-cell"><label class="field"><span>Most you'll pay per share</span><input type="number" step="any" data-espp-ceiling value="${(plan.espp.offerPrice * (1 - plan.espp.discount)).toFixed(2)}"><small>After the discount. Enter this if it's the number you know; we work out the offering price from it.</small></label></div>`
+              : "") +
             field(
-              e + "annualPayrollCap",
-              "Employer annual payroll cap (0 means none)",
-            ) +
-            field(
-              e + "annualFmvLimit",
-              "Qualified-plan annual grant-date value limit",
-            ) +
-            field(e + "fractional", "Allow fractional shares", "check"),
+              e + "purchasePrice",
+              "Expected market price on purchase day",
+              "number",
+              "Before the discount.",
+            ),
+          esppPriceNote(plan.espp),
         ) +
-        choices(
+        `<details class="plan-limits"><summary>Plan limits</summary><div class="field-grid">${
+          field(e + "shareCap", "Most shares per offering (0 means none)") +
+          field(
+            e + "annualPayrollCap",
+            "Employer yearly payroll cap (0 means none)",
+          ) +
+          field(
+            e + "annualFmvLimit",
+            "Yearly limit on stock value at offering prices",
+          ) +
+          field(e + "fractional", "Fractional shares", "check")
+        }</div></details>` +
+        reviewBlock(
           "After purchase",
-          field(e + "holdShares", "Hold purchased shares", "check") +
+          () =>
+            field(e + "holdShares", "Hold purchased shares", "check") +
             (!plan.espp.holdShares
               ? field(e + "salePrice", "Expected sale price") +
                 field(e + "holdMonths", "Months until sale")
@@ -511,53 +573,60 @@ function renderSetupForm() {
           : ""),
     );
   const grants = scenario.compensation.grants
-    .map((g, i) =>
-      group(
+    .map((g, i) => {
+      const p = c + `grants.${i}.`,
+        vests = EquitySchedule.vests(g),
+        values = vests.map((v) => v.value),
+        low = Math.min(...values),
+        high = Math.max(...values),
+        pace = EquitySchedule.pace(
+          g,
+          EquitySchedule.asOf(scenario.taxProfile.year),
+        );
+      const summary = vests.length
+        ? `<p class="grant-summary"><strong>${vests.length} vest${vests.length === 1 ? "" : "s"} of ${Math.round(low) === Math.round(high) ? money(low) : `${money(low)}–${money(high)}`}</strong>, ${escape(longDate(vests[0].date))} to ${escape(longDate(vests.at(-1).date))}${pace.phase ? ` · about ${money(pace.monthlyMarket)} a month now` : ""}</p>`
+        : "";
+      const uneven = g.evenVesting === false;
+      return `<div class="grant-card">${reviewBlock(
         g.name || `Grant ${i + 1}`,
-        field(c + `grants.${i}.name`, "Grant name", "text") +
-          field(c + `grants.${i}.value`, "Total grant value") +
-          field(c + `grants.${i}.grantPrice`, "Grant-date share price") +
-          field(c + `grants.${i}.vestPrice`, "Assumed vest-date share price") +
-          choices(
-            "Vesting schedule",
-            field(c + `grants.${i}.start`, "Grant date", "date") +
-              field(
-                c + `grants.${i}.months`,
-                "Vesting duration (years)",
-                "years",
-              ) +
-              field(
-                c + `grants.${i}.evenVesting`,
-                "Even vesting schedule",
-                "check",
-              ) +
-              `<label class="profile-cell"><span>Annual allocations (%)</span><input data-grant-allocation="${i}" value="${EquitySchedule.allocations(
+        () =>
+          field(p + "name", "Name", "text") +
+          field(p + "value", "Total grant value") +
+          field(p + "start", "Grant date", "date") +
+          field(p + "months", "Vests over (years)", "years") +
+          field(p + "interval", "Vests every (months)") +
+          field(p + "cliff", "Cliff (months)") +
+          field(
+            p + "grantPrice",
+            "Share price at grant",
+            "number",
+            "Turns the grant value into shares; it's on your grant letter.",
+          ) +
+          field(
+            p + "vestPrice",
+            "Expected share price at vest",
+            "number",
+            "Same as the grant price means no growth.",
+          ) +
+          field(p + "saleMode", "At vest", [
+            ["cover", "Sell to cover taxes"],
+            ["hold", "Hold all shares"],
+            ["sell", "Sell all shares"],
+          ]) +
+          field(p + "repeat", "A new grant like this every year", "check") +
+          field(p + "evenVesting", "Same amount each year", "check") +
+          (uneven
+            ? `<label class="profile-cell"><span>Share per year (%)</span><input data-grant-allocation="${i}" value="${EquitySchedule.allocations(
                 g,
               )
                 .map((x) => Number(x.toFixed(6)))
                 .join(
                   " / ",
-                )}" ${g.evenVesting !== false ? "readonly" : ""} aria-label="Annual allocations for ${escape(g.name)}"><small>${g.evenVesting !== false ? "Calculated from the vesting duration." : "One percentage per grant year, separated by /. Must total 100%."}</small></label>` +
-              field(c + `grants.${i}.cliff`, "Cliff (months)") +
-              field(c + `grants.${i}.interval`, "Vesting interval (months)") +
-              field(c + `grants.${i}.repeat`, "Repeat grant annually", "check"),
-          ) +
-          field(c + `grants.${i}.saleMode`, "At vest", [
-            ["cover", "Sell to cover taxes"],
-            ["hold", "Hold all shares"],
-            ["sell", "Sell all shares"],
-          ]) +
-          (() => {
-            const v = Profile.grantPreview(g),
-              pace = EquitySchedule.pace(
-                g,
-                EquitySchedule.asOf(scenario.taxProfile.year),
-              );
-            return `<div class="grant-preview"><h3>Current earning pace: ${money(pace.monthlyMarket)}/month</h3><p class="cf-note">${pace.phase ? `Grant year ${pace.phase} · next change ${pace.nextChange}` : "Outside this grant’s earning period"}. Earning pace spreads the current grant-year allocation evenly; scheduled vests remain dated below.</p><details data-key="first-vest:${i}"><summary>First vest · ${escape(v.date)}</summary>${table(["Grant duration", "Shares vesting", "Value at grant price", "Estimated market value"], [[`${v.years} years`, v.shares.toLocaleString("en-US", { maximumFractionDigits: 4 }), money(v.grantValue), money(v.marketValue)]])}<p class="cf-note">Pre-tax values for the first vest, not a monthly average. Market value uses your assumed vest price.</p></details></div>`;
-          })() +
-          `<button data-remove-grant="${i}">Remove grant</button>`,
-      ),
-    )
+                )}" aria-label="Share vesting each year for ${escape(g.name)}"><small>One percentage per year, separated by /. Must total 100%.</small></label>`
+            : ""),
+        summary,
+      )}<button class="text-button" data-remove-grant="${i}">Remove grant</button></div>`;
+    })
     .join("");
   // Salary, pay frequency and payday live with the paychecks (step 2) only.
   const compensation =
@@ -751,6 +820,33 @@ function renderSetupForm() {
       const count = section.querySelectorAll(".state-review").length;
       if (count) section.querySelector("summary").dataset.reviewCount = count;
     });
+  $("setup")
+    .querySelectorAll("[data-confirm-all]")
+    .forEach((button) => {
+      button.onclick = () => {
+        const next = structuredClone(scenario);
+        for (const path of button.dataset.confirmAll.split(","))
+          Profile.confirm(next, path);
+        commit(next);
+      };
+    });
+  $("setup")
+    .querySelectorAll("[data-espp-ceiling]")
+    .forEach(
+      (el) =>
+        (el.onchange = () =>
+          deferUntilFocusMoves(() => {
+            const next = structuredClone(scenario),
+              d = Math.min(0.99, Math.max(0, next.employerPlan.espp.discount));
+            if (el.value === "") return;
+            Profile.edit(
+              next,
+              "employerPlan.espp.offerPrice",
+              Number(el.value) / (1 - d),
+            );
+            commit(next);
+          })),
+    );
   $("setup")
     .querySelectorAll("[data-confirm]")
     .forEach((button) => {
