@@ -2753,7 +2753,8 @@ button:disabled {
   gap: 10px 16px;
   margin: 0;
 }
-.profile-panel .review-block .profile-cell {
+.profile-panel .review-block .profile-cell,
+.profile-panel details > .field-grid > .profile-cell {
   padding: 0;
   border: 0;
   background: transparent;

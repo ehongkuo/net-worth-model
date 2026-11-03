@@ -245,12 +245,13 @@ let quietReview = false;
 // Fields whose values are still estimates (defaults or inferred from
 // paystubs) under one title, with a single bar to confirm them together.
 function reviewBlock(title, render, intro = "") {
+  const outer = quietReview;
   quietReview = true;
   let body;
   try {
     body = render();
   } finally {
-    quietReview = false;
+    quietReview = outer;
   }
   if (!body) return "";
   const pending = [
@@ -269,11 +270,6 @@ function reviewBlock(title, render, intro = "") {
 }
 const group = (title, body, open = false) =>
   `<details ${open ? "open" : ""}><summary>${escape(title)}</summary><div class="field-grid">${body}</div></details>`;
-// Keeps a toggle beside the inputs it controls under a call-site title.
-const choices = (title, body) =>
-  body
-    ? `<fieldset class="choice-group"><legend>${escape(title)}</legend>${body}</fieldset>`
-    : "";
 const compactGroup = (title, body) =>
   `<section class="paycheck-group"><h3>${escape(title)}</h3><div class="field-grid">${body}</div></section>`;
 // Re-renders the profile form; keeps keyboard focus on the same field.
@@ -436,58 +432,74 @@ function renderSetupForm() {
   const employerRetirement =
     fundingSummary +
     paycheckItemNote(["traditional", "roth", "mega"]) +
-    field(
-      r + "matchPercent",
-      "Match applies to the first portion of pay",
-      "percent",
+    reviewBlock(
+      "Employer match",
+      () =>
+        field(
+          r + "matchPercent",
+          "Match applies to the first portion of pay",
+          "percent",
+        ) +
+        field(
+          r + "matchRate",
+          "Employer pays this portion of matched contributions",
+          "percent",
+        ) +
+        detailLine(
+          "Plus fixed employer funding of ",
+          chip(r + "employerAnnual", "Fixed annual employer funding", "money"),
+          " a year, outside the match",
+        ),
     ) +
-    field(
-      r + "matchRate",
-      "Employer pays this portion of matched contributions",
-      "percent",
-    ) +
-    detailLine(
-      "Plus fixed employer funding of ",
-      chip(r + "employerAnnual", "Fixed annual employer funding", "money"),
-      " a year, outside the match",
-    ) +
-    choices(
+    reviewBlock(
       "After-tax 401(k)",
-      field(r + "megaEnabled", "After-tax retirement contributions", "check") +
+      () =>
+        field(
+          r + "megaEnabled",
+          "After-tax retirement contributions",
+          "check",
+        ) +
         (plan.retirement.megaEnabled
-          ? field(
-              r + "megaAnnualCap",
-              "Employer annual mega backdoor cap",
-              "number",
-              "Blank means no employer cap beyond IRS limits.",
+          ? detailLine(
+              "Employer cap ",
+              chip(
+                r + "megaAnnualCap",
+                "Employer annual mega backdoor cap",
+                "money",
+                null,
+                "none beyond IRS limits",
+              ),
+              " a year",
             )
           : ""),
     );
-  const ira = choices(
+  const ira = reviewBlock(
     "IRA contributions",
-    field(r + "iraMode", "IRA strategy", [
-      ["backdoor", "Backdoor Roth IRA"],
-      ["roth", "Direct Roth IRA"],
-      ["traditional", "Traditional IRA"],
-    ]) +
+    () =>
+      field(r + "iraMode", "IRA strategy", [
+        ["backdoor", "Backdoor Roth IRA"],
+        ["roth", "Direct Roth IRA"],
+        ["traditional", "Traditional IRA"],
+      ]) +
       field(r + "maxIra", "Maximize annual IRA contribution", "check") +
       (!plan.retirement.maxIra
         ? field(r + "ira", "Annual IRA contribution")
         : "") +
       (plan.retirement.iraMode === "backdoor"
-        ? field(
-            r + "iraPretaxBalance",
-            "Other pre-tax IRA balance",
-            "number",
-            "Starting Traditional IRA balances also enter the pro-rata calculation.",
-          ) + field(r + "iraBasis", "Existing nondeductible IRA basis")
+        ? detailLine(
+            "Other pre-tax IRA money ",
+            chip(r + "iraPretaxBalance", "Other pre-tax IRA balance", "money"),
+            " · Nondeductible basis ",
+            chip(r + "iraBasis", "Existing nondeductible IRA basis", "money"),
+          )
         : ""),
   );
   const hsa =
     paycheckItemNote(["hsa"]) +
-    choices(
+    reviewBlock(
       "HSA eligibility & funding",
-      field(h + "eligible", "HSA eligible", "check") +
+      () =>
+        field(h + "eligible", "HSA eligible", "check") +
         (plan.hsa.eligible
           ? field(h + "coverage", "HSA coverage", [
               ["single", "Self-only"],
@@ -604,26 +616,29 @@ function renderSetupForm() {
         )
       : "");
   const fallback =
-    choices(
+    reviewBlock(
       "401(k) elections",
-      field(r + "max401k", "Maximize employee 401(k)", "check") +
+      () =>
+        field(r + "max401k", "Maximize employee 401(k)", "check") +
         (!plan.retirement.max401k
           ? field(r + "traditional", "Annual Traditional 401(k) election")
           : "") +
         field(r + "roth", "Annual Roth 401(k) election"),
     ) +
     (plan.retirement.megaEnabled
-      ? choices(
+      ? reviewBlock(
           "Mega backdoor election",
-          field(r + "maxMega", "Maximize mega backdoor", "check") +
+          () =>
+            field(r + "maxMega", "Maximize mega backdoor", "check") +
             (!plan.retirement.maxMega
               ? field(r + "mega", "Annual mega backdoor election")
               : ""),
         )
       : "") +
-    choices(
+    reviewBlock(
       "HSA election",
-      field(h + "maxContribution", "Maximize employee HSA", "check") +
+      () =>
+        field(h + "maxContribution", "Maximize employee HSA", "check") +
         (!plan.hsa.maxContribution
           ? field(h + "employee", "Annual employee HSA contribution")
           : ""),
@@ -686,28 +701,33 @@ function renderSetupForm() {
     .join("");
   // Salary, pay frequency and payday live with the paychecks (step 2) only.
   const compensation =
-    field(
-      c + "bonusPercent",
-      "Bonus target",
-      "percent",
-      scenario.compensation.salary > 0 && scenario.compensation.bonusPercent > 0
-        ? `${money(scenario.compensation.salary * scenario.compensation.bonusPercent)} a year before tax`
-        : "",
-    ) +
-    field(c + "salaryGrowth", "Annual raise", "percent") +
-    detailLine(
-      "Bonus paid in ",
-      chip(
-        c + "bonusMonth",
-        "Bonus month",
-        Array.from({ length: 12 }, (_, i) => [
-          i + 1,
-          new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
-        ]),
-      ),
-      " · Company stock grows ",
-      chip(c + "stockGrowth", "Company stock growth per year", "percent"),
-      " a year",
+    reviewBlock(
+      "Bonus & raises",
+      () =>
+        field(
+          c + "bonusPercent",
+          "Bonus target",
+          "percent",
+          scenario.compensation.salary > 0 &&
+            scenario.compensation.bonusPercent > 0
+            ? `${money(scenario.compensation.salary * scenario.compensation.bonusPercent)} a year before tax`
+            : "",
+        ) +
+        field(c + "salaryGrowth", "Annual raise", "percent") +
+        detailLine(
+          "Bonus paid in ",
+          chip(
+            c + "bonusMonth",
+            "Bonus month",
+            Array.from({ length: 12 }, (_, i) => [
+              i + 1,
+              new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
+            ]),
+          ),
+          " · Company stock grows ",
+          chip(c + "stockGrowth", "Company stock growth per year", "percent"),
+          " a year",
+        ),
     ) +
     `<div id="grant-timeline" class="grant-preview"></div>` +
     grants +
@@ -804,18 +824,20 @@ function renderSetupForm() {
       : compactGroup(
           "Contributions & benefits without a paystub",
           fallback +
-            Object.entries({
-              health: "Monthly health premium",
-              dental: "Monthly dental premium",
-              vision: "Monthly vision premium",
-              fsa: "Monthly FSA contribution",
-              otherPretax: "Other monthly pre-tax benefits",
-              otherPosttax: "Other monthly post-tax benefits",
-            })
-              .map(([key, label]) =>
-                field("employerPlan.benefits." + key, label),
-              )
-              .join(""),
+            reviewBlock("Monthly benefits", () =>
+              Object.entries({
+                health: "Monthly health premium",
+                dental: "Monthly dental premium",
+                vision: "Monthly vision premium",
+                fsa: "Monthly FSA contribution",
+                otherPretax: "Other monthly pre-tax benefits",
+                otherPosttax: "Other monthly post-tax benefits",
+              })
+                .map(([key, label]) =>
+                  field("employerPlan.benefits." + key, label),
+                )
+                .join(""),
+            ),
         )) +
     (PaystubParser.benefitPlans(scenario.uploads.records).length
       ? compactGroup(
@@ -831,39 +853,53 @@ function renderSetupForm() {
           ),
         )
       : "");
-  const balances = Object.entries({
-    cash: "Cash",
-    brokerage: "Taxable investments",
-    pretax401k: "Traditional 401(k)",
-    rothAccounts: "Roth accounts",
-    traditionalIRA: "Traditional IRA (included in backdoor pro-rata tax)",
-    hsa: "HSA",
-  })
-    .map(([key, label]) => field(p + "startingBalances." + key, label))
-    .join("");
-  const expenses = Object.keys(scenario.projection.monthlyExpenses)
-    .map((key) =>
-      field(p + "monthlyExpenses." + key, key[0].toUpperCase() + key.slice(1)),
-    )
-    .join("");
-  const retirementPlan =
-    field(p + "retirementAge", "Retirement age") +
-    field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
-    detailLine(
-      "Social Security starts at age ",
-      chip(p + "socialSecurityStartAge", "Social Security start age", "count"),
-    ) +
-    choices(
-      "Monthly spending",
-      (scenario.projection.monthlyExpenses.other > 0 &&
-      Object.entries(scenario.projection.monthlyExpenses).some(
-        ([key, v]) => key !== "other" && v > 0,
+  const balances = () =>
+    Object.entries({
+      cash: "Cash",
+      brokerage: "Taxable investments",
+      pretax401k: "Traditional 401(k)",
+      rothAccounts: "Roth accounts",
+      traditionalIRA: "Traditional IRA (included in backdoor pro-rata tax)",
+      hsa: "HSA",
+    })
+      .map(([key, label]) => field(p + "startingBalances." + key, label))
+      .join("");
+  const expenses = () =>
+    Object.keys(scenario.projection.monthlyExpenses)
+      .map((key) =>
+        field(
+          p + "monthlyExpenses." + key,
+          key[0].toUpperCase() + key.slice(1),
+        ),
       )
-        ? '<p class="plan-review-note">Your spending total is saved as Other (under About you, or below). Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
-        : '<p class="cf-note">Leave out anything already taken from your paycheck, like insurance premiums.</p>') +
-        expenses,
+      .join("");
+  const retirementPlan =
+    reviewBlock(
+      "When you retire",
+      () =>
+        field(p + "retirementAge", "Retirement age") +
+        field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
+        detailLine(
+          "Social Security starts at age ",
+          chip(
+            p + "socialSecurityStartAge",
+            "Social Security start age",
+            "count",
+          ),
+        ),
+    ) +
+    reviewBlock(
+      "Monthly spending",
+      () =>
+        (scenario.projection.monthlyExpenses.other > 0 &&
+        Object.entries(scenario.projection.monthlyExpenses).some(
+          ([key, v]) => key !== "other" && v > 0,
+        )
+          ? '<p class="plan-review-note">Your spending total is saved as Other (under About you, or below). Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
+          : '<p class="cf-note">Leave out anything already taken from your paycheck, like insurance premiums.</p>') +
+        expenses(),
     );
-  const savings = ira + choices("What you have today", balances);
+  const savings = ira + reviewBlock("What you have today", balances);
   const review = Profile.describe(scenario).questions;
   const section = (id, title, body, questionIds = []) => {
     const notes = review.filter((q) => questionIds.includes(q.id));
