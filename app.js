@@ -115,7 +115,9 @@ function field(path, label, type = "number", hint = "", { also = [] } = {}) {
     : "";
   shownPaths?.add(path);
   const value = get(scenario, path),
-    attrs = `data-path="${path}" data-type="${type}"${also.length ? ` data-also="${also.join(",")}"` : ""}`;
+    // The label wraps badges, hints and the value too; name the control by
+    // its label alone so a screen reader doesn't read "200000.00".
+    attrs = `data-path="${path}" data-type="${type}"${also.length ? ` data-also="${also.join(",")}"` : ""} aria-label="${escape(label + (type === "percent" ? " (%)" : ""))}"`;
   const state = Profile.fieldState(scenario, path);
   let { badge, approve } = Presentation.fieldBadge(state, path, label);
   // Inside a review block one bar confirms every estimate; each field only
@@ -763,7 +765,7 @@ function renderSetupForm() {
       ? `<ul class="stub-list">${records
           .map(
             (r) =>
-              `<li><span>${escape(longDate(r.date))}</span><span class="stub-kind">${escape(PaystubParser.kindLabels[r.kind || "regular"] || "Paycheck")}</span><strong>${money(r.netPay)}</strong></li>`,
+              `<li><span>${escape(longDate(r.date))}</span><span class="stub-kind">${escape(PaystubParser.kindLabels[r.kind || "regular"] || "Paycheck")}</span>${stubAmount(r)}</li>`,
           )
           .join("")}</ul>`
       : `<p class="cf-note">PDFs are read on this device and never uploaded.</p>`
@@ -1393,6 +1395,25 @@ function render() {
     );
     $("salary-context").innerHTML =
       `<span class="context-chip">${month ? `Scheduled · ${row.year}` : `As of ${escape(selected.payroll.earningPace.asOf)}`}</span><details class="context-help"><summary>How this view works</summary><p>${month ? "Scheduled paychecks, vesting and purchases for this month." : "Your current salary, grant-year allocations and ESPP cycle averaged monthly, with annual contribution limits."}</p><p>Asset additions are new funding before expenses. Spending follows cash, equity, then retirement; additional sale taxes are not modeled.</p>${modelNotes}</details>`;
+    // Past vests show on paystubs; future ones need the grant behind them.
+    const vests = PaystubParser.vestHistory(
+      scenario.uploads.records,
+      scenario.taxProfile.year,
+    );
+    if (
+      vests.ytd > 0 &&
+      !scenario.compensation.grants.some((g) => g.value > 0)
+    ) {
+      $("salary-context").insertAdjacentHTML(
+        "beforeend",
+        `<p class="flow-hint">Your paystubs show ${money(vests.ytd)} of RSU vests this year. Equity stays at $0 here until you add the grant behind them. <button type="button" class="text-button" data-flow-grants>Add your grant</button></p>`,
+      );
+      $("salary-context").querySelector("[data-flow-grants]").onclick = () => {
+        profileStep = 2;
+        document.querySelector('[data-view="profile"]').click();
+        $("plan-pay")?.scrollIntoView({ block: "start" });
+      };
+    }
     // Include the selected payroll's history notes too: forView routes them
     // here on this view rather than to the model notes.
     const history = [
@@ -1729,17 +1750,22 @@ async function readPaystubs(event, append = false) {
     else drafts = [];
   }
 }
+// A paystub's headline amount, named: take-home for a paycheck, the amount
+// before tax for an RSU vest or bonus check, which often pay no cash.
+function stubAmount(r) {
+  const [value, what] =
+    r.kind === "equity"
+      ? [r.current.rsu, "vested"]
+      : r.kind === "bonus"
+        ? [r.current.bonus, "before tax"]
+        : [r.netPay, "take-home"];
+  return `<strong>${money(value)} <small>${what}</small></strong>`;
+}
 function reviewUploads() {
   const checks = drafts
     .map((r, i) => {
       const v = PaystubParser.validate(r);
-      return `<li class="review-row${v.valid ? "" : " has-error"}"><details ${v.valid ? "" : "open"}><summary><span>${escape(longDate(r.date))}</span><span class="stub-kind">${escape(PaystubParser.kindLabels[r.kind] || "Paycheck")}</span><strong>${money(
-        r.kind === "equity"
-          ? r.current.rsu
-          : r.kind === "bonus"
-            ? r.current.bonus
-            : r.netPay,
-      )}</strong><span class="review-state">${v.valid ? "✓ Totals match" : "Needs a fix"}</span></summary><div class="review-body"><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">${
+      return `<li class="review-row${v.valid ? "" : " has-error"}"><details ${v.valid ? "" : "open"}><summary><span>${escape(longDate(r.date))}</span><span class="stub-kind">${escape(PaystubParser.kindLabels[r.kind] || "Paycheck")}</span>${stubAmount(r)}<span class="review-state">${v.valid ? "✓ Totals match" : "Needs a fix"}</span></summary><div class="review-body"><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">${
         r.kind === "equity"
           ? `RSU vest ${money(r.current.rsu)} · Shares delivered ${money(r.current.rsuOffset || 0)} · Tax withheld ${money(r.summary?.current?.taxes || 0)}`
           : r.kind === "bonus"
@@ -2219,7 +2245,13 @@ function compensationView() {
       .filter((g) => Math.abs(g.value) > 0.5)
       .map(
         (g) =>
-          `<details class="ledger-group" data-comp-group="${g.id}" ${compOpen.has(g.id) ? "open" : ""}><summary><i style="background:var(--${MONEY_COLOR[g.id]})"></i><span>${escape(g.label)}</span><em>${pct(g.value)}</em><strong>${dollars(g.value / per)}</strong></summary><dl>${g.items.map((i) => `<div><dt>${escape(i.label)}</dt><dd>${dollars(i.value / per)}</dd></div>`).join("")}</dl></details>`,
+          `<details class="ledger-group" data-comp-group="${g.id}" ${compOpen.has(g.id) ? "open" : ""}><summary><i style="background:var(--${MONEY_COLOR[g.id]})"></i><span>${escape(g.label)}</span><em>${pct(g.value)}</em><strong>${dollars(g.value / per)}</strong></summary><dl>${g.items
+            .filter((i) => Math.abs(i.value) >= 0.5 * per)
+            .map(
+              (i) =>
+                `<div><dt>${escape(i.label)}</dt><dd>${dollars(i.value / per)}</dd></div>`,
+            )
+            .join("")}</dl></details>`,
       )
       .join(
         "",

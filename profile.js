@@ -676,11 +676,23 @@
         true,
         "After-tax contribution observed; confirm conversion support",
       );
+    const hsaSeen = records.some((r) =>
+      ["hsa", "hsaEmployer"].some((k) => r.current?.[k] > 0 || r.ytd?.[k] > 0),
+    );
     if (v.hsa > 0 || v.hsaEmployer > 0)
       assign(
         "employerPlan.hsa.eligible",
         true,
         "HSA funding observed; confirm coverage and eligibility",
+      );
+    // A regular paycheck with no HSA money all year suggests no HSA plan.
+    else if (suggestion.record && !hsaSeen)
+      assign(
+        "employerPlan.hsa.eligible",
+        false,
+        "No HSA deduction on your paystubs",
+        date,
+        true,
       );
     const frequency = applySchedule
       ? suggestion.frequency || s.compensation.frequency

@@ -1127,7 +1127,7 @@
       );
     if (c.tax.spouseIncome)
       warnings.push(
-        "Spouse wages affect household taxes. Use withholding overrides to reconcile both paychecks.",
+        "Your spouse's wages are taxed with yours, but tax withheld from their paycheck isn't counted, so the tax due at filing includes tax their employer likely already withholds.",
       );
     if (r.iraMode === "backdoor")
       warnings.push(

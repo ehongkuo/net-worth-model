@@ -2992,3 +2992,12 @@ button:disabled {
     grid-row: 2;
   }
 }
+.stub-list strong small {
+  font-weight: 400;
+  color: var(--text-3);
+}
+.flow-hint {
+  flex-basis: 100%;
+  margin: 8px 0 0;
+  color: var(--text-2);
+}

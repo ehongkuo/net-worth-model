@@ -76,7 +76,14 @@
         { label: "Base salary", value: p.salary || 0 },
         { label: "Bonus", value: p.bonus || 0 },
         { label: "Allowances", value: p.cashAllowance || 0 },
-        { label: "Other cash (ESPP sales, refunds)", value: g.otherCash || 0 },
+        ...(g.otherParts || []),
+        // What the named parts leave, so both sides still reconcile.
+        {
+          label: "Other cash",
+          value:
+            (g.otherCash || 0) -
+            (g.otherParts || []).reduce((n, x) => n + x.value, 0),
+        },
       ]),
       group("equity", "Equity", [
         { label: "RSUs vested", value: g.rsuGross || 0 },
