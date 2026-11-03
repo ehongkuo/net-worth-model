@@ -1243,8 +1243,12 @@ const compTotal = (s, r) =>
 let priceBase = { key: "", total: 0 };
 function equityReadout(reference) {
   if (!Profile.hasIncome(scenario)) return "";
-  const total = compTotal(scenario, result),
-    base = structuredClone(scenario);
+  const total = compTotal(scenario, result);
+  // Before a price is saved, the grants and ESPP keep their own prices, so
+  // there is no single reference to compare against.
+  if (!reference)
+    return `<strong>${dollars(total)}</strong> total compensation a year`;
+  const base = structuredClone(scenario);
   base.compensation.sharePrice = reference;
   base.compensation.referencePrice = 0;
   const key = JSON.stringify(base);
@@ -1268,16 +1272,18 @@ function renderPriceBar() {
   if (!p) return;
   if (priceDragging) {
     bar.querySelector("[data-price-readout]").innerHTML = equityReadout(
-      p.reference,
+      p.saved && p.reference,
     );
     return;
   }
   const step = Math.max(0.01, Math.round(p.reference) / 200);
-  bar.innerHTML = `<label class="price-label" for="share-price-range">Company share price</label><div class="price-control"><input type="range" id="share-price-range" min="${p.min}" max="${p.max}" step="${step}" value="${p.price}" list="share-price-ticks" aria-valuetext="${escape(`${money(p.price)}, ${priceChange(p.price, p.reference)}`)}"><datalist id="share-price-ticks"><option value="${p.reference}"></option></datalist><span class="price-scale"><span>${money(p.min)}</span><span>${money(p.max)}</span></span></div><label class="price-exact">$<input type="number" id="share-price-input" aria-label="Exact share price" min="0.01" step="0.01" value="${Number(p.price.toFixed(2))}"></label><p class="price-meta"><span data-price-change>${escape(priceChange(p.price, p.reference))}</span>${p.price !== p.reference ? ` <button type="button" class="text-button" data-price-reset>Reset to ${money(p.reference)}</button>` : ""}<br><span data-price-readout>${equityReadout(p.reference)}</span></p>${p.saved ? "" : `<p class="price-hint">Using the prices on your grants and ESPP. Set one price to use it for every vest and purchase.</p>`}`;
+  bar.innerHTML = `<label class="price-label" for="share-price-range">Company share price</label><div class="price-control"><input type="range" id="share-price-range" min="${p.min}" max="${p.max}" step="${step}" value="${p.price}" list="share-price-ticks" aria-valuetext="${escape(`${money(p.price)}, ${priceChange(p.price, p.reference)}`)}"><datalist id="share-price-ticks"><option value="${p.reference}"></option></datalist><span class="price-scale"><span>${money(p.min)}</span><span>${money(p.max)}</span></span></div><label class="price-exact">$<input type="number" id="share-price-input" aria-label="Exact share price" min="0.01" step="0.01" value="${Number(p.price.toFixed(2))}"></label><p class="price-meta"><span data-price-change>${escape(priceChange(p.price, p.reference))}</span>${p.price !== p.reference ? ` <button type="button" class="text-button" data-price-reset>Reset to ${money(p.reference)}</button>` : ""}<br><span data-price-readout>${equityReadout(p.saved && p.reference)}</span></p>${p.saved ? "" : `<p class="price-hint">Using the prices on your grants and ESPP. Set one price to use it for every vest and purchase.</p>`}`;
   const range = $("share-price-range");
   const preview = (value) => {
     const next = structuredClone(scenario);
     next.compensation.sharePrice = value;
+    // Dragging compares against where the slider started.
+    next.compensation.referencePrice ||= p.reference;
     return next;
   };
   range.oninput = () => {
