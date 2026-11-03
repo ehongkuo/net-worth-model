@@ -814,7 +814,31 @@
     if (type === "number") return Number(value).toFixed(2);
     return value;
   }
+  // The what-if share price: the saved price, or until one is saved, the
+  // price the grants and ESPP already assume. The range is 0.25x to 3x a
+  // reference price so dragging never moves its own bounds. Null without equity.
+  function sharePrice(s) {
+    const c = s.compensation,
+      e = s.employerPlan.espp,
+      grants = c.grants || [];
+    if (!grants.length && !e.enabled) return null;
+    const assumed =
+      grants.map((g) => g.vestPrice || g.grantPrice).find((v) => v > 0) ||
+      (e.enabled && e.purchasePrice > 0 ? e.purchasePrice : 0) ||
+      100;
+    const price = c.sharePrice > 0 ? c.sharePrice : assumed,
+      reference = c.referencePrice > 0 ? c.referencePrice : price,
+      cents = (v) => Math.round(v * 100) / 100;
+    return {
+      price,
+      reference,
+      min: cents(reference * 0.25),
+      max: cents(reference * 3),
+      saved: c.sharePrice > 0,
+    };
+  }
   const api = {
+    sharePrice,
     limitPlan,
     yearTotals,
     limitCheck,

@@ -486,7 +486,8 @@
       e?.enabled &&
       !(
         confirmed("employerPlan.espp.offerPrice") &&
-        confirmed("employerPlan.espp.purchasePrice")
+        (confirmed("employerPlan.espp.purchasePrice") ||
+          s.compensation?.sharePrice > 0)
       )
     )
       out.push({

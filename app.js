@@ -330,6 +330,11 @@ function renderSetup() {
 }
 function renderSetupForm() {
   fieldConfig = Scenario.engineInput(scenario);
+  // Once a share price is set, it replaces each market-price field.
+  const sharePriceSet = scenario.compensation.sharePrice > 0,
+    sharePriceNote = sharePriceSet
+      ? `<p class="grant-summary">Valued at the company share price of <strong>${money(scenario.compensation.sharePrice)}</strong>, set on the slider above.</p>`
+      : "";
   const quick = quickQuestions();
   const t = "taxProfile.",
     r = "employerPlan.retirement.",
@@ -585,13 +590,15 @@ function renderSetupForm() {
             (plan.espp.lookback
               ? `<div class="profile-cell"><label class="field"><span>Most you'll pay per share</span><input type="number" step="any" data-espp-ceiling value="${(plan.espp.offerPrice * (1 - plan.espp.discount)).toFixed(2)}"><small>After the discount. Enter this if it's the number you know; we work out the offering price from it.</small></label></div>`
               : "") +
-            field(
-              e + "purchasePrice",
-              "Expected market price on purchase day",
-              "number",
-              "Before the discount.",
-            ),
-          esppPriceNote(plan.espp),
+            (sharePriceSet
+              ? ""
+              : field(
+                  e + "purchasePrice",
+                  "Expected market price on purchase day",
+                  "number",
+                  "Before the discount.",
+                )),
+          esppPriceNote(fieldConfig.espp) + sharePriceNote,
         ) +
         `<details class="plan-limits"><summary>Plan limits</summary><div class="field-grid">${
           field(e + "shareCap", "Most shares per offering (0 means none)") +
@@ -610,7 +617,9 @@ function renderSetupForm() {
           () =>
             field(e + "holdShares", "Hold purchased shares", "check") +
             (!plan.espp.holdShares
-              ? field(e + "salePrice", "Expected sale price") +
+              ? (sharePriceSet
+                  ? ""
+                  : field(e + "salePrice", "Expected sale price")) +
                 field(e + "holdMonths", "Months until sale")
               : ""),
         )
@@ -646,12 +655,12 @@ function renderSetupForm() {
   const grants = scenario.compensation.grants
     .map((g, i) => {
       const p = c + `grants.${i}.`,
-        vests = EquitySchedule.vests(g),
+        vests = EquitySchedule.vests(fieldConfig.grants[i]),
         values = vests.map((v) => v.value),
         low = Math.min(...values),
         high = Math.max(...values),
         pace = EquitySchedule.pace(
-          g,
+          fieldConfig.grants[i],
           EquitySchedule.asOf(scenario.taxProfile.year),
         );
       const summary = vests.length
@@ -673,12 +682,14 @@ function renderSetupForm() {
             "number",
             "Turns the grant value into shares; it's on your grant letter.",
           ) +
-          field(
-            p + "vestPrice",
-            "Expected share price at vest",
-            "number",
-            "Same as the grant price means no growth.",
-          ) +
+          (sharePriceSet
+            ? ""
+            : field(
+                p + "vestPrice",
+                "Expected share price at vest",
+                "number",
+                "Same as the grant price means no growth.",
+              )) +
           field(p + "saleMode", "At vest", [
             ["cover", "Sell to cover taxes"],
             ["hold", "Hold all shares"],
@@ -695,7 +706,7 @@ function renderSetupForm() {
                   " / ",
                 )}" aria-label="Share vesting each year for ${escape(g.name)}"><small>One percentage per year, separated by /. Must total 100%.</small></label>`
             : ""),
-        summary,
+        summary + sharePriceNote,
       )}<button class="text-button" data-remove-grant="${i}">Remove grant</button></div>`;
     })
     .join("");
@@ -1215,6 +1226,104 @@ function commit(next) {
     setup();
   }
 }
+// One company share price for every view. Dragging previews without saving;
+// letting go saves it. Typing a price also makes it the new reference.
+let priceDragging = false,
+  pricePreview = 0;
+const compTotal = (s, r) =>
+  Presentation.compensation(
+    CompactFlow.build(
+      r.ongoing.payroll,
+      r.ongoing.flow,
+      Scenario.engineInput(s),
+    ),
+  ).total;
+// Total compensation at the reference price, recomputed only when an input
+// other than the share price changes.
+let priceBase = { key: "", total: 0 };
+function equityReadout(reference) {
+  if (!Profile.hasIncome(scenario)) return "";
+  const total = compTotal(scenario, result),
+    base = structuredClone(scenario);
+  base.compensation.sharePrice = reference;
+  base.compensation.referencePrice = 0;
+  const key = JSON.stringify(base);
+  if (key !== priceBase.key) {
+    const s = Scenario.normalize(base);
+    priceBase = { key, total: compTotal(s, Projection.calculate(s)) };
+  }
+  const diff = total - priceBase.total;
+  return `<strong>${dollars(total)}</strong> total compensation a year${Math.abs(diff) >= 1 ? ` · <strong>${diff > 0 ? "+" : "−"}${dollars(Math.abs(diff))}</strong> from the share price` : ""}`;
+}
+function priceChange(price, reference) {
+  const pct = Math.round((price / reference - 1) * 100);
+  return pct === 0
+    ? "At your reference price"
+    : `${pct > 0 ? "+" : ""}${pct}% vs ${money(reference)}`;
+}
+function renderPriceBar() {
+  const bar = $("price-bar"),
+    p = view !== "welcome" && Profile.sharePrice(scenario);
+  bar.hidden = !p;
+  if (!p) return;
+  if (priceDragging) {
+    bar.querySelector("[data-price-readout]").innerHTML = equityReadout(
+      p.reference,
+    );
+    return;
+  }
+  const step = Math.max(0.01, Math.round(p.reference) / 200);
+  bar.innerHTML = `<label class="price-label" for="share-price-range">Company share price</label><div class="price-control"><input type="range" id="share-price-range" min="${p.min}" max="${p.max}" step="${step}" value="${p.price}" list="share-price-ticks" aria-valuetext="${escape(`${money(p.price)}, ${priceChange(p.price, p.reference)}`)}"><datalist id="share-price-ticks"><option value="${p.reference}"></option></datalist><span class="price-scale"><span>${money(p.min)}</span><span>${money(p.max)}</span></span></div><label class="price-exact">$<input type="number" id="share-price-input" aria-label="Exact share price" min="0.01" step="0.01" value="${Number(p.price.toFixed(2))}"></label><p class="price-meta"><span data-price-change>${escape(priceChange(p.price, p.reference))}</span>${p.price !== p.reference ? ` <button type="button" class="text-button" data-price-reset>Reset to ${money(p.reference)}</button>` : ""}<br><span data-price-readout>${equityReadout(p.reference)}</span></p>${p.saved ? "" : `<p class="price-hint">Using the prices on your grants and ESPP. Set one price to use it for every vest and purchase.</p>`}`;
+  const range = $("share-price-range");
+  const preview = (value) => {
+    const next = structuredClone(scenario);
+    next.compensation.sharePrice = value;
+    return next;
+  };
+  range.oninput = () => {
+    const value = Number(range.value);
+    priceDragging = true;
+    $("share-price-input").value = Number(value.toFixed(2));
+    bar.querySelector("[data-price-change]").textContent = priceChange(
+      value,
+      p.reference,
+    );
+    range.setAttribute(
+      "aria-valuetext",
+      `${money(value)}, ${priceChange(value, p.reference)}`,
+    );
+    if (pricePreview) return;
+    pricePreview = setTimeout(() => {
+      pricePreview = 0;
+      // Preview only: the saved scenario changes when the slider is let go.
+      const saved = scenario;
+      scenario = Scenario.normalize(preview(Number(range.value)));
+      result = Projection.calculate(scenario);
+      render();
+      scenario = saved;
+    });
+  };
+  range.onchange = () => {
+    clearTimeout(pricePreview);
+    pricePreview = 0;
+    priceDragging = false;
+    const next = preview(Number(range.value));
+    next.compensation.referencePrice = p.reference;
+    commit(next);
+  };
+  $("share-price-input").onchange = (event) => {
+    const value = Number(event.target.value);
+    if (!(value > 0)) return renderPriceBar();
+    const next = preview(value);
+    next.compensation.referencePrice = value;
+    commit(next);
+  };
+  bar.querySelector("[data-price-reset]")?.addEventListener("click", () => {
+    const next = preview(p.reference);
+    next.compensation.referencePrice = p.reference;
+    commit(next);
+  });
+}
 const modelNotesDisclosure = (html) =>
   html
     ? `<details class="context-help"><summary>Model notes</summary>${html}</details>`
@@ -1226,6 +1335,7 @@ function render() {
   $("accuracy").hidden = true;
   if (!ready && !["profile", "welcome"].includes(view)) view = "welcome";
   if (ready && view === "welcome") view = "monthly";
+  renderPriceBar();
   for (const name of ["welcome", "profile", "monthly", "tax", "lifetime"])
     $(name).hidden = name !== view;
   document.querySelector('nav[aria-label="Views"]').hidden = view === "welcome";

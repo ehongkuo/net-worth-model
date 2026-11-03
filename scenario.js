@@ -15,6 +15,8 @@
     "salary",
     "salaryGrowth",
     "stockGrowth",
+    "sharePrice",
+    "referencePrice",
     "bonusPercent",
     "bonusMonth",
     "frequency",
@@ -397,6 +399,8 @@
         throw new Error(`${label} must be a nonnegative amount.`);
     };
     positive(scenario.compensation.salary, "Salary");
+    positive(scenario.compensation.sharePrice, "Share price");
+    positive(scenario.compensation.referencePrice, "Reference share price");
     for (const values of [
       scenario.projection.startingBalances,
       scenario.projection.monthlyExpenses,
@@ -535,28 +539,30 @@
   }
   function engineInput(s) {
     s = normalize(s);
-    return C.merge(C.defaults(), {
-      ...s.compensation,
-      taxYear: s.taxProfile.year,
-      age: s.taxProfile.age,
-      birthday: s.taxProfile.birthday,
-      // An unset state is modelled without state income tax.
-      tax: {
-        ...s.taxProfile.settings,
-        state: s.taxProfile.settings.state || "none",
-      },
-      ...s.employerPlan,
-      payroll: {
-        enabled: true,
-        useYtd: true,
-        records: s.uploads.records,
-        elections: s.uploads.elections,
-        bonusDate: s.uploads.bonusDate,
-        uploadBaseline: s.uploads.useBaseline,
-        annualSettingKeys: s.uploads.annualSettingKeys,
-        manualFields: s.uploads.manualFields || [],
-      },
-    });
+    return C.priced(
+      C.merge(C.defaults(), {
+        ...s.compensation,
+        taxYear: s.taxProfile.year,
+        age: s.taxProfile.age,
+        birthday: s.taxProfile.birthday,
+        // An unset state is modelled without state income tax.
+        tax: {
+          ...s.taxProfile.settings,
+          state: s.taxProfile.settings.state || "none",
+        },
+        ...s.employerPlan,
+        payroll: {
+          enabled: true,
+          useYtd: true,
+          records: s.uploads.records,
+          elections: s.uploads.elections,
+          bonusDate: s.uploads.bonusDate,
+          uploadBaseline: s.uploads.useBaseline,
+          annualSettingKeys: s.uploads.annualSettingKeys,
+          manualFields: s.uploads.manualFields || [],
+        },
+      }),
+    );
   }
   function serialize(s) {
     return JSON.stringify(normalize(s), null, 2);

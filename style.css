@@ -2930,3 +2930,65 @@ button:disabled {
 .chip-control input[type="number"] {
   width: 7em;
 }
+/* One company share price, above every view. */
+.price-bar {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 8px 16px;
+  margin: -12px 0 24px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+.price-bar[hidden] {
+  display: none;
+}
+.price-label {
+  font-weight: 600;
+}
+.price-control {
+  display: grid;
+  gap: 2px;
+}
+.price-control input[type="range"] {
+  width: 100%;
+  accent-color: var(--equity);
+}
+.price-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.price-exact {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+}
+.price-exact input {
+  width: 96px;
+}
+.price-meta,
+.price-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.price-meta strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 600px) {
+  .price-bar {
+    grid-template-columns: 1fr auto;
+  }
+  .price-control {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}

@@ -39,6 +39,10 @@
       frequency: "biweekly",
       firstPayday: "2026-01-09",
       stockGrowth: 0,
+      // Today's company share price; 0 means each grant and the ESPP use
+      // their own prices. referencePrice anchors the what-if range.
+      sharePrice: 0,
+      referencePrice: 0,
       grants: [],
       tax: TaxEngine.defaults(),
       retirement: {
@@ -100,6 +104,18 @@
       },
       payroll: { enabled: true, useYtd: true, elections: {}, records: [] },
       forecastFromMonth: 1,
+    };
+  }
+
+  // With a share price set, every future vest, ESPP purchase and sale uses
+  // it. Grant prices and the entered offering price are past prices and stay.
+  function priced(c) {
+    const p = positive(c.sharePrice);
+    if (!p) return c;
+    return {
+      ...c,
+      grants: c.grants.map((g) => ({ ...g, vestPrice: p })),
+      espp: { ...c.espp, purchasePrice: p, salePrice: p },
     };
   }
 
@@ -217,6 +233,8 @@
       e = c.espp,
       baseYear = c.taxYear;
     const stockFactor = (y) => (1 + c.stockGrowth) ** Math.max(0, y - baseYear);
+    // A set share price is flat at vest; growth applies once shares are held.
+    const vestFactor = (y) => (positive(c.sharePrice) ? 1 : stockFactor(y));
     const grants = c.grants.flatMap((g, grantIndex) =>
       g.repeat
         ? Array.from(
@@ -245,7 +263,7 @@
               EquitySchedule.cumulative(grant, vested)) *
             (positive(grant.vestPrice) || positive(grant.grantPrice) || 100)) /
             (positive(grant.grantPrice) || 100)) *
-          stockFactor(vestYear);
+          vestFactor(vestYear);
         const vestShares =
           (positive(grant.value) *
             (EquitySchedule.cumulative(grant, elapsed) -
@@ -489,7 +507,13 @@
           discount,
         } = EquitySchedule.esppPurchase(e, {
           cash,
-          offerPrice: election.offerPrice ?? e.offerPrice,
+          // Offerings that begin after the modeled year start at the share
+          // price; the entered offering price is for the current one.
+          offerPrice:
+            election.offerPrice ??
+            (positive(c.sharePrice) && Number(grantDate.slice(0, 4)) > baseYear
+              ? c.sharePrice
+              : e.offerPrice),
           purchasePrice: election.purchasePrice ?? e.purchasePrice,
           fmvRoom: EquitySchedule.esppFmvLimit(e, py) - (usage[py] || 0),
         });
@@ -559,7 +583,7 @@
   }
 
   function calculate(input, year = input.taxYear || 2026, options = {}) {
-    const c = merge(defaults(), input),
+    const c = priced(merge(defaults(), input)),
       warnings = [];
     const coverHistory = options.coverHistory || {};
     if (c.grants.some((g) => rsuMode(g) === "cover"))
@@ -1285,7 +1309,7 @@
     };
   }
   function ongoing(input, options = {}) {
-    const c = merge(defaults(), input),
+    const c = priced(merge(defaults(), input)),
       parser =
         typeof module !== "undefined" && module.exports
           ? require("./paystub-parser")
@@ -1369,7 +1393,7 @@
   // including uploaded contributions and the annual FMV limit); `lots` are the
   // current year's ledger lots, and later purchase years are computed on demand.
   function esppSaleComparison(input, payroll, { asOf, lots = [] } = {}) {
-    const c = merge(defaults(), input),
+    const c = priced(merge(defaults(), input)),
       e = c.espp,
       audit = payroll?.taxes?.audit;
     if (!e.enabled || !audit) return null;
@@ -1448,6 +1472,7 @@
   }
   const api = {
     grantAllocations: EquitySchedule.allocations,
+    priced,
     esppSaleComparison,
     ongoing,
     offeringDates,
