@@ -154,11 +154,93 @@ function esppPriceNote(e) {
       : `the ${money(market)} purchase-day price (lower than the ${money(offer)} offering price)`;
   return `<p class="grant-summary"><strong>You'd buy at ${money(base * (1 - d))} a share</strong>: ${Math.round(d * 100)}% off ${which}.</p>`;
 }
-// Less important inputs for a section, collapsed under one toggle.
-const more = (key, body, title = "More details") =>
-  body
-    ? `<details class="more-fields" data-key="more:${key}"><summary>${escape(title)}</summary><div class="field-grid">${body}</div></details>`
+// A lower-impact value shown as words in a sentence; clicking it swaps in
+// its control, which saves through the same data-path handler as a field.
+// Its dot says where the value came from: a paystub, the user, or a default.
+function chip(path, label, kind = "text", choices = null, empty = "not set") {
+  if (shownPaths?.has(path)) return "";
+  const enginePath = path.startsWith("employerPlan.")
+    ? path.slice(13)
+    : path.startsWith("taxProfile.settings.")
+      ? "tax." + path.slice(20)
+      : null;
+  if (
+    enginePath &&
+    fieldConfig &&
+    !compensationFieldVisible(fieldConfig, enginePath)
+  )
+    return "";
+  shownPaths?.add(path);
+  if (Array.isArray(kind)) [choices, kind] = [kind, "choice"];
+  const value = get(scenario, path),
+    st = Profile.fieldState(scenario, path),
+    origin =
+      st.kind === "observed"
+        ? "paystub"
+        : st.kind === "manual" || st.kind === "confirmed"
+          ? "yours"
+          : "default",
+    title = {
+      paystub: "From your paystub",
+      yours: "Your entry",
+      default: "Default, not checked yet",
+    }[origin];
+  const blank = value == null || value === "";
+  const text = blank
+    ? empty
+    : kind === "choice"
+      ? (choices.find(([k]) => String(k) === String(value)) || [0, value])[1]
+      : kind === "bool"
+        ? value
+          ? "yes"
+          : "no"
+        : kind === "percent"
+          ? `${Number((value * 100).toFixed(2))}%`
+          : kind === "money"
+            ? money(value)
+            : kind === "date"
+              ? longDate(value)
+              : String(value);
+  const type =
+    kind === "choice"
+      ? "text"
+      : ["money", "count"].includes(kind)
+        ? "number"
+        : kind;
+  const attrs = `data-path="${path}" data-type="${type}" aria-label="${escape(label)}"`;
+  const options =
+    kind === "bool"
+      ? [
+          [true, "yes"],
+          [false, "no"],
+        ]
+      : choices;
+  const control = options
+    ? `<select ${attrs}>${options
+        .map(
+          ([k, t]) =>
+            `<option value="${k}" ${String(value) === String(k) ? "selected" : ""}>${escape(t)}</option>`,
+        )
+        .join("")}</select>`
+    : `<input ${attrs} type="${kind === "date" ? "date" : "number"}" step="any" value="${escape(blank ? "" : kind === "percent" ? Number((value * 100).toFixed(4)) : value)}">`;
+  return `<span class="chip-field o-${origin}"><button type="button" class="chip" data-chip title="${title}. Click to change."><i class="dot" aria-hidden="true"></i>${escape(text)}</button><span class="chip-control" hidden>${control}</span></span>`;
+}
+// What a salary means per paycheck and per month, under its input.
+function payMeaning(c) {
+  const checks = { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 }[
+    c.frequency
+  ];
+  return c.salary > 0 && checks
+    ? `${money(c.salary / checks)} per paycheck · ${money(c.salary / 12)} a month`
     : "";
+}
+// One sentence of chips and connecting words; empty when it has no chips.
+function detailLine(...parts) {
+  const flat = parts.flat();
+  return flat.some((x) => x.startsWith('<span class="chip-field'))
+    ? `<p class="detail-line">${flat.join("")}</p>`
+    : "";
+}
 let quietReview = false;
 // Fields whose values are still estimates (defaults or inferred from
 // paystubs) under one title, with a single bar to confirm them together.
@@ -288,15 +370,15 @@ function renderSetupForm() {
         (scenario.taxProfile.settings.filing === "married"
           ? field(t + "settings.spouseIncome", "Spouse's annual wages")
           : "") +
-        more(
-          "tax",
-          field(t + "year", "Starting tax year") +
-            field(
-              t + "settings.localRate",
-              "City or local income tax rate",
-              "percent",
-              "Effective rate for city, county or school income tax (e.g. NYC); 0 if none",
-            ),
+        detailLine(
+          "Tax year ",
+          chip(t + "year", "Starting tax year", "count"),
+          " · Local income tax ",
+          chip(
+            t + "settings.localRate",
+            "City or local income tax rate",
+            "percent",
+          ),
         ),
     ) +
     `<p class="cf-note">${limits.year} limits: employee 401(k) ${money(limits.deferral)}, total plan ${money(limits.total401k)}, IRA ${money(limits.ira)}. Catch-up eligibility is applied by age.</p>` +
@@ -364,12 +446,10 @@ function renderSetupForm() {
       "Employer pays this portion of matched contributions",
       "percent",
     ) +
-    more(
-      "employer",
-      field(
-        r + "employerAnnual",
-        "Fixed annual employer funding (excluding formula match)",
-      ),
+    detailLine(
+      "Plus fixed employer funding of ",
+      chip(r + "employerAnnual", "Fixed annual employer funding", "money"),
+      " a year, outside the match",
     ) +
     choices(
       "After-tax 401(k)",
@@ -416,7 +496,11 @@ function renderSetupForm() {
             (Profile.describe(scenario).last?.current.hsaEmployer != null
               ? `<p class="cf-note">Employer HSA funding: ${money(Profile.describe(scenario).last.current.hsaEmployer)} per paycheck, from your upload.</p>`
               : field(h + "employer", "Annual employer HSA contribution")) +
-            more("hsa", field(h + "eligibleMonths", "Eligible months"))
+            detailLine(
+              "Eligible for ",
+              chip(h + "eligibleMonths", "Eligible months", "count"),
+              " months this year",
+            )
           : ""),
     );
   const espp =
@@ -443,19 +527,32 @@ function renderSetupForm() {
           () =>
             field(e + "start", "Current offering started", "date") +
             field(e + "periodMonths", "Months per offering") +
-            more(
-              "espp",
-              field(e + "end", "Current offering ends (optional)", "date") +
-                field(
-                  e + "autoEnroll",
-                  "Re-enroll in each new offering",
-                  "check",
-                ) +
-                field(
-                  e + "firstEnrollmentDate",
-                  "First offering you joined (optional)",
-                  "date",
-                ),
+            detailLine(
+              "Offering ends ",
+              chip(
+                e + "end",
+                "Current offering ends",
+                "date",
+                null,
+                "when its months are up",
+              ),
+              " · Re-enroll in new offerings: ",
+              chip(
+                e + "autoEnroll",
+                "Re-enroll in each new offering",
+                "bool",
+                null,
+                // Plans re-enroll by default.
+                "yes",
+              ),
+              " · First offering you joined: ",
+              chip(
+                e + "firstEnrollmentDate",
+                "First offering you joined",
+                "date",
+                null,
+                "the current one",
+              ),
             ),
         ) +
         reviewBlock(
@@ -589,18 +686,28 @@ function renderSetupForm() {
     .join("");
   // Salary, pay frequency and payday live with the paychecks (step 2) only.
   const compensation =
-    field(c + "bonusPercent", "Bonus target", "percent") +
+    field(
+      c + "bonusPercent",
+      "Bonus target",
+      "percent",
+      scenario.compensation.salary > 0 && scenario.compensation.bonusPercent > 0
+        ? `${money(scenario.compensation.salary * scenario.compensation.bonusPercent)} a year before tax`
+        : "",
+    ) +
     field(c + "salaryGrowth", "Annual raise", "percent") +
-    more(
-      "pay",
-      field(
+    detailLine(
+      "Bonus paid in ",
+      chip(
         c + "bonusMonth",
         "Bonus month",
         Array.from({ length: 12 }, (_, i) => [
           i + 1,
           new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
         ]),
-      ) + field(c + "stockGrowth", "Company stock growth per year", "percent"),
+      ),
+      " · Company stock grows ",
+      chip(c + "stockGrowth", "Company stock growth per year", "percent"),
+      " a year",
     ) +
     `<div id="grant-timeline" class="grant-preview"></div>` +
     grants +
@@ -645,26 +752,34 @@ function renderSetupForm() {
     reviewBlock(
       "Your pay",
       () =>
-        field(c + "salary", "Annual base salary") +
-        more(
-          "schedule",
-          field(c + "frequency", "How often you're paid", [
-            ["biweekly", "Every two weeks"],
-            ["semimonthly", "Twice a month"],
-            ["monthly", "Once a month"],
-            ["weekly", "Every week"],
-          ]) +
-            // A regular paystub dates the pay calendar; only without one is
-            // a payday worth asking for.
-            (records.some((r) => (r.kind || "regular") === "regular")
-              ? ""
-              : field(
+        field(
+          c + "salary",
+          "Annual base salary",
+          "number",
+          payMeaning(scenario.compensation),
+        ) +
+        detailLine(
+          "Paid ",
+          chip(c + "frequency", "How often you're paid", [
+            ["biweekly", "every two weeks"],
+            ["semimonthly", "twice a month"],
+            ["monthly", "once a month"],
+            ["weekly", "every week"],
+          ]),
+          // A regular paystub dates the pay calendar; only without one is a
+          // payday worth asking for.
+          records.some((r) => (r.kind || "regular") === "regular")
+            ? ", on the dates of your paystubs"
+            : [
+                ", recent payday ",
+                chip(
                   c + "firstPayday",
-                  "A recent payday (optional)",
+                  "A recent payday",
                   "date",
-                  "Lines up paycheck dates. Leave it if you don't know.",
-                )),
-          "Pay schedule",
+                  null,
+                  "not set",
+                ),
+              ],
         ),
     ) +
     (records.length
@@ -734,9 +849,9 @@ function renderSetupForm() {
   const retirementPlan =
     field(p + "retirementAge", "Retirement age") +
     field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
-    more(
-      "retirement",
-      field(p + "socialSecurityStartAge", "Social Security start age"),
+    detailLine(
+      "Social Security starts at age ",
+      chip(p + "socialSecurityStartAge", "Social Security start age", "count"),
     ) +
     choices(
       "Monthly spending",
@@ -855,14 +970,16 @@ function renderSetupForm() {
             const value =
               kind === "check"
                 ? el.checked
-                : el.tagName === "SELECT" || ["date", "text"].includes(kind)
-                  ? el.dataset.path === "compensation.bonusMonth"
-                    ? Number(el.value)
-                    : el.value
-                  : el.value === ""
-                    ? null
-                    : (Number(el.value) * (kind === "years" ? 12 : 1)) /
-                      (kind === "percent" ? 100 : 1);
+                : kind === "bool"
+                  ? el.value === "true"
+                  : el.tagName === "SELECT" || ["date", "text"].includes(kind)
+                    ? el.dataset.path === "compensation.bonusMonth"
+                      ? Number(el.value)
+                      : el.value
+                    : el.value === ""
+                      ? null
+                      : (Number(el.value) * (kind === "years" ? 12 : 1)) /
+                        (kind === "percent" ? 100 : 1);
             // One answer can fill related fields (e.g. one share price), but
             // never a value the user set or confirmed, and the copies stay
             // unmarked so later uploads or edits can still fill them.
@@ -967,6 +1084,24 @@ function renderSetupForm() {
       next.compensation.grants.push(grant);
       commit(next);
     };
+  $("setup")
+    .querySelectorAll("[data-chip]")
+    .forEach((chipButton) => {
+      chipButton.onclick = () => {
+        const box = chipButton.nextElementSibling,
+          control = box.firstElementChild;
+        chipButton.hidden = true;
+        box.hidden = false;
+        control.focus();
+        control.addEventListener("blur", () => {
+          box.hidden = true;
+          chipButton.hidden = false;
+        });
+        control.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" || event.key === "Enter") control.blur();
+        });
+      };
+    });
   $("setup")
     .querySelectorAll("[data-jump]")
     .forEach((el) => (el.onclick = () => jumpTo(el.dataset.jump)));

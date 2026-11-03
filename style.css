@@ -2854,18 +2854,6 @@ button:disabled {
 .todo-done .todo-item span {
   color: var(--ok);
 }
-.more-fields {
-  grid-column: 1 / -1;
-  margin: 4px 0 0;
-}
-.more-fields > summary {
-  font-size: 14px;
-  color: var(--text-2);
-  cursor: pointer;
-}
-.more-fields > .field-grid {
-  margin-top: 8px;
-}
 .jump-flash {
   outline: 2px solid var(--accent);
   outline-offset: 4px;
@@ -2883,4 +2871,61 @@ button:disabled {
   .todo-item::after {
     display: none;
   }
+}
+/* Lower-impact values as a sentence of editable chips. The dot says where
+   each value came from; an unchecked default is dashed. */
+.detail-line {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 2.1;
+  color: var(--text-2);
+}
+.profile-panel .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0 10px 0 8px;
+  font: inherit;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  cursor: pointer;
+}
+.profile-panel .chip:hover {
+  border-color: var(--line-strong);
+}
+.profile-panel .o-default .chip {
+  border-style: dashed;
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+}
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.o-paystub .dot {
+  background: var(--ok);
+}
+.o-yours .dot {
+  background: var(--accent);
+}
+.o-default .dot {
+  border: 1.5px solid var(--warn);
+}
+.chip-control select,
+.chip-control input {
+  width: auto;
+  max-width: 14em;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 14px;
+}
+.chip-control input[type="number"] {
+  width: 7em;
 }
