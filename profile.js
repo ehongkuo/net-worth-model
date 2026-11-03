@@ -766,7 +766,6 @@
       "taxProfile.settings.state",
       "compensation.salary",
       "compensation.frequency",
-      "compensation.firstPayday",
     ];
     if (s.employerPlan.espp.enabled)
       required.push(

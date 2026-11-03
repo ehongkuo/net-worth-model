@@ -2810,3 +2810,77 @@ button:disabled {
 .review-block > .field-grid > :not(.profile-cell) {
   grid-column: 1 / -1;
 }
+/* Still-needed list: each item jumps to its one field. */
+.todo-list {
+  list-style: none;
+  margin: 8px 0 20px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.profile-panel .todo-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  text-align: left;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-2);
+  background: var(--warn-bg);
+  color: var(--text);
+  font-weight: 400;
+  cursor: pointer;
+}
+.todo-item strong {
+  font-weight: 600;
+}
+.todo-item span {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 14px;
+  text-align: right;
+}
+.todo-item::after {
+  content: "→";
+  color: var(--text-2);
+}
+.profile-panel .todo-done .todo-item {
+  border-color: var(--line);
+  background: transparent;
+}
+.todo-done .todo-item span {
+  color: var(--ok);
+}
+.more-fields {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+}
+.more-fields > summary {
+  font-size: 14px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.more-fields > .field-grid {
+  margin-top: 8px;
+}
+.jump-flash {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--r-1);
+  transition: outline-color 1.2s;
+}
+@media (max-width: 640px) {
+  .profile-panel .todo-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .todo-item span {
+    text-align: left;
+  }
+  .todo-item::after {
+    display: none;
+  }
+}

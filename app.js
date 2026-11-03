@@ -154,6 +154,11 @@ function esppPriceNote(e) {
       : `the ${money(market)} purchase-day price (lower than the ${money(offer)} offering price)`;
   return `<p class="grant-summary"><strong>You'd buy at ${money(base * (1 - d))} a share</strong>: ${Math.round(d * 100)}% off ${which}.</p>`;
 }
+// Less important inputs for a section, collapsed under one toggle.
+const more = (key, body, title = "More details") =>
+  body
+    ? `<details class="more-fields" data-key="more:${key}"><summary>${escape(title)}</summary><div class="field-grid">${body}</div></details>`
+    : "";
 let quietReview = false;
 // Fields whose values are still estimates (defaults or inferred from
 // paystubs) under one title, with a single bar to confirm them together.
@@ -193,102 +198,48 @@ const compactGroup = (title, body) =>
 function setup() {
   Util.preserveFocus($("setup"), renderSetup);
 }
-// Questions shown on the quick screen this session; answered ones stay in place
-// so the form doesn't jump while the user works through it.
-const quickAsked = new Set();
+// Items still needed, listed this session; answered ones stay in place (as
+// done) so the list doesn't jump. Each links to its one field.
+const quickAsked = new Map();
 function quickQuestions() {
-  for (const m of Presentation.missing(scenario)) quickAsked.add(m.id);
-  const why = Object.fromEntries(
-    Presentation.missing(scenario).map((m) => [m.id, m.why]),
-  );
-  const espp = scenario.employerPlan.espp;
-  const vests = PaystubParser.vestHistory(
-    scenario.uploads.records,
-    scenario.taxProfile.year,
-  );
-  const items = {
-    spending: [
-      "Monthly spending",
-      field(
-        "projection.monthlyExpenses.other",
-        "About how much you spend per month",
-        "number",
-        "Rent, food, travel and everything not taken out of your paycheck. Saved as Other spending; if you add categories later, lower Other by what you move into them.",
-      ),
-    ],
-    balances: [
-      "What you already have",
-      field("projection.startingBalances.cash", "Cash and savings") +
-        field("projection.startingBalances.brokerage", "Taxable investments") +
-        field("projection.startingBalances.pretax401k", "Traditional 401(k)") +
-        field("projection.startingBalances.rothAccounts", "Roth accounts") +
-        field("projection.startingBalances.traditionalIRA", "Traditional IRA") +
-        field("projection.startingBalances.hsa", "HSA"),
-    ],
-    age: ["Your age", field("taxProfile.age", "Age today")],
-    filing: [
-      "Filing status",
-      field("taxProfile.settings.filing", "How you file taxes", [
-        ["single", "Single"],
-        ["married", "Married filing jointly"],
-      ]),
-    ],
-    state: [
-      "State income tax",
-      field("taxProfile.settings.state", "Where you pay income tax", [
-        ["CA", "California"],
-        ["none", "A state with no income tax"],
-        ["custom", "Another state (effective rate)"],
-      ]) +
-        field(
-          "taxProfile.settings.customStateRate",
-          "State effective rate",
-          "percent",
-        ),
-    ],
-    spouse: [
-      "Spouse income",
-      field("taxProfile.settings.spouseIncome", "Spouse's annual wages"),
-    ],
-    hsa: [
-      "HSA coverage",
-      field("employerPlan.hsa.coverage", "Your HSA health plan covers", [
-        ["single", "Just me (self-only)"],
-        ["family", "Me and family"],
-      ]),
-    ],
-    rsu: [
-      "Your RSU grants",
-      scenario.compensation.grants.length
-        ? `<p class="cf-note">Grant added. Set its share count, prices and dates under Pay & equity.</p><button data-open-grants>Edit grant details</button>`
-        : `<p class="cf-note">${
-            vests.vests.length
-              ? `Your latest vest was ${escape(money(vests.vests.at(-1).value))} on ${escape(vests.vests.at(-1).date)}. We can keep that pace every ${vests.interval || 3} months for four years as a starting point, then you can edit it to match your grant.`
-              : "Upload an RSU vest payslip (often a separate “off-cycle” payslip) to start from your vests, or add your grant details."
-          }</p>${
-            vests.vests.length
-              ? '<button id="grant-from-vests" class="primary">Start from my vests</button>'
-              : ""
-          }<button data-open-grants>Add grant details</button>`,
-    ],
-    // Prices and offering dates are set in one place, the ESPP section.
-    espp: espp.enabled
-      ? [
-          "ESPP",
-          `<button data-open-espp class="primary">Set up ESPP prices and dates</button>`,
-        ]
-      : null,
-  };
-  const html = [...quickAsked]
-    .filter((id) => items[id])
-    .map(
-      (id) =>
-        `<section class="quick-question"><h3>${escape(items[id][0])}</h3>${why[id] ? `<p class="cf-note">${escape(why[id])}</p>` : '<p class="cf-note quick-done">Answered</p>'}<div class="field-grid">${items[id][1]}</div></section>`,
-    )
+  const missing = Presentation.missing(scenario),
+    open = new Set(missing.map((m) => m.id));
+  for (const m of missing) quickAsked.set(m.id, m);
+  if (!quickAsked.size)
+    return '<h2>About you</h2><p class="cf-note">Your paystub and answers cover everything the model needs.</p>';
+  const items = [...quickAsked.values()]
+    .map((m) => {
+      const target =
+        m.id === "rsu"
+          ? "data-open-grants"
+          : m.id === "espp"
+            ? "data-open-espp"
+            : `data-jump="${escape(m.path)}"`;
+      return `<li class="${open.has(m.id) ? "" : "todo-done"}"><button type="button" class="todo-item" ${target}><strong>${escape(m.label)}</strong><span>${open.has(m.id) ? escape(m.why) : "Done"}</span></button></li>`;
+    })
     .join("");
-  return html
-    ? `<h2>A few things your paystub can't tell us</h2>${html}`
-    : '<h2>About you</h2><p class="cf-note">Your paystub and answers cover everything the model needs.</p>';
+  return `<h2>A few things your paystub can't tell us</h2><ul class="todo-list">${items}</ul>`;
+}
+// Shows the one field for a path: its step, any collapsed parents, focus.
+function jumpTo(path) {
+  const el = $("setup").querySelector(`[data-path="${CSS.escape(path)}"]`);
+  if (!el) return;
+  const step = Number(el.closest("[data-profile-step]")?.dataset.profileStep);
+  if (step !== profileStep) {
+    profileStep = step;
+    renderProfile();
+  }
+  for (
+    let d = el.closest("details");
+    d;
+    d = d.parentElement?.closest("details")
+  )
+    d.open = true;
+  el.scrollIntoView({ block: "center" });
+  el.focus({ preventScroll: true });
+  const cell = el.closest(".profile-cell");
+  cell?.classList.add("jump-flash");
+  setTimeout(() => cell?.classList.remove("jump-flash"), 1600);
 }
 function renderSetup() {
   shownPaths = new Set();
@@ -314,30 +265,44 @@ function renderSetupForm() {
       scenario.taxProfile.settings,
     );
   const tax =
-    field(t + "year", "Starting tax year") +
-    field(t + "age", "Age at start of projection") +
-    field(t + "settings.filing", "Filing status", [
-      ["single", "Single"],
-      ["married", "Married filing jointly"],
-    ]) +
-    field(t + "settings.state", "State tax model", [
-      ["CA", "California"],
-      ["none", "No state income tax"],
-      ["custom", "Other state (effective rate)"],
-    ]) +
-    (scenario.taxProfile.settings.state === "custom"
-      ? field(t + "settings.customStateRate", "State effective rate", "percent")
-      : "") +
-    field(
-      t + "settings.localRate",
-      "City or local income tax rate",
-      "percent",
-      "Effective rate for city, county or school income tax (e.g. NYC); 0 if none",
+    reviewBlock(
+      "Your tax situation",
+      () =>
+        field(t + "age", "Your age") +
+        field(t + "settings.filing", "Filing status", [
+          ["single", "Single"],
+          ["married", "Married filing jointly"],
+        ]) +
+        field(t + "settings.state", "Where you pay income tax", [
+          ["CA", "California"],
+          ["none", "No state income tax"],
+          ["custom", "Other state (effective rate)"],
+        ]) +
+        (scenario.taxProfile.settings.state === "custom"
+          ? field(
+              t + "settings.customStateRate",
+              "State effective rate",
+              "percent",
+            )
+          : "") +
+        (scenario.taxProfile.settings.filing === "married"
+          ? field(t + "settings.spouseIncome", "Spouse's annual wages")
+          : "") +
+        more(
+          "tax",
+          field(t + "year", "Starting tax year") +
+            field(
+              t + "settings.localRate",
+              "City or local income tax rate",
+              "percent",
+              "Effective rate for city, county or school income tax (e.g. NYC); 0 if none",
+            ),
+        ),
     ) +
     `<p class="cf-note">${limits.year} limits: employee 401(k) ${money(limits.deferral)}, total plan ${money(limits.total401k)}, IRA ${money(limits.ira)}. Catch-up eligibility is applied by age.</p>` +
     group(
       "Additional tax information",
-      field(t + "settings.spouseIncome", "Spouse annual wages") +
+      field(t + "settings.spouseIncome", "Spouse's annual wages") +
         field(t + "settings.otherIncome", "Other annual ordinary income") +
         field(
           t + "settings.federalDeduction",
@@ -390,10 +355,6 @@ function renderSetupForm() {
     fundingSummary +
     paycheckItemNote(["traditional", "roth", "mega"]) +
     field(
-      r + "employerAnnual",
-      "Fixed annual employer funding (excluding formula match)",
-    ) +
-    field(
       r + "matchPercent",
       "Match applies to the first portion of pay",
       "percent",
@@ -402,6 +363,13 @@ function renderSetupForm() {
       r + "matchRate",
       "Employer pays this portion of matched contributions",
       "percent",
+    ) +
+    more(
+      "employer",
+      field(
+        r + "employerAnnual",
+        "Fixed annual employer funding (excluding formula match)",
+      ),
     ) +
     choices(
       "After-tax 401(k)",
@@ -448,7 +416,7 @@ function renderSetupForm() {
             (Profile.describe(scenario).last?.current.hsaEmployer != null
               ? `<p class="cf-note">Employer HSA funding: ${money(Profile.describe(scenario).last.current.hsaEmployer)} per paycheck, from your upload.</p>`
               : field(h + "employer", "Annual employer HSA contribution")) +
-            field(h + "eligibleMonths", "Eligible months")
+            more("hsa", field(h + "eligibleMonths", "Eligible months"))
           : ""),
     );
   const espp =
@@ -475,12 +443,19 @@ function renderSetupForm() {
           () =>
             field(e + "start", "Current offering started", "date") +
             field(e + "periodMonths", "Months per offering") +
-            field(e + "end", "Current offering ends (optional)", "date") +
-            field(e + "autoEnroll", "Re-enroll in each new offering", "check") +
-            field(
-              e + "firstEnrollmentDate",
-              "First offering you joined (optional)",
-              "date",
+            more(
+              "espp",
+              field(e + "end", "Current offering ends (optional)", "date") +
+                field(
+                  e + "autoEnroll",
+                  "Re-enroll in each new offering",
+                  "check",
+                ) +
+                field(
+                  e + "firstEnrollmentDate",
+                  "First offering you joined (optional)",
+                  "date",
+                ),
             ),
         ) +
         reviewBlock(
@@ -615,18 +590,27 @@ function renderSetupForm() {
   // Salary, pay frequency and payday live with the paychecks (step 2) only.
   const compensation =
     field(c + "bonusPercent", "Bonus target", "percent") +
-    field(
-      c + "bonusMonth",
-      "Bonus month",
-      Array.from({ length: 12 }, (_, i) => [
-        i + 1,
-        new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
-      ]),
-    ) +
     field(c + "salaryGrowth", "Annual raise", "percent") +
-    field(c + "stockGrowth", "Company stock growth per year", "percent") +
+    more(
+      "pay",
+      field(
+        c + "bonusMonth",
+        "Bonus month",
+        Array.from({ length: 12 }, (_, i) => [
+          i + 1,
+          new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
+        ]),
+      ) + field(c + "stockGrowth", "Company stock growth per year", "percent"),
+    ) +
     `<div id="grant-timeline" class="grant-preview"></div>` +
     grants +
+    (!scenario.compensation.grants.length &&
+    PaystubParser.vestHistory(
+      scenario.uploads.records,
+      scenario.taxProfile.year,
+    ).vests.length
+      ? '<button id="grant-from-vests" class="primary">Start a grant from my vests</button>'
+      : "") +
     '<button id="add-grant">Add RSU grant</button>';
   const records = [...scenario.uploads.records].sort((x, y) =>
     y.date.localeCompare(x.date),
@@ -658,16 +642,30 @@ function renderSetupForm() {
     stubs +
     `<div id="upload-status" role="status"></div><div id="upload-review"></div>` +
     scheduleNote +
-    compactGroup(
+    reviewBlock(
       "Your pay",
-      field(c + "salary", "Annual base salary") +
-        field(c + "frequency", "How often you're paid", [
-          ["biweekly", "Every two weeks"],
-          ["semimonthly", "Twice a month"],
-          ["monthly", "Once a month"],
-          ["weekly", "Every week"],
-        ]) +
-        field(c + "firstPayday", "A recent payday", "date"),
+      () =>
+        field(c + "salary", "Annual base salary") +
+        more(
+          "schedule",
+          field(c + "frequency", "How often you're paid", [
+            ["biweekly", "Every two weeks"],
+            ["semimonthly", "Twice a month"],
+            ["monthly", "Once a month"],
+            ["weekly", "Every week"],
+          ]) +
+            // A regular paystub dates the pay calendar; only without one is
+            // a payday worth asking for.
+            (records.some((r) => (r.kind || "regular") === "regular")
+              ? ""
+              : field(
+                  c + "firstPayday",
+                  "A recent payday (optional)",
+                  "date",
+                  "Lines up paycheck dates. Leave it if you don't know.",
+                )),
+          "Pay schedule",
+        ),
     ) +
     (records.length
       ? linkedGroup(
@@ -736,7 +734,10 @@ function renderSetupForm() {
   const retirementPlan =
     field(p + "retirementAge", "Retirement age") +
     field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
-    field(p + "socialSecurityStartAge", "Social Security start age") +
+    more(
+      "retirement",
+      field(p + "socialSecurityStartAge", "Social Security start age"),
+    ) +
     choices(
       "Monthly spending",
       (scenario.projection.monthlyExpenses.other > 0 &&
@@ -966,6 +967,9 @@ function renderSetupForm() {
       next.compensation.grants.push(grant);
       commit(next);
     };
+  $("setup")
+    .querySelectorAll("[data-jump]")
+    .forEach((el) => (el.onclick = () => jumpTo(el.dataset.jump)));
   $("setup")
     .querySelectorAll("[data-open-espp]")
     .forEach(
@@ -1642,6 +1646,7 @@ $("reset-confirm").onclick = () => {
   $("reset-dialog").close();
   drafts = [];
   keptValues = [];
+  quickAsked.clear();
   profileStep = 0;
   showLearned = false;
   gapsPrompted = "";
