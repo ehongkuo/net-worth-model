@@ -1,12 +1,12 @@
 (function (root) {
   "use strict";
   const colors = [
-    "#38bdf8",
-    "#a78bfa",
-    "#fbbf24",
-    "#34d399",
-    "#fb7185",
-    "#fb923c",
+    "var(--cash)",
+    "var(--retire)",
+    "var(--equity)",
+    "var(--employer)",
+    "var(--tax)",
+    "var(--equity-2)",
   ];
   const { escape, money } = root.Util;
   function render(host, grants, date, annual, onChange) {

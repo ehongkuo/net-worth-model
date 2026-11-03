@@ -450,14 +450,14 @@
         wage,
         capitalGross: 0,
       });
-    add("salary", "Base salary", payroll.salary, "#38bdf8", "cash", true);
-    add("bonus", "Bonus", payroll.bonus, "#818cf8", "cash", true);
-    add("spouse", "Spouse wages", i.spouse, "#2dd4bf", "cash", true);
+    add("salary", "Base salary", payroll.salary, "var(--cash)", "cash", true);
+    add("bonus", "Bonus", payroll.bonus, "var(--cash-2)", "cash", true);
+    add("spouse", "Spouse wages", i.spouse, "var(--cash-3)", "cash", true);
     add(
       "imputed",
       "Noncash taxable benefits",
       payroll.imputedIncome,
-      "#94a3b8",
+      "var(--benefit)",
       "cash",
       true,
     );
@@ -470,17 +470,23 @@
         payroll.rsuGross -
         (payroll.esppSpread || 0) -
         (payroll.imputedIncome || 0),
-      "#22d3ee",
+      "var(--cash-3)",
       "cash",
       true,
     );
-    add("rsu", "RSU vesting", payroll.rsuGross, "#fbbf24", "rsu", true);
-    add("espp", "ESPP taxable sale income", e.ordinary, "#fb923c", "espp");
+    add("rsu", "RSU vesting", payroll.rsuGross, "var(--equity)", "rsu", true);
+    add(
+      "espp",
+      "ESPP taxable sale income",
+      e.ordinary,
+      "var(--equity-2)",
+      "espp",
+    );
     add(
       "espp-spread",
       "ESPP purchase discount (non-qualified wages)",
       payroll.esppSpread,
-      "#fdba74",
+      "var(--equity-3)",
       "espp",
       true,
     );
@@ -488,7 +494,7 @@
       "conversion",
       "Backdoor taxable portion",
       c.iraTaxableConversion + c.conversionEarnings,
-      "#c084fc",
+      "var(--other)",
       "other",
     );
     add(
@@ -499,7 +505,7 @@
         c.iraTaxableConversion -
         c.conversionEarnings +
         (i.federalOnly || 0),
-      "#e879f9",
+      "var(--other-2)",
       "other",
     );
     const espp = sources.find((s) => s.id === "espp");
@@ -510,7 +516,13 @@
         positive(e.shortGain) / Math.max(short, positive(e.shortGain)) || 0,
       );
     espp.gross += esppShort;
-    add("gains", "Other realized gains", short - esppShort, "#f472b6", "other");
+    add(
+      "gains",
+      "Other realized gains",
+      short - esppShort,
+      "var(--other-3)",
+      "other",
+    );
     const gains = sources.find((s) => s.id === "gains");
     espp.capitalGross =
       long *

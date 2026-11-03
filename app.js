@@ -26,6 +26,63 @@ function table(headers, rows) {
 let shownPaths = null;
 // The gaps last shown in the pop-up; it opens again only when they change.
 let gapsPrompted = "";
+// Per-viewer display choices on the profile; not part of the scenario.
+let compPeriod = "year";
+const compOpen = new Set();
+// Money colors, by what form the money takes. Tokens live in style.css.
+const MONEY_COLOR = {
+  pay: "cash",
+  cash: "cash",
+  equity: "equity",
+  kept: "equity",
+  espp: "equity",
+  rsu: "equity",
+  employer: "employer",
+  retirement: "retire",
+  tax: "tax",
+  benefits: "benefit",
+};
+// Paycheck items: what to call them and the units each can be entered in.
+const UNIT_LABEL = {
+  percent: "of pay",
+  check: "per check",
+  month: "per month",
+  year: "per year",
+};
+const PAY_ITEMS = {
+  traditional: ["Pre-tax 401(k)", ""],
+  roth: ["Roth 401(k)", ""],
+  mega: ["After-tax 401(k)", "Often used for a mega backdoor Roth."],
+  hsa: ["HSA", "Your contribution. Your employer's is counted separately."],
+  espp: ["ESPP", "Set aside from pay to buy company stock."],
+  health: ["Pre-tax benefits", "Health, dental, vision, FSA and commuter."],
+  post: [
+    "After-tax deductions",
+    "Coverage paid after tax, like extra life insurance.",
+  ],
+  allowance: [
+    "Reimbursements",
+    "Untaxed cash, like a phone or internet allowance.",
+  ],
+  taxableAllowance: ["Taxable allowances", "Cash stipends taxed as pay."],
+  imputed: [
+    "Taxable perks",
+    "Not cash: adds to taxable pay, like employer-paid life insurance.",
+  ],
+};
+const dollars = (v) =>
+  (Number(v) || 0).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+const longDate = (iso) =>
+  new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 function field(path, label, type = "number", hint = "", { also = [] } = {}) {
   if (shownPaths?.has(path)) return "";
   const enginePath = path.startsWith("employerPlan.")
@@ -52,14 +109,25 @@ function field(path, label, type = "number", hint = "", { also = [] } = {}) {
       : election?.sourceDate
         ? `From ${election.sourceDate} paycheck. ${election.mode === "percent" ? "Inferred from base salary plus bonus when configured eligible." : "Observed amount per paycheck."}`
         : "";
+  const sourceDate = source?.sourceDate || election?.sourceDate;
   const sourceInfo = provenance
-    ? `<details class="field-source" data-key="source:${path}"><summary>Source</summary>${escape(provenance)}</details>`
+    ? `<small class="field-origin" title="${escape(provenance)}">${manual ? "Your entry" : sourceDate ? `From your ${escape(longDate(sourceDate))} paystub` : escape(provenance)}</small>`
     : "";
   shownPaths?.add(path);
   const value = get(scenario, path),
     attrs = `data-path="${path}" data-type="${type}"${also.length ? ` data-also="${also.join(",")}"` : ""}`;
   const state = Profile.fieldState(scenario, path);
-  const { badge, approve } = Presentation.fieldBadge(state, path, label);
+  let { badge, approve } = Presentation.fieldBadge(state, path, label);
+  // Inside a review block one bar confirms every estimate; each field only
+  // flags a value that is missing.
+  if (quietReview) {
+    approve = "";
+    if (state.label !== "Needs input") {
+      badge = "";
+      if (state.kind === "review" || state.kind === "inferred")
+        state.kind = "estimate";
+    }
+  }
   if (type === "check")
     return `<div class="profile-cell state-${state.kind}"><label class="check">${badge}<input ${attrs} type="checkbox" ${value ? "checked" : ""}>${escape(label)}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${sourceInfo}${approve}</div>`;
   const choices = Array.isArray(type) ? type : null;
@@ -73,131 +141,183 @@ function field(path, label, type = "number", hint = "", { also = [] } = {}) {
     : `<input ${attrs} type="${["date", "text"].includes(type) ? type : "number"}" step="any" value="${escape(Profile.displayValue(value, type === "number" && /(?:^taxProfile\.(?:year|age)$|\.(?:years|retirementAge|socialSecurityStartAge|eligibleMonths|periodMonths|holdMonths|cliff|interval|shareCap)$)/.test(path) ? "count" : type))}">`;
   return `<div class="profile-cell state-${state.kind}"><label class="field">${badge}<span>${escape(label)}${type === "percent" ? " (%)" : ""}</span>${control}${hint ? `<small>${escape(hint)}</small>` : ""}</label>${sourceInfo}${approve}</div>`;
 }
+// The per-share price the engine uses, spelled out.
+function esppPriceNote(e) {
+  const offer = Math.max(0.01, e.offerPrice || 0),
+    market = Math.max(0.01, e.purchasePrice || 0),
+    d = Math.min(0.99, Math.max(0, e.discount || 0)),
+    base = e.lookback ? Math.min(offer, market) : market;
+  const which = !e.lookback
+    ? `the purchase-day price of ${money(market)}`
+    : offer <= market
+      ? `the ${money(offer)} offering price (lower than ${money(market)} on purchase day)`
+      : `the ${money(market)} purchase-day price (lower than the ${money(offer)} offering price)`;
+  return `<p class="grant-summary"><strong>You'd buy at ${money(base * (1 - d))} a share</strong>: ${Math.round(d * 100)}% off ${which}.</p>`;
+}
+// A lower-impact value shown as words in a sentence; clicking it swaps in
+// its control, which saves through the same data-path handler as a field.
+// Its dot says where the value came from: a paystub, the user, or a default.
+function chip(path, label, kind = "text", choices = null, empty = "not set") {
+  if (shownPaths?.has(path)) return "";
+  const enginePath = path.startsWith("employerPlan.")
+    ? path.slice(13)
+    : path.startsWith("taxProfile.settings.")
+      ? "tax." + path.slice(20)
+      : null;
+  if (
+    enginePath &&
+    fieldConfig &&
+    !compensationFieldVisible(fieldConfig, enginePath)
+  )
+    return "";
+  shownPaths?.add(path);
+  if (Array.isArray(kind)) [choices, kind] = [kind, "choice"];
+  const value = get(scenario, path),
+    st = Profile.fieldState(scenario, path),
+    origin =
+      st.kind === "observed"
+        ? "paystub"
+        : st.kind === "manual" || st.kind === "confirmed"
+          ? "yours"
+          : "default",
+    title = {
+      paystub: "From your paystub",
+      yours: "Your entry",
+      default: "Default, not checked yet",
+    }[origin];
+  const blank = value == null || value === "";
+  const text = blank
+    ? empty
+    : kind === "choice"
+      ? (choices.find(([k]) => String(k) === String(value)) || [0, value])[1]
+      : kind === "bool"
+        ? value
+          ? "yes"
+          : "no"
+        : kind === "percent"
+          ? `${Number((value * 100).toFixed(2))}%`
+          : kind === "money"
+            ? money(value)
+            : kind === "date"
+              ? longDate(value)
+              : String(value);
+  const type =
+    kind === "choice"
+      ? "text"
+      : ["money", "count"].includes(kind)
+        ? "number"
+        : kind;
+  const attrs = `data-path="${path}" data-type="${type}" aria-label="${escape(label)}"`;
+  const options =
+    kind === "bool"
+      ? [
+          [true, "yes"],
+          [false, "no"],
+        ]
+      : choices;
+  const control = options
+    ? `<select ${attrs}>${options
+        .map(
+          ([k, t]) =>
+            `<option value="${k}" ${String(value) === String(k) ? "selected" : ""}>${escape(t)}</option>`,
+        )
+        .join("")}</select>`
+    : `<input ${attrs} type="${kind === "date" ? "date" : "number"}" step="any" value="${escape(blank ? "" : kind === "percent" ? Number((value * 100).toFixed(4)) : value)}">`;
+  return `<span class="chip-field o-${origin}"><button type="button" class="chip" data-chip title="${title}. Click to change."><i class="dot" aria-hidden="true"></i>${escape(text)}</button><span class="chip-control" hidden>${control}</span></span>`;
+}
+// What a salary means per paycheck and per month, under its input.
+function payMeaning(c) {
+  const checks = { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 }[
+    c.frequency
+  ];
+  return c.salary > 0 && checks
+    ? `${money(c.salary / checks)} per paycheck · ${money(c.salary / 12)} a month`
+    : "";
+}
+// One sentence of chips and connecting words; empty when it has no chips.
+function detailLine(...parts) {
+  const flat = parts.flat();
+  return flat.some((x) => x.startsWith('<span class="chip-field'))
+    ? `<p class="detail-line">${flat.join("")}</p>`
+    : "";
+}
+let quietReview = false;
+// Fields whose values are still estimates (defaults or inferred from
+// paystubs) under one title, with a single bar to confirm them together.
+function reviewBlock(title, render, intro = "") {
+  const outer = quietReview;
+  quietReview = true;
+  let body;
+  try {
+    body = render();
+  } finally {
+    quietReview = outer;
+  }
+  if (!body) return "";
+  const pending = [
+    ...new Set([...body.matchAll(/data-path="([^"]+)"/g)].map((m) => m[1])),
+  ].filter((p) => {
+    const st = Profile.fieldState(scenario, p);
+    return (
+      st.kind === "inferred" ||
+      (st.kind === "review" && st.label !== "Needs input")
+    );
+  });
+  const bar = pending.length
+    ? `<div class="review-bar state-review"><span>${pending.length === 1 ? "1 value is an estimate" : `${pending.length} values are estimates`}. Check them, then confirm.</span><button type="button" data-confirm-all="${escape(pending.join(","))}">Looks right</button></div>`
+    : "";
+  return `<fieldset class="choice-group review-block"><legend>${escape(title)}</legend>${intro}${bar}<div class="field-grid">${body}</div></fieldset>`;
+}
 const group = (title, body, open = false) =>
   `<details ${open ? "open" : ""}><summary>${escape(title)}</summary><div class="field-grid">${body}</div></details>`;
-// Keeps a toggle beside the inputs it controls under a call-site title.
-const choices = (title, body) =>
-  body
-    ? `<fieldset class="choice-group"><legend>${escape(title)}</legend>${body}</fieldset>`
-    : "";
 const compactGroup = (title, body) =>
   `<section class="paycheck-group"><h3>${escape(title)}</h3><div class="field-grid">${body}</div></section>`;
 // Re-renders the profile form; keeps keyboard focus on the same field.
 function setup() {
   Util.preserveFocus($("setup"), renderSetup);
 }
-// Questions shown on the quick screen this session; answered ones stay in place
-// so the form doesn't jump while the user works through it.
-const quickAsked = new Set();
+// Items still needed, listed this session; answered ones stay in place (as
+// done) so the list doesn't jump. Each links to its one field.
+const quickAsked = new Map();
 function quickQuestions() {
-  for (const m of Presentation.missing(scenario)) quickAsked.add(m.id);
-  const why = Object.fromEntries(
-    Presentation.missing(scenario).map((m) => [m.id, m.why]),
-  );
-  const espp = scenario.employerPlan.espp;
-  const vests = PaystubParser.vestHistory(
-    scenario.uploads.records,
-    scenario.taxProfile.year,
-  );
-  const items = {
-    spending: [
-      "Monthly spending",
-      field(
-        "projection.monthlyExpenses.other",
-        "About how much you spend per month",
-        "number",
-        "Rent, food, travel and everything not taken out of your paycheck. Saved as Other spending; if you add categories later, lower Other by what you move into them.",
-      ),
-    ],
-    balances: [
-      "What you already have",
-      field("projection.startingBalances.cash", "Cash and savings") +
-        field("projection.startingBalances.brokerage", "Taxable investments") +
-        field("projection.startingBalances.pretax401k", "Traditional 401(k)") +
-        field("projection.startingBalances.rothAccounts", "Roth accounts") +
-        field("projection.startingBalances.traditionalIRA", "Traditional IRA") +
-        field("projection.startingBalances.hsa", "HSA"),
-    ],
-    age: ["Your age", field("taxProfile.age", "Age today")],
-    filing: [
-      "Filing status",
-      field("taxProfile.settings.filing", "How you file taxes", [
-        ["single", "Single"],
-        ["married", "Married filing jointly"],
-      ]),
-    ],
-    state: [
-      "State income tax",
-      field("taxProfile.settings.state", "Where you pay income tax", [
-        ["CA", "California"],
-        ["none", "A state with no income tax"],
-        ["custom", "Another state (effective rate)"],
-      ]) +
-        field(
-          "taxProfile.settings.customStateRate",
-          "State effective rate",
-          "percent",
-        ),
-    ],
-    spouse: [
-      "Spouse income",
-      field("taxProfile.settings.spouseIncome", "Spouse's annual wages"),
-    ],
-    hsa: [
-      "HSA coverage",
-      field("employerPlan.hsa.coverage", "Your HSA health plan covers", [
-        ["single", "Just me (self-only)"],
-        ["family", "Me and family"],
-      ]),
-    ],
-    rsu: [
-      "Your RSU grants",
-      scenario.compensation.grants.length
-        ? `<p class="cf-note">Grant added. Set its share count, prices and dates under Pay & stock grants.</p><button data-open-grants>Edit grant details</button>`
-        : `<p class="cf-note">${
-            vests.vests.length
-              ? `Your latest vest was ${escape(money(vests.vests.at(-1).value))} on ${escape(vests.vests.at(-1).date)}. We can keep that pace every ${vests.interval || 3} months for four years as a starting point, then you can edit it to match your grant.`
-              : "Upload an RSU vest payslip (often a separate “off-cycle” payslip) to start from your vests, or add your grant details."
-          }</p>${
-            vests.vests.length
-              ? '<button id="grant-from-vests" class="primary">Start from my vests</button>'
-              : ""
-          }<button data-open-grants>Add grant details</button>`,
-    ],
-    espp: espp.enabled
-      ? [
-          "ESPP",
-          field(
-            "employerPlan.espp.offerPrice",
-            "Company share price today",
-            "number",
-            "A starting estimate for the offering, purchase and sale prices. Set the offering-start price and expected prices separately under Complete the picture when you know them.",
-            {
-              also: [
-                "employerPlan.espp.purchasePrice",
-                "employerPlan.espp.salePrice",
-              ],
-            },
-          ) +
-            field(
-              "employerPlan.espp.start",
-              "Current offering started",
-              "date",
-            ) +
-            field("employerPlan.espp.periodMonths", "Months per offering"),
-        ]
-      : null,
-  };
-  const html = [...quickAsked]
-    .filter((id) => items[id])
-    .map(
-      (id) =>
-        `<section class="quick-question"><h3>${escape(items[id][0])}</h3>${why[id] ? `<p class="cf-note">${escape(why[id])}</p>` : '<p class="cf-note quick-done">Answered</p>'}<div class="field-grid">${items[id][1]}</div></section>`,
-    )
+  const missing = Presentation.missing(scenario),
+    open = new Set(missing.map((m) => m.id));
+  for (const m of missing) quickAsked.set(m.id, m);
+  if (!quickAsked.size)
+    return '<h2>About you</h2><p class="cf-note">Your paystub and answers cover everything the model needs.</p>';
+  const items = [...quickAsked.values()]
+    .map((m) => {
+      const target =
+        m.id === "rsu"
+          ? "data-open-grants"
+          : m.id === "espp"
+            ? "data-open-espp"
+            : `data-jump="${escape(m.path)}"`;
+      return `<li class="${open.has(m.id) ? "" : "todo-done"}"><button type="button" class="todo-item" ${target}><strong>${escape(m.label)}</strong><span>${open.has(m.id) ? escape(m.why) : "Done"}</span></button></li>`;
+    })
     .join("");
-  return html
-    ? `<h2>A few things your paystub can't tell us</h2>${html}`
-    : '<h2>About you</h2><p class="cf-note">Your paystub and answers cover everything the model needs.</p>';
+  return `<h2>A few things your paystub can't tell us</h2><ul class="todo-list">${items}</ul>`;
+}
+// Shows the one field for a path: its step, any collapsed parents, focus.
+function jumpTo(path) {
+  const el = $("setup").querySelector(`[data-path="${CSS.escape(path)}"]`);
+  if (!el) return;
+  const step = Number(el.closest("[data-profile-step]")?.dataset.profileStep);
+  if (step !== profileStep) {
+    profileStep = step;
+    renderProfile();
+  }
+  for (
+    let d = el.closest("details");
+    d;
+    d = d.parentElement?.closest("details")
+  )
+    d.open = true;
+  el.scrollIntoView({ block: "center" });
+  el.focus({ preventScroll: true });
+  const cell = el.closest(".profile-cell");
+  cell?.classList.add("jump-flash");
+  setTimeout(() => cell?.classList.remove("jump-flash"), 1600);
 }
 function renderSetup() {
   shownPaths = new Set();
@@ -223,30 +343,44 @@ function renderSetupForm() {
       scenario.taxProfile.settings,
     );
   const tax =
-    field(t + "year", "Starting tax year") +
-    field(t + "age", "Age at start of projection") +
-    field(t + "settings.filing", "Filing status", [
-      ["single", "Single"],
-      ["married", "Married filing jointly"],
-    ]) +
-    field(t + "settings.state", "State tax model", [
-      ["CA", "California"],
-      ["none", "No state income tax"],
-      ["custom", "Other state (effective rate)"],
-    ]) +
-    (scenario.taxProfile.settings.state === "custom"
-      ? field(t + "settings.customStateRate", "State effective rate", "percent")
-      : "") +
-    field(
-      t + "settings.localRate",
-      "City or local income tax rate",
-      "percent",
-      "Effective rate for city, county or school income tax (e.g. NYC); 0 if none",
+    reviewBlock(
+      "Your tax situation",
+      () =>
+        field(t + "age", "Your age") +
+        field(t + "settings.filing", "Filing status", [
+          ["single", "Single"],
+          ["married", "Married filing jointly"],
+        ]) +
+        field(t + "settings.state", "Where you pay income tax", [
+          ["CA", "California"],
+          ["none", "No state income tax"],
+          ["custom", "Other state (effective rate)"],
+        ]) +
+        (scenario.taxProfile.settings.state === "custom"
+          ? field(
+              t + "settings.customStateRate",
+              "State effective rate",
+              "percent",
+            )
+          : "") +
+        (scenario.taxProfile.settings.filing === "married"
+          ? field(t + "settings.spouseIncome", "Spouse's annual wages")
+          : "") +
+        detailLine(
+          "Tax year ",
+          chip(t + "year", "Starting tax year", "count"),
+          " · Local income tax ",
+          chip(
+            t + "settings.localRate",
+            "City or local income tax rate",
+            "percent",
+          ),
+        ),
     ) +
     `<p class="cf-note">${limits.year} limits: employee 401(k) ${money(limits.deferral)}, total plan ${money(limits.total401k)}, IRA ${money(limits.ira)}. Catch-up eligibility is applied by age.</p>` +
     group(
       "Additional tax information",
-      field(t + "settings.spouseIncome", "Spouse annual wages") +
+      field(t + "settings.spouseIncome", "Spouse's annual wages") +
         field(t + "settings.otherIncome", "Other annual ordinary income") +
         field(
           t + "settings.federalDeduction",
@@ -260,16 +394,25 @@ function renderSetupForm() {
           "Annual estimated tax payments",
         ) +
         field(t + "settings.capitalLossCarry", "Capital loss carryforward"),
+    ) +
+    group(
+      "Your W-4 (optional)",
+      field(t + "settings.withholdingMethod", "Forecast withholding", [
+        ["annual-estimate", "Estimated annual tax"],
+        ["w4", "W-4 payroll method"],
+      ]) +
+        field(t + "settings.w4Credits", "W-4 annual credits") +
+        field(t + "settings.w4OtherIncome", "W-4 other income") +
+        field(t + "settings.w4Deductions", "W-4 deductions") +
+        field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check"),
     );
   // Settings that describe the model rather than the user, gathered in one
   // collapsed group so setup never asks for them.
   const modelAssumptions = group(
-    "Model assumptions",
+    "Inflation, returns and future limits",
     field(p + "years", "Projection years") +
       field(p + "inflation", "Annual inflation", "percent") +
       field(p + "marketReturn", "Annual nominal investment return", "percent") +
-      field(c + "salaryGrowth", "Annual salary growth", "percent") +
-      field(c + "stockGrowth", "Annual company stock growth", "percent") +
       field(t + "settings.limitGrowth", "Future IRS limit growth", "percent") +
       field(
         t + "settings.bracketGrowth",
@@ -280,85 +423,83 @@ function renderSetupForm() {
         t + "settings.caGrowth2026",
         "California 2026 bracket adjustment",
         "percent",
-      ) +
-      choices(
-        "Your W-4 (optional)",
-        field(t + "settings.withholdingMethod", "Forecast withholding", [
-          ["annual-estimate", "Estimated annual tax"],
-          ["w4", "W-4 payroll method"],
-        ]) +
-          field(t + "settings.w4Credits", "W-4 annual credits") +
-          field(t + "settings.w4OtherIncome", "W-4 other income") +
-          field(t + "settings.w4Deductions", "W-4 deductions") +
-          field(t + "settings.w4MultipleJobs", "W-4 multiple jobs", "check"),
       ),
   );
-  const electionField = (key) => {
-    const v = scenario.uploads.elections[key];
-    return v
-      ? field(
-          `uploads.elections.${key}.value`,
-          `${PaystubParser.labels[key]} (${v.mode === "percent" ? "of eligible pay" : "per paycheck"})`,
-          v.mode === "percent" ? "percent" : "number",
-        )
-      : "";
-  };
+
   const funding = Profile.employerFunding(scenario, result?.rows[1]?.payroll);
   const fundingSummary = `<div class="funding-summary"><h3>Employer retirement funding</h3>${table(["Reported YTD", "Projected remaining", "Projected annual total"], [[funding.ytd == null ? "No YTD uploaded" : money(funding.ytd), money(funding.remaining), money(funding.total)]])}<p class="cf-note">${funding.date ? `YTD through ${escape(funding.date)}. ` : ""}Reported YTD is already included in the projection. An annual target or matching rule sets expected future funding.</p></div>`;
-  const retirement =
+  // Your employer's 401(k) rules; your own IRA is saving outside work.
+  const employerRetirement =
     fundingSummary +
-    ["traditional", "roth", "mega"].map(electionField).join("") +
-    field(
-      r + "employerAnnual",
-      "Fixed annual employer funding (excluding formula match)",
+    paycheckItemNote(["traditional", "roth", "mega"]) +
+    reviewBlock(
+      "Employer match",
+      () =>
+        field(
+          r + "matchPercent",
+          "Match applies to the first portion of pay",
+          "percent",
+        ) +
+        field(
+          r + "matchRate",
+          "Employer pays this portion of matched contributions",
+          "percent",
+        ) +
+        detailLine(
+          "Plus fixed employer funding of ",
+          chip(r + "employerAnnual", "Fixed annual employer funding", "money"),
+          " a year, outside the match",
+        ),
     ) +
-    field(
-      r + "matchPercent",
-      "Match applies to the first portion of pay",
-      "percent",
-    ) +
-    field(
-      r + "matchRate",
-      "Employer pays this portion of matched contributions",
-      "percent",
-    ) +
-    choices(
+    reviewBlock(
       "After-tax 401(k)",
-      field(r + "megaEnabled", "After-tax retirement contributions", "check") +
+      () =>
+        field(
+          r + "megaEnabled",
+          "After-tax retirement contributions",
+          "check",
+        ) +
         (plan.retirement.megaEnabled
-          ? field(
-              r + "megaAnnualCap",
-              "Employer annual mega backdoor cap",
-              "number",
-              "Blank means no employer cap beyond IRS limits.",
+          ? detailLine(
+              "Employer cap ",
+              chip(
+                r + "megaAnnualCap",
+                "Employer annual mega backdoor cap",
+                "money",
+                null,
+                "none beyond IRS limits",
+              ),
+              " a year",
             )
           : ""),
-    ) +
-    choices(
-      "IRA contributions",
+    );
+  const ira = reviewBlock(
+    "IRA contributions",
+    () =>
       field(r + "iraMode", "IRA strategy", [
         ["backdoor", "Backdoor Roth IRA"],
         ["roth", "Direct Roth IRA"],
         ["traditional", "Traditional IRA"],
       ]) +
-        field(r + "maxIra", "Maximize annual IRA contribution", "check") +
-        (!plan.retirement.maxIra
-          ? field(r + "ira", "Annual IRA contribution")
-          : "") +
-        (plan.retirement.iraMode === "backdoor"
-          ? field(
-              r + "iraPretaxBalance",
-              "Other pre-tax IRA balance",
-              "number",
-              "Starting Traditional IRA balances also enter the pro-rata calculation.",
-            ) + field(r + "iraBasis", "Existing nondeductible IRA basis")
-          : ""),
-    );
+      field(r + "maxIra", "Maximize annual IRA contribution", "check") +
+      (!plan.retirement.maxIra
+        ? field(r + "ira", "Annual IRA contribution")
+        : "") +
+      (plan.retirement.iraMode === "backdoor"
+        ? detailLine(
+            "Other pre-tax IRA money ",
+            chip(r + "iraPretaxBalance", "Other pre-tax IRA balance", "money"),
+            " · Nondeductible basis ",
+            chip(r + "iraBasis", "Existing nondeductible IRA basis", "money"),
+          )
+        : ""),
+  );
   const hsa =
-    electionField("hsa") +
-    choices(
+    paycheckItemNote(["hsa"]) +
+    reviewBlock(
       "HSA eligibility & funding",
-      field(h + "eligible", "HSA eligible", "check") +
+      () =>
+        field(h + "eligible", "HSA eligible", "check") +
         (plan.hsa.eligible
           ? field(h + "coverage", "HSA coverage", [
               ["single", "Self-only"],
@@ -367,22 +508,23 @@ function renderSetupForm() {
             (Profile.describe(scenario).last?.current.hsaEmployer != null
               ? `<p class="cf-note">Employer HSA funding: ${money(Profile.describe(scenario).last.current.hsaEmployer)} per paycheck, from your upload.</p>`
               : field(h + "employer", "Annual employer HSA contribution")) +
-            field(h + "eligibleMonths", "Eligible months")
+            detailLine(
+              "Eligible for ",
+              chip(h + "eligibleMonths", "Eligible months", "count"),
+              " months this year",
+            )
           : ""),
     );
   const espp =
-    choices(
+    reviewBlock(
       "Participation",
-      field(e + "enabled", "Participate in ESPP", "check") +
+      () =>
+        field(e + "enabled", "Participate in ESPP", "check") +
         (plan.espp.enabled
           ? // A per-paycheck dollar election from a paystub drives payroll; the
             // percent rate only applies when the election is a percentage.
-            (scenario.uploads.elections.espp &&
-            scenario.uploads.elections.espp.mode !== "percent"
-              ? field(
-                  "uploads.elections.espp.value",
-                  "ESPP contribution per paycheck",
-                )
+            (scenario.uploads.elections.espp
+              ? paycheckItemNote(["espp"])
               : field(e + "rate", "Payroll contribution", "percent")) +
             field(
               e + "bonusEligible",
@@ -392,49 +534,81 @@ function renderSetupForm() {
           : ""),
     ) +
     (plan.espp.enabled
-      ? choices(
+      ? reviewBlock(
           "Offerings",
-          field(e + "start", "First offering start", "date") +
-            field(e + "end", "First offering end (optional)", "date") +
+          () =>
+            field(e + "start", "Current offering started", "date") +
             field(e + "periodMonths", "Months per offering") +
-            field(
-              e + "autoEnroll",
-              "Automatically enroll in subsequent offerings",
-              "check",
-            ) +
-            field(
-              e + "firstEnrollmentDate",
-              "First offering you participate in (optional)",
-              "date",
+            detailLine(
+              "Offering ends ",
+              chip(
+                e + "end",
+                "Current offering ends",
+                "date",
+                null,
+                "when its months are up",
+              ),
+              " · Re-enroll in new offerings: ",
+              chip(
+                e + "autoEnroll",
+                "Re-enroll in each new offering",
+                "bool",
+                null,
+                // Plans re-enroll by default.
+                "yes",
+              ),
+              " · First offering you joined: ",
+              chip(
+                e + "firstEnrollmentDate",
+                "First offering you joined",
+                "date",
+                null,
+                "the current one",
+              ),
             ),
         ) +
-        choices(
-          "Purchase rules",
-          field(e + "discount", "Purchase discount", "percent") +
+        reviewBlock(
+          "Purchase price",
+          () =>
+            field(e + "discount", "Discount", "percent") +
             field(
               e + "lookback",
-              "Use lower of offering and purchase price",
+              "Lookback: pay the lower of the two prices",
               "check",
             ) +
-            field(e + "offerPrice", "Offering share price") +
-            field(e + "purchasePrice", "Expected purchase-date share price") +
             field(
-              e + "shareCap",
-              "Maximum shares per offering (0 means none)",
+              e + "offerPrice",
+              "Market price when the offering started",
+              "number",
+              "Before the discount.",
             ) +
+            (plan.espp.lookback
+              ? `<div class="profile-cell"><label class="field"><span>Most you'll pay per share</span><input type="number" step="any" data-espp-ceiling value="${(plan.espp.offerPrice * (1 - plan.espp.discount)).toFixed(2)}"><small>After the discount. Enter this if it's the number you know; we work out the offering price from it.</small></label></div>`
+              : "") +
             field(
-              e + "annualPayrollCap",
-              "Employer annual payroll cap (0 means none)",
-            ) +
-            field(
-              e + "annualFmvLimit",
-              "Qualified-plan annual grant-date value limit",
-            ) +
-            field(e + "fractional", "Allow fractional shares", "check"),
+              e + "purchasePrice",
+              "Expected market price on purchase day",
+              "number",
+              "Before the discount.",
+            ),
+          esppPriceNote(plan.espp),
         ) +
-        choices(
+        `<details class="plan-limits"><summary>Plan limits</summary><div class="field-grid">${
+          field(e + "shareCap", "Most shares per offering (0 means none)") +
+          field(
+            e + "annualPayrollCap",
+            "Employer yearly payroll cap (0 means none)",
+          ) +
+          field(
+            e + "annualFmvLimit",
+            "Yearly limit on stock value at offering prices",
+          ) +
+          field(e + "fractional", "Fractional shares", "check")
+        }</div></details>` +
+        reviewBlock(
           "After purchase",
-          field(e + "holdShares", "Hold purchased shares", "check") +
+          () =>
+            field(e + "holdShares", "Hold purchased shares", "check") +
             (!plan.espp.holdShares
               ? field(e + "salePrice", "Expected sale price") +
                 field(e + "holdMonths", "Months until sale")
@@ -442,143 +616,228 @@ function renderSetupForm() {
         )
       : "");
   const fallback =
-    choices(
+    reviewBlock(
       "401(k) elections",
-      field(r + "max401k", "Maximize employee 401(k)", "check") +
+      () =>
+        field(r + "max401k", "Maximize employee 401(k)", "check") +
         (!plan.retirement.max401k
           ? field(r + "traditional", "Annual Traditional 401(k) election")
           : "") +
         field(r + "roth", "Annual Roth 401(k) election"),
     ) +
     (plan.retirement.megaEnabled
-      ? choices(
+      ? reviewBlock(
           "Mega backdoor election",
-          field(r + "maxMega", "Maximize mega backdoor", "check") +
+          () =>
+            field(r + "maxMega", "Maximize mega backdoor", "check") +
             (!plan.retirement.maxMega
               ? field(r + "mega", "Annual mega backdoor election")
               : ""),
         )
       : "") +
-    choices(
+    reviewBlock(
       "HSA election",
-      field(h + "maxContribution", "Maximize employee HSA", "check") +
+      () =>
+        field(h + "maxContribution", "Maximize employee HSA", "check") +
         (!plan.hsa.maxContribution
           ? field(h + "employee", "Annual employee HSA contribution")
           : ""),
     );
   const grants = scenario.compensation.grants
-    .map((g, i) =>
-      group(
+    .map((g, i) => {
+      const p = c + `grants.${i}.`,
+        vests = EquitySchedule.vests(g),
+        values = vests.map((v) => v.value),
+        low = Math.min(...values),
+        high = Math.max(...values),
+        pace = EquitySchedule.pace(
+          g,
+          EquitySchedule.asOf(scenario.taxProfile.year),
+        );
+      const summary = vests.length
+        ? `<p class="grant-summary"><strong>${vests.length} vest${vests.length === 1 ? "" : "s"} of ${Math.round(low) === Math.round(high) ? money(low) : `${money(low)}–${money(high)}`}</strong>, ${escape(longDate(vests[0].date))} to ${escape(longDate(vests.at(-1).date))}${pace.phase ? ` · about ${money(pace.monthlyMarket)} a month now` : ""}</p>`
+        : "";
+      const uneven = g.evenVesting === false;
+      return `<div class="grant-card">${reviewBlock(
         g.name || `Grant ${i + 1}`,
-        field(c + `grants.${i}.name`, "Grant name", "text") +
-          field(c + `grants.${i}.value`, "Total grant value") +
-          field(c + `grants.${i}.grantPrice`, "Grant-date share price") +
-          field(c + `grants.${i}.vestPrice`, "Assumed vest-date share price") +
-          choices(
-            "Vesting schedule",
-            field(c + `grants.${i}.start`, "Grant date", "date") +
-              field(
-                c + `grants.${i}.months`,
-                "Vesting duration (years)",
-                "years",
-              ) +
-              field(
-                c + `grants.${i}.evenVesting`,
-                "Even vesting schedule",
-                "check",
-              ) +
-              `<label class="profile-cell"><span>Annual allocations (%)</span><input data-grant-allocation="${i}" value="${EquitySchedule.allocations(
+        () =>
+          field(p + "name", "Name", "text") +
+          field(p + "value", "Total grant value") +
+          field(p + "start", "Grant date", "date") +
+          field(p + "months", "Vests over (years)", "years") +
+          field(p + "interval", "Vests every (months)") +
+          field(p + "cliff", "Cliff (months)") +
+          field(
+            p + "grantPrice",
+            "Share price at grant",
+            "number",
+            "Turns the grant value into shares; it's on your grant letter.",
+          ) +
+          field(
+            p + "vestPrice",
+            "Expected share price at vest",
+            "number",
+            "Same as the grant price means no growth.",
+          ) +
+          field(p + "saleMode", "At vest", [
+            ["cover", "Sell to cover taxes"],
+            ["hold", "Hold all shares"],
+            ["sell", "Sell all shares"],
+          ]) +
+          field(p + "repeat", "A new grant like this every year", "check") +
+          field(p + "evenVesting", "Same amount each year", "check") +
+          (uneven
+            ? `<label class="profile-cell"><span>Share per year (%)</span><input data-grant-allocation="${i}" value="${EquitySchedule.allocations(
                 g,
               )
                 .map((x) => Number(x.toFixed(6)))
                 .join(
                   " / ",
-                )}" ${g.evenVesting !== false ? "readonly" : ""} aria-label="Annual allocations for ${escape(g.name)}"><small>${g.evenVesting !== false ? "Calculated from the vesting duration." : "One percentage per grant year, separated by /. Must total 100%."}</small></label>` +
-              field(c + `grants.${i}.cliff`, "Cliff (months)") +
-              field(c + `grants.${i}.interval`, "Vesting interval (months)") +
-              field(c + `grants.${i}.repeat`, "Repeat grant annually", "check"),
-          ) +
-          field(c + `grants.${i}.saleMode`, "At vest", [
-            ["cover", "Sell to cover taxes"],
-            ["hold", "Hold all shares"],
-            ["sell", "Sell all shares"],
-          ]) +
-          (() => {
-            const v = Profile.grantPreview(g),
-              pace = EquitySchedule.pace(
-                g,
-                EquitySchedule.asOf(scenario.taxProfile.year),
-              );
-            return `<div class="grant-preview"><h3>Current earning pace: ${money(pace.monthlyMarket)}/month</h3><p class="cf-note">${pace.phase ? `Grant year ${pace.phase} · next change ${pace.nextChange}` : "Outside this grant’s earning period"}. Earning pace spreads the current grant-year allocation evenly; scheduled vests remain dated below.</p><details data-key="first-vest:${i}"><summary>First vest · ${escape(v.date)}</summary>${table(["Grant duration", "Shares vesting", "Value at grant price", "Estimated market value"], [[`${v.years} years`, v.shares.toLocaleString("en-US", { maximumFractionDigits: 4 }), money(v.grantValue), money(v.marketValue)]])}<p class="cf-note">Pre-tax values for the first vest, not a monthly average. Market value uses your assumed vest price.</p></details></div>`;
-          })() +
-          `<button data-remove-grant="${i}">Remove grant</button>`,
-      ),
-    )
+                )}" aria-label="Share vesting each year for ${escape(g.name)}"><small>One percentage per year, separated by /. Must total 100%.</small></label>`
+            : ""),
+        summary,
+      )}<button class="text-button" data-remove-grant="${i}">Remove grant</button></div>`;
+    })
     .join("");
   // Salary, pay frequency and payday live with the paychecks (step 2) only.
   const compensation =
-    field(c + "bonusPercent", "Bonus target", "percent") +
-    field(
-      c + "bonusMonth",
-      "Bonus month",
-      Array.from({ length: 12 }, (_, i) => [
-        i + 1,
-        new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
-      ]),
+    reviewBlock(
+      "Bonus & raises",
+      () =>
+        field(
+          c + "bonusPercent",
+          "Bonus target",
+          "percent",
+          scenario.compensation.salary > 0 &&
+            scenario.compensation.bonusPercent > 0
+            ? `${money(scenario.compensation.salary * scenario.compensation.bonusPercent)} a year before tax`
+            : "",
+        ) +
+        field(c + "salaryGrowth", "Annual raise", "percent") +
+        detailLine(
+          "Bonus paid in ",
+          chip(
+            c + "bonusMonth",
+            "Bonus month",
+            Array.from({ length: 12 }, (_, i) => [
+              i + 1,
+              new Date(2026, i, 1).toLocaleString("en-US", { month: "long" }),
+            ]),
+          ),
+          " · Company stock grows ",
+          chip(c + "stockGrowth", "Company stock growth per year", "percent"),
+          " a year",
+        ),
     ) +
     `<div id="grant-timeline" class="grant-preview"></div>` +
     grants +
-    '<button id="add-grant">Add RSU grant</button>';
-  const planElections = ["traditional", "roth", "mega", "hsa", "espp"];
-  const elections = Object.entries(scenario.uploads.elections)
-    // Plan elections are edited in their plan sections (401(k), HSA, ESPP).
-    .filter(([key]) => !planElections.includes(key))
-    .map(([key, v]) =>
-      field(
-        `uploads.elections.${key}.value`,
-        `${PaystubParser.labels[key]} (${v.mode === "percent" ? "percent of eligible wages" : "per paycheck"})`,
-        v.mode === "percent" ? "percent" : "number",
-      ),
-    )
-    .join("");
-  const uploads =
-    `<p class="cf-note">Review extracted amounts before saving. Documents stay on this device.</p><label class="button">Read paystub PDFs<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label><p>${scenario.uploads.records.length} saved paycheck observations</p><div id="upload-status" role="status"></div><div id="upload-review"></div>${Profile.describe(
-      scenario,
-    )
-      .questions.filter((q) => q.id === "schedule")
-      .map((q) => `<p class="plan-review-note">${escape(q.why)}</p>`)
-      .join("")}` +
-    compactGroup(
-      "Salary & pay schedule",
-      field(c + "salary", "Annual base salary") +
-        field(c + "frequency", "Pay frequency", [
-          ["biweekly", "Every two weeks"],
-          ["semimonthly", "Twice monthly"],
-          ["monthly", "Monthly"],
-          ["weekly", "Weekly"],
-        ]) +
-        field(c + "firstPayday", "A recent payday", "date"),
-    ) +
-    (elections
-      ? compactGroup("Other recurring paycheck items", elections)
+    (!scenario.compensation.grants.length &&
+    PaystubParser.vestHistory(
+      scenario.uploads.records,
+      scenario.taxProfile.year,
+    ).vests.length
+      ? '<button id="grant-from-vests" class="primary">Start a grant from my vests</button>'
       : "") +
-    (scenario.uploads.records.length
-      ? ""
+    '<button id="add-grant">Add RSU grant</button>';
+  const records = [...scenario.uploads.records].sort((x, y) =>
+    y.date.localeCompare(x.date),
+  );
+  const schedule = Profile.describe(scenario).schedule;
+  const scheduleNote =
+    records.length && !schedule.confirmed
+      ? `<p class="plan-review-note">One paystub can't show how often you're paid. Add the paycheck before your latest one, or choose your schedule below.</p>`
+      : "";
+  const stubs = `<section class="stub-card"><div class="stub-card-head"><h3>Your paystubs</h3><label class="button">${records.length ? "Add paystubs" : "Choose paystub PDFs"}<input id="paystubs" type="file" accept="application/pdf" multiple hidden></label></div>${
+    records.length
+      ? `<ul class="stub-list">${records
+          .map(
+            (r) =>
+              `<li><span>${escape(longDate(r.date))}</span><span class="stub-kind">${escape(PaystubParser.kindLabels[r.kind || "regular"] || "Paycheck")}</span><strong>${money(r.netPay)}</strong></li>`,
+          )
+          .join("")}</ul>`
+      : `<p class="cf-note">PDFs are read on this device and never uploaded.</p>`
+  }</section>`;
+  // This calendar year's totals: year-to-date from paystubs plus the rest of
+  // the year, so mid-year starts and changes are counted correctly.
+  const yearRow = result?.rows.find(
+    (x, i) => i > 0 && x.year === scenario.taxProfile.year,
+  );
+  const totals = Profile.yearTotals(yearRow?.payroll);
+  const linked = (keys) =>
+    keys.map((k) => linkedField(k, totals, yearRow?.payroll)).join("");
+  const uploads =
+    stubs +
+    `<div id="upload-status" role="status"></div><div id="upload-review"></div>` +
+    scheduleNote +
+    reviewBlock(
+      "Your pay",
+      () =>
+        field(
+          c + "salary",
+          "Annual base salary",
+          "number",
+          payMeaning(scenario.compensation),
+        ) +
+        detailLine(
+          "Paid ",
+          chip(c + "frequency", "How often you're paid", [
+            ["biweekly", "every two weeks"],
+            ["semimonthly", "twice a month"],
+            ["monthly", "once a month"],
+            ["weekly", "every week"],
+          ]),
+          // A regular paystub dates the pay calendar; only without one is a
+          // payday worth asking for.
+          records.some((r) => (r.kind || "regular") === "regular")
+            ? ", on the dates of your paystubs"
+            : [
+                ", recent payday ",
+                chip(
+                  c + "firstPayday",
+                  "A recent payday",
+                  "date",
+                  null,
+                  "not set",
+                ),
+              ],
+        ),
+    ) +
+    (records.length
+      ? linkedGroup(
+          "Taken out of each paycheck",
+          "Enter whichever number you have. The others fill in.",
+          linked([
+            "traditional",
+            "roth",
+            "mega",
+            "hsa",
+            "espp",
+            "health",
+            "post",
+          ]),
+        ) +
+        linkedGroup(
+          "Added to your pay",
+          "",
+          linked(["allowance", "taxableAllowance", "imputed"]),
+        )
       : compactGroup(
           "Contributions & benefits without a paystub",
           fallback +
-            Object.entries({
-              health: "Monthly health premium",
-              dental: "Monthly dental premium",
-              vision: "Monthly vision premium",
-              fsa: "Monthly FSA contribution",
-              otherPretax: "Other monthly pre-tax benefits",
-              otherPosttax: "Other monthly post-tax benefits",
-            })
-              .map(([key, label]) =>
-                field("employerPlan.benefits." + key, label),
-              )
-              .join(""),
+            reviewBlock("Monthly benefits", () =>
+              Object.entries({
+                health: "Monthly health premium",
+                dental: "Monthly dental premium",
+                vision: "Monthly vision premium",
+                fsa: "Monthly FSA contribution",
+                otherPretax: "Other monthly pre-tax benefits",
+                otherPosttax: "Other monthly post-tax benefits",
+              })
+                .map(([key, label]) =>
+                  field("employerPlan.benefits." + key, label),
+                )
+                .join(""),
+            ),
         )) +
     (PaystubParser.benefitPlans(scenario.uploads.records).length
       ? compactGroup(
@@ -593,50 +852,54 @@ function renderSetupForm() {
             ]),
           ),
         )
-      : "") +
-    (scenario.uploads.records.length
-      ? compactGroup(
-          "Saved paychecks",
-          table(
-            ["Date", "Kind", "Net pay"],
-            scenario.uploads.records.map((x) => [
-              x.date,
-              x.kind,
-              money(x.netPay),
-            ]),
-          ),
-        )
       : "");
-  const balances = Object.entries({
-    cash: "Cash",
-    brokerage: "Taxable investments",
-    pretax401k: "Traditional 401(k)",
-    rothAccounts: "Roth accounts",
-    traditionalIRA: "Traditional IRA (included in backdoor pro-rata tax)",
-    hsa: "HSA",
-  })
-    .map(([key, label]) => field(p + "startingBalances." + key, label))
-    .join("");
-  const expenses = Object.keys(scenario.projection.monthlyExpenses)
-    .map((key) =>
-      field(p + "monthlyExpenses." + key, key[0].toUpperCase() + key.slice(1)),
-    )
-    .join("");
-  const projection =
-    field(p + "retirementAge", "Retirement age") +
-    field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
-    field(p + "socialSecurityStartAge", "Social Security start age") +
-    group("Starting balances", balances) +
-    group(
-      "Monthly living expenses",
-      (scenario.projection.monthlyExpenses.other > 0 &&
-      Object.entries(scenario.projection.monthlyExpenses).some(
-        ([key, v]) => key !== "other" && v > 0,
+  const balances = () =>
+    Object.entries({
+      cash: "Cash",
+      brokerage: "Taxable investments",
+      pretax401k: "Traditional 401(k)",
+      rothAccounts: "Roth accounts",
+      traditionalIRA: "Traditional IRA (included in backdoor pro-rata tax)",
+      hsa: "HSA",
+    })
+      .map(([key, label]) => field(p + "startingBalances." + key, label))
+      .join("");
+  const expenses = () =>
+    Object.keys(scenario.projection.monthlyExpenses)
+      .map((key) =>
+        field(
+          p + "monthlyExpenses." + key,
+          key[0].toUpperCase() + key.slice(1),
+        ),
       )
-        ? '<p class="plan-review-note">Your spending total is saved as Other (under About you, or below). Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
-        : "") + expenses,
+      .join("");
+  const retirementPlan =
+    reviewBlock(
+      "When you retire",
+      () =>
+        field(p + "retirementAge", "Retirement age") +
+        field(p + "socialSecurityAnnual", "Annual Social Security benefit") +
+        detailLine(
+          "Social Security starts at age ",
+          chip(
+            p + "socialSecurityStartAge",
+            "Social Security start age",
+            "count",
+          ),
+        ),
     ) +
-    modelAssumptions;
+    reviewBlock(
+      "Monthly spending",
+      () =>
+        (scenario.projection.monthlyExpenses.other > 0 &&
+        Object.entries(scenario.projection.monthlyExpenses).some(
+          ([key, v]) => key !== "other" && v > 0,
+        )
+          ? '<p class="plan-review-note">Your spending total is saved as Other (under About you, or below). Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
+          : '<p class="cf-note">Leave out anything already taken from your paycheck, like insurance premiums.</p>') +
+        expenses(),
+    );
+  const savings = ira + reviewBlock("What you have today", balances);
   const review = Profile.describe(scenario).questions;
   const section = (id, title, body, questionIds = []) => {
     const notes = review.filter((q) => questionIds.includes(q.id));
@@ -649,21 +912,26 @@ function renderSetupForm() {
   );
   $("setup").innerHTML =
     `<div data-profile-step="1" class="profile-panel">${quick}<h2>Tax details</h2>${tax}</div>` +
-    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p>Choose your latest regular paycheck, and the one before it to confirm your pay schedule. Add RSU vest and bonus payslips too: they're often separate “off-cycle” payslips, and they show your vests and how they're taxed. You can select several PDFs at once.</p>${uploads}</div>` +
+    `<div data-profile-step="0" class="profile-panel"><h2>Paychecks</h2><p class="panel-intro">${scenario.uploads.records.length ? "Your pay and what comes out of each check." : "Add your latest paycheck and the one before it, plus any RSU vest or bonus payslips."}</p>${uploads}</div>` +
     `<div data-profile-step="2" class="profile-panel plan-panel"><div class="plan-sections">` +
-    section("retirement", "Retirement & IRA", retirement, [
-      "mega",
-      "employer",
-    ]) +
-    section("hsa", "HSA", hsa, ["hsa"]) +
-    section("espp", "ESPP", espp, ["espp"]) +
-    section("compensation", "Pay & stock grants", compensation, ["allowance"]) +
     section(
-      "projection",
-      "Lifetime & spending",
-      '<p class="cf-note">Expenses exclude benefits already deducted from pay.</p>' +
-        projection,
+      "pay",
+      "Pay & equity",
+      compensation +
+        (espp
+          ? `<h4 class="plan-subhead" id="plan-espp">ESPP</h4>${espp}`
+          : ""),
+      ["allowance", "espp"],
     ) +
+    section(
+      "employer",
+      "From your employer",
+      employerRetirement + `<h4 class="plan-subhead">HSA</h4>${hsa}`,
+      ["mega", "employer", "hsa"],
+    ) +
+    section("savings", "Saving outside work", savings) +
+    section("retirement", "Retirement & spending", retirementPlan) +
+    section("assumptions", "Assumptions", modelAssumptions) +
     `</div></div>`;
   $("setup")
     .querySelectorAll("details")
@@ -692,6 +960,33 @@ function renderSetupForm() {
       if (count) section.querySelector("summary").dataset.reviewCount = count;
     });
   $("setup")
+    .querySelectorAll("[data-confirm-all]")
+    .forEach((button) => {
+      button.onclick = () => {
+        const next = structuredClone(scenario);
+        for (const path of button.dataset.confirmAll.split(","))
+          Profile.confirm(next, path);
+        commit(next);
+      };
+    });
+  $("setup")
+    .querySelectorAll("[data-espp-ceiling]")
+    .forEach(
+      (el) =>
+        (el.onchange = () =>
+          deferUntilFocusMoves(() => {
+            const next = structuredClone(scenario),
+              d = Math.min(0.99, Math.max(0, next.employerPlan.espp.discount));
+            if (el.value === "") return;
+            Profile.edit(
+              next,
+              "employerPlan.espp.offerPrice",
+              Number(el.value) / (1 - d),
+            );
+            commit(next);
+          })),
+    );
+  $("setup")
     .querySelectorAll("[data-confirm]")
     .forEach((button) => {
       button.onclick = () => {
@@ -711,14 +1006,16 @@ function renderSetupForm() {
             const value =
               kind === "check"
                 ? el.checked
-                : el.tagName === "SELECT" || ["date", "text"].includes(kind)
-                  ? el.dataset.path === "compensation.bonusMonth"
-                    ? Number(el.value)
-                    : el.value
-                  : el.value === ""
-                    ? null
-                    : (Number(el.value) * (kind === "years" ? 12 : 1)) /
-                      (kind === "percent" ? 100 : 1);
+                : kind === "bool"
+                  ? el.value === "true"
+                  : el.tagName === "SELECT" || ["date", "text"].includes(kind)
+                    ? el.dataset.path === "compensation.bonusMonth"
+                      ? Number(el.value)
+                      : el.value
+                    : el.value === ""
+                      ? null
+                      : (Number(el.value) * (kind === "years" ? 12 : 1)) /
+                        (kind === "percent" ? 100 : 1);
             // One answer can fill related fields (e.g. one share price), but
             // never a value the user set or confirmed, and the copies stay
             // unmarked so later uploads or edits can still fill them.
@@ -730,6 +1027,51 @@ function renderSetupForm() {
               set(next, path, value);
             commit(next);
           })),
+    );
+  $("setup")
+    .querySelectorAll("[data-linked]")
+    .forEach(
+      (el) =>
+        (el.onchange = () =>
+          deferUntilFocusMoves(() => {
+            const next = structuredClone(scenario),
+              unit = el.dataset.unit;
+            Profile.setElection(
+              next,
+              el.dataset.linked,
+              unit,
+              (Number(el.value) || 0) / (unit === "percent" ? 100 : 1),
+            );
+            commit(next);
+          })),
+    );
+  $("setup")
+    .querySelectorAll("[data-use-plan]")
+    .forEach(
+      (el) =>
+        (el.onclick = () => {
+          const next = structuredClone(scenario);
+          Profile.setElection(
+            next,
+            el.dataset.usePlan,
+            "check",
+            Number(el.dataset.amount),
+          );
+          commit(next);
+        }),
+    );
+  $("setup").querySelectorAll("[data-limit-chart]").forEach(bindLimitChart);
+  $("setup")
+    .querySelectorAll("[data-goto-step]")
+    .forEach(
+      (el) =>
+        (el.onclick = () => {
+          profileStep = Number(el.dataset.gotoStep);
+          renderProfile();
+          document
+            .querySelector(".profile-steps")
+            .scrollIntoView({ block: "start" });
+        }),
     );
   GrantTimeline.render(
     $("grant-timeline"),
@@ -779,13 +1121,44 @@ function renderSetupForm() {
       commit(next);
     };
   $("setup")
+    .querySelectorAll("[data-chip]")
+    .forEach((chipButton) => {
+      chipButton.onclick = () => {
+        const box = chipButton.nextElementSibling,
+          control = box.firstElementChild;
+        chipButton.hidden = true;
+        box.hidden = false;
+        control.focus();
+        control.addEventListener("blur", () => {
+          box.hidden = true;
+          chipButton.hidden = false;
+        });
+        control.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" || event.key === "Enter") control.blur();
+        });
+      };
+    });
+  $("setup")
+    .querySelectorAll("[data-jump]")
+    .forEach((el) => (el.onclick = () => jumpTo(el.dataset.jump)));
+  $("setup")
+    .querySelectorAll("[data-open-espp]")
+    .forEach(
+      (el) =>
+        (el.onclick = () => {
+          profileStep = 2;
+          renderProfile();
+          $("plan-espp")?.scrollIntoView({ block: "start" });
+        }),
+    );
+  $("setup")
     .querySelectorAll("[data-open-grants]")
     .forEach(
       (el) =>
         (el.onclick = () => {
           profileStep = 2;
           renderProfile();
-          $("plan-compensation")?.scrollIntoView({ block: "start" });
+          $("plan-pay")?.scrollIntoView({ block: "start" });
         }),
     );
   $("add-grant").onclick = () => {
@@ -821,6 +1194,12 @@ function renderSetupForm() {
 // (activeElement is <body>). Re-render after focus lands so setup() can
 // restore it to the field the user moved to.
 const deferUntilFocusMoves = (fn) => setTimeout(fn);
+// A new profile models the current year (the engine starts at 2026).
+function freshScenario() {
+  const s = Scenario.defaults();
+  s.taxProfile.year = Math.max(s.taxProfile.year, new Date().getFullYear());
+  return s;
+}
 function commit(next) {
   try {
     const normalized = Scenario.normalize(next),
@@ -1095,11 +1474,11 @@ function renderProjection() {
   const rows = result.rows,
     real = $("real").checked,
     series = [
-      ["Cash", "#38bdf8", (b) => b.cash + b.esppPending],
-      ["Equity", "#fbbf24", (b) => b.brokerage + b.companyEquity],
+      ["Cash", "var(--cash)", (b) => b.cash + b.esppPending],
+      ["Equity", "var(--equity)", (b) => b.brokerage + b.companyEquity],
       [
         "Retirement + HSA",
-        "#a78bfa",
+        "var(--retire)",
         (b) => b.pretax401k + b.rothAccounts + b.traditionalIRA + b.hsa,
       ],
     ];
@@ -1121,11 +1500,11 @@ function renderProjection() {
         .reverse()
         .join(" L")} Z`;
       previous = totals;
-      return `<path d="${path}" fill="${color}" opacity=".6"><title>${name}</title></path>`;
+      return `<path d="${path}" style="fill:${color}" opacity=".6"><title>${name}</title></path>`;
     })
     .join("");
   $("projection-chart").innerHTML =
-    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Projected assets by class">${areas}<text x="50" y="18" fill="#e2e8f0">${escape(money(max))}</text><text x="50" y="325" fill="#94a3b8">Starting balances</text><text x="780" y="325" fill="#94a3b8">Age ${rows.at(-1).age}</text></svg><p>${series.map(([n, color]) => `<span style="color:${color};margin-right:18px">● ${n}</span>`).join("")}</p>`;
+    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Projected assets by class">${areas}<text x="50" y="18" style="fill:var(--text)">${escape(money(max))}</text><text x="50" y="325" style="fill:var(--text-2)">Starting balances</text><text x="780" y="325" style="fill:var(--text-2)">Age ${rows.at(-1).age}</text></svg><p>${series.map(([n, color]) => `<span style="color:${color};margin-right:18px">● ${n}</span>`).join("")}</p>`;
   $("year").max = rows.length - 1;
   const selected = rows[Math.min(Number($("year").value), rows.length - 1)],
     factor = real ? selected.inflationFactor : 1;
@@ -1226,8 +1605,7 @@ async function readPaystubs(event, append = false) {
         await loadingTask.destroy();
       }
     }
-    status.textContent =
-      "Review categories and printed totals before applying.";
+    status.textContent = "";
     reviewUploads();
   } catch (error) {
     status.textContent = error.message;
@@ -1236,55 +1614,57 @@ async function readPaystubs(event, append = false) {
   }
 }
 function reviewUploads() {
-  const preview = Profile.describe({
-    ...scenario,
-    uploads: { ...scenario.uploads, records: drafts },
-  });
   const checks = drafts
-    .map(
-      (r, i) =>
-        `<h3>${escape(PaystubParser.kindLabels[r.kind] || "Paycheck")} · ${escape(r.date)}</h3><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">${
-          r.kind === "equity"
-            ? `RSU vest ${money(r.current.rsu)} · Shares delivered ${money(r.current.rsuOffset || 0)} · Tax withheld ${money(r.summary?.current?.taxes || 0)}`
-            : r.kind === "bonus"
-              ? `Bonus ${money(r.current.bonus)} · Deposited cash ${money(r.netPay)}`
-              : `Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}`
-        }</p><details ${PaystubParser.validate(r).valid ? "" : "open"}><summary>Review extracted amounts and categories</summary><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
-          .map(
-            (l, j) =>
-              `<tr><td>${escape(l.label)}</td><td><select data-mapping="${i}:${j}"><option value="">Choose</option>${Object.entries(
-                PaystubParser.labels,
+    .map((r, i) => {
+      const v = PaystubParser.validate(r);
+      return `<li class="review-row${v.valid ? "" : " has-error"}"><details ${v.valid ? "" : "open"}><summary><span>${escape(longDate(r.date))}</span><span class="stub-kind">${escape(PaystubParser.kindLabels[r.kind] || "Paycheck")}</span><strong>${money(
+        r.kind === "equity"
+          ? r.current.rsu
+          : r.kind === "bonus"
+            ? r.current.bonus
+            : r.netPay,
+      )}</strong><span class="review-state">${v.valid ? "✓ Totals match" : "Needs a fix"}</span></summary><div class="review-body"><label class="field">Check date<input type="date" data-review-date="${i}" value="${escape(r.date)}"></label><p class="cf-note">${
+        r.kind === "equity"
+          ? `RSU vest ${money(r.current.rsu)} · Shares delivered ${money(r.current.rsuOffset || 0)} · Tax withheld ${money(r.summary?.current?.taxes || 0)}`
+          : r.kind === "bonus"
+            ? `Bonus ${money(r.current.bonus)} · Deposited cash ${money(r.netPay)}`
+            : `Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}`
+      }</p><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
+        .map(
+          (l, j) =>
+            `<tr><td>${escape(l.label)}</td><td><select data-mapping="${i}:${j}"><option value="">Choose</option>${Object.entries(
+              PaystubParser.labels,
+            )
+              .map(
+                ([k, v]) =>
+                  `<option value="${k}" ${l.key === k ? "selected" : ""}>${escape(v)}</option>`,
               )
-                .map(
-                  ([k, v]) =>
-                    `<option value="${k}" ${l.key === k ? "selected" : ""}>${escape(v)}</option>`,
-                )
-                .join("")}</select>${
-                PaystubParser.benefitTypes[l.key]
-                  ? `<label>Repeats<select data-benefit-schedule="${i}:${j}">${Object.entries(
-                      {
-                        review: "Confirm schedule",
-                        paycheck: "Every paycheck",
-                        monthly: "First paycheck each month",
-                        quarterly: "Every 3 months",
-                        annual: "Once a year",
-                        once: "This payment only",
-                      },
+              .join("")}</select>${
+              PaystubParser.benefitTypes[l.key]
+                ? `<label>Repeats<select data-benefit-schedule="${i}:${j}">${Object.entries(
+                    {
+                      review: "Confirm schedule",
+                      paycheck: "Every paycheck",
+                      monthly: "First paycheck each month",
+                      quarterly: "Every 3 months",
+                      annual: "Once a year",
+                      once: "This payment only",
+                    },
+                  )
+                    .map(
+                      ([k, v]) =>
+                        `<option value="${k}" ${(l.schedule || (["commuter", "parking"].includes(l.key) ? "review" : "paycheck")) === k ? "selected" : ""}>${v}</option>`,
                     )
-                      .map(
-                        ([k, v]) =>
-                          `<option value="${k}" ${(l.schedule || (["commuter", "parking"].includes(l.key) ? "review" : "paycheck")) === k ? "selected" : ""}>${v}</option>`,
-                      )
-                      .join(
-                        "",
-                      )}</select></label><label>Employer annual cap (optional)<input type="number" min="0" step=".01" data-benefit-cap="${i}:${j}" value="${l.annualCap ?? ""}"></label>`
-                  : ""
-              }</td><td><input aria-label="Current ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:current" value="${l.current ?? ""}"></td><td><input aria-label="YTD ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:ytd" value="${l.ytd ?? ""}"></td></tr>`,
-          )
-          .join(
-            "",
-          )}</tbody></table></div></details><p>${PaystubParser.validate(r).errors.map(escape).join(" ") || "Amounts reconcile."}</p>`,
-    )
+                    .join(
+                      "",
+                    )}</select></label><label>Employer annual cap (optional)<input type="number" min="0" step=".01" data-benefit-cap="${i}:${j}" value="${l.annualCap ?? ""}"></label>`
+                : ""
+            }</td><td><input aria-label="Current ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:current" value="${l.current ?? ""}"></td><td><input aria-label="YTD ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:ytd" value="${l.ytd ?? ""}"></td></tr>`,
+        )
+        .join(
+          "",
+        )}</tbody></table></div>${v.valid ? "" : `<p class="review-error">${v.errors.map(escape).join(" ")}</p>`}</div></details></li>`;
+    })
     .join("");
   const hints = PaystubParser.uploadHints([
       ...scenario.uploads.records.filter(
@@ -1298,34 +1678,16 @@ function reviewUploads() {
           `<li><strong>${escape(h.ask)}</strong><span>${escape(h.gap)}</span>${h.tip ? `<small>${escape(h.tip)}</small>` : ""}</li>`,
       )
       .join(""),
+    // The gap dialog explains each ask; here a short reminder is enough.
     hintList = hints.length
-      ? `<div class="upload-hints"><h3>Paystubs that would fill gaps</h3><ol class="gap-list">${gapItems}</ol><label class="button">Add more paystubs<input data-more-paystubs type="file" accept="application/pdf" multiple hidden></label></div>`
+      ? `<div class="review-hints"><span>Would also help: ${hints.map((h) => escape(h.ask)).join(" · ")}</span><label class="button">Add more<input data-more-paystubs type="file" accept="application/pdf" multiple hidden></label></div>`
       : "";
-  const kinds = Object.entries(
-    drafts.reduce((n, r) => ((n[r.kind] = (n[r.kind] || 0) + 1), n), {}),
-  )
-    .map(
-      ([k, n]) =>
-        `${n} ${{ regular: "regular paycheck", equity: "RSU vest", bonus: "bonus check" }[k] || "paycheck"}${n === 1 ? "" : "s"}`,
-    )
-    .join(", ");
   // Off-cycle checks alone carry no salary or payday schedule to fill.
-  const schedule = `<label class="check"${drafts.some((r) => r.kind === "regular") ? "" : " hidden"}><input id="apply-schedule" type="checkbox" checked>Fill salary and payday schedule${preview.schedule.confirmed ? " from check dates" : " using the selected pay frequency (confirm this in your profile)"}</label>`;
-  // When every check reconciles there is nothing to decide: show a one-line
-  // summary and keep line-by-line details one click away.
-  const clean =
-    drafts.length &&
-    drafts.every((r) => PaystubParser.validate(r).valid) &&
-    preview.schedule.confirmed;
-  $("upload-review").innerHTML = clean
-    ? `<p class="review-summary"><strong>Read ${escape(kinds)}</strong> · ${drafts
-        .map((r) => r.date)
-        .sort()
-        .map(escape)
-        .join(
-          ", ",
-        )} · all totals reconcile</p><button id="apply-upload" class="primary">Use these paychecks</button>${hintList}<details class="review-details"><summary>Check what we read</summary>${checks}${schedule}</details>`
-    : `${checks}${schedule}<button id="apply-upload">Apply reviewed paychecks</button>${hintList}`;
+  const schedule = `<label class="check review-schedule"${drafts.some((r) => r.kind === "regular") ? "" : " hidden"}><input id="apply-schedule" type="checkbox" checked>Also update salary and pay schedule</label>`;
+  // One row per paystub; a row opens to its line items only when asked, or
+  // on its own when its totals don't add up.
+  $("upload-review").innerHTML =
+    `<section class="stub-card review-card"><div class="stub-card-head"><h3>Ready to add</h3><button id="apply-upload" class="primary">Use ${drafts.length === 1 ? "this paystub" : `these ${drafts.length} paystubs`}</button></div><ul class="stub-list review-list">${checks}</ul>${schedule}${hintList}</section>`;
   $("upload-review")
     .querySelectorAll("[data-benefit-cap]")
     .forEach(
@@ -1443,6 +1805,28 @@ $("import").onchange = async (event) => {
   }
   event.target.value = "";
 };
+$("reset").onclick = () => {
+  closeScenarioMenu();
+  $("reset-dialog").showModal();
+};
+$("reset-export").onclick = () => $("export").click();
+$("reset-cancel").onclick = () => $("reset-dialog").close();
+// Clears the saved scenario and every per-session choice, then shows the
+// welcome screen as on a first visit.
+$("reset-confirm").onclick = () => {
+  $("reset-dialog").close();
+  drafts = [];
+  keptValues = [];
+  quickAsked.clear();
+  profileStep = 0;
+  showLearned = false;
+  gapsPrompted = "";
+  compPeriod = "year";
+  compOpen.clear();
+  view = "welcome";
+  commit(freshScenario());
+  scrollTo(0, 0);
+};
 $("inspect").onclick = () => {
   $("scenario-json").textContent = Scenario.serialize(scenario);
   $("backup").hidden = !localStorage.getItem(BACKUP);
@@ -1505,14 +1889,7 @@ try {
     const migrated = Scenario.migrate(JSON.parse(legacy));
     scenario = migrated.scenario;
     warnings = migrated.warnings;
-  } else {
-    scenario = Scenario.defaults();
-    // A new profile models the current year (the engine starts at 2026).
-    scenario.taxProfile.year = Math.max(
-      scenario.taxProfile.year,
-      new Date().getFullYear(),
-    );
-  }
+  } else scenario = freshScenario();
   view = Profile.initialView(scenario);
   result = Projection.calculate(scenario);
   setup();
@@ -1523,6 +1900,272 @@ try {
     `Saved scenario could not be loaded: ${error.message}. Your original data has not been overwritten. Import a corrected scenario to continue.`;
 }
 
+// One paycheck item with linked inputs: type the number you have in any unit
+// and the others are computed. The unit you typed is stored and highlighted.
+function linkedField(key, totals, yearPayroll) {
+  const e = scenario.uploads.elections[key];
+  if (!e) return "";
+  const [label, hint] = PAY_ITEMS[key] || [PaystubParser.labels[key], ""];
+  const eq = Profile.equivalents(scenario, key, e),
+    units = Profile.amountUnits(key),
+    entered = e.unit || (e.mode === "percent" ? "percent" : "check");
+  const shown = (u) =>
+    eq[u] == null
+      ? ""
+      : Number((u === "percent" ? eq[u] * 100 : eq[u]).toFixed(2));
+  const inputs = units
+    .map(
+      (u) =>
+        `<label class="unit-input${u === entered ? " is-entered" : ""}">${u === "percent" ? "" : '<span class="affix">$</span>'}<input type="number" step="any" min="0" inputmode="decimal" data-linked="${key}" data-unit="${u}" data-key="linked:${key}:${u}" value="${shown(u)}" ${u === "percent" && eq.percent == null ? 'disabled placeholder="Add salary"' : ""} aria-label="${escape(label)}, ${UNIT_LABEL[u]}">${u === "percent" ? '<span class="affix">%</span>' : ""}<span class="unit">${UNIT_LABEL[u]}</span></label>`,
+    )
+    .join('<span class="unit-eq" aria-hidden="true">=</span>');
+  const bonusNote =
+    e.mode === "percent" && eq.year - eq.check * eq.checks > 0.005
+      ? " Per year includes your bonus."
+      : "";
+  const origin = e.manual
+    ? `You entered this ${entered === "percent" ? "as a percent of pay" : UNIT_LABEL[entered]}.`
+    : e.sourceDate
+      ? `From your ${longDate(e.sourceDate)} paystub.`
+      : "";
+  // Pre-tax and Roth share one limit, shown once under pre-tax.
+  const shared = key === "roth" && scenario.uploads.elections.traditional;
+  const limit = shared ? null : Profile.limitCheck(scenario, key, totals),
+    plan = shared ? null : Profile.limitPlan(scenario, key, yearPayroll);
+  const chart = limit && plan?.points.length ? limitChart(plan) : "";
+  return `<div class="linked-amount${chart ? " has-chart" : ""}"><div class="la-main"><div class="linked-head"><strong>${escape(label)}</strong>${hint ? `<small>${escape(hint)}</small>` : ""}</div><div class="unit-row">${inputs}</div>${origin || bonusNote ? `<small class="field-origin">${escape(origin + bonusNote)}</small>` : ""}${limit ? limitStatus(key, limit, plan) : ""}</div>${chart}${limit ? limitDetails(key, limit, plan) : ""}</div>`;
+}
+function shortDate(d) {
+  return longDate(d).replace(/, \d{4}$/, "");
+}
+// One line: where this year ends up against the limit, plus the per-paycheck
+// amount that lands on it exactly.
+function limitStatus(key, c, p) {
+  const end = p ? p.endTotal + p.prior : c.used,
+    by = p?.lastDate ? ` by ${shortDate(p.lastDate)}` : " this year",
+    limit = `${c.approx ? "about " : ""}${dollars(c.limit)}`;
+  const onTrack = Math.abs(end - c.limit) < 1;
+  const text = c.over
+    ? `<span class="limit-over">${dollars(-c.remaining)} over</span> · payroll stops at ${limit}${p?.reachDate ? ` on ${shortDate(p.reachDate)}` : ""}`
+    : onTrack
+      ? `<strong>${dollars(end)}</strong>${by} · at the limit`
+      : `<strong>${dollars(end)}</strong> of ${limit}${by} · ${dollars(c.limit - end)} under`;
+  // Evening out an overage is always offered; maxing out only when it's a
+  // realistic share of pay.
+  const fix =
+    p?.perCheck != null &&
+    p.future > 0 &&
+    (c.over || p.reachDate || (!onTrack && !(p.percent > 0.5)));
+  const button = fix
+    ? `<button type="button" class="limit-fix" data-use-plan="${key}" data-amount="${p.perCheck}" title="${escape(`${money(p.perCheck)} on each of your ${p.future} remaining paychecks reaches ${dollars(c.limit)} on ${shortDate(p.lastDate)}${p.percent != null ? ` (about ${Number((p.percent * 100).toFixed(1))}% of pay)` : ""}.`)}">${c.over || p.reachDate ? "Even out" : "Max out"}: ${money(p.perCheck)}/paycheck</button>`
+    : "";
+  return `<div class="limit-status${c.over ? " is-over" : ""}"><span>${text}</span>${button}</div>`;
+}
+// The limit's basis, what happens past it, and each paycheck, behind a toggle.
+function limitDetails(key, c, p) {
+  const notes = [...c.notes];
+  if (c.over)
+    notes.push(
+      key === "espp"
+        ? "Money past the limit is usually refunded at purchase."
+        : "Payroll stops this contribution once you reach the limit, and the projection does too.",
+    );
+  if (
+    p?.reachDate &&
+    key === "traditional" &&
+    scenario.employerPlan.retirement.matchTrueUp === false
+  )
+    notes.push(
+      "Your plan doesn't true up the match, so stopping early can cost you employer match.",
+    );
+  const started = p?.points.find((q) => q.actual && q.value > 0)?.date;
+  if (started && started > `${scenario.taxProfile.year}-01-15`)
+    notes.push(
+      `Started ${shortDate(started)}, worked out from your year-to-date total.`,
+    );
+  return `<details class="la-details"><summary>How this is calculated</summary><ul class="limit-notes">${notes.map((n) => `<li>${escape(n)}</li>`).join("")}</ul>${
+    p?.points.length
+      ? table(
+          ["Paycheck", "This check", "Total this year"],
+          p.points.map((q) => [
+            `${longDate(q.date)}${q.actual ? "" : " (projected)"}`,
+            money(q.value),
+            money(q.total + p.prior),
+          ]),
+        )
+      : ""
+  }</details>`;
+}
+// Cumulative contributions over the calendar year: solid for what paystubs
+// confirm or imply, dotted for the projection, a dashed line for the limit.
+function limitChart(p) {
+  const year = Number(scenario.taxProfile.year),
+    t0 = Date.UTC(year, 0, 1),
+    t1 = Date.UTC(year + 1, 0, 1);
+  const x = (d) => ((Date.parse(`${d}T00:00:00Z`) - t0) / (t1 - t0)) * 100;
+  const top = Math.max(p.limit, p.endTotal + p.prior, 1) * 1.15;
+  const y = (v) => 100 - ((v + p.prior) / top) * 100;
+  const done = [
+      { date: `${year}-01-01`, total: 0 },
+      ...p.points.filter((q) => q.actual),
+    ],
+    from = done.at(-1),
+    ahead = [from, ...p.points.filter((q) => !q.actual)];
+  const path = (pts) =>
+    pts
+      .map(
+        (q, i) =>
+          `${i ? "L" : "M"}${x(q.date).toFixed(2)},${y(q.total).toFixed(2)}`,
+      )
+      .join("");
+  const limitY = y(p.limit - p.prior).toFixed(2);
+  const points = JSON.stringify(
+    p.points.map((q) => [q.date, q.value, q.total + p.prior, q.actual]),
+  );
+  return `<div class="la-chart"><div class="limit-chart" data-limit-chart="${escape(points)}" role="img" aria-label="${escape(`${p.label}: ${dollars(from.total + p.prior)} from paystubs, ${dollars(p.endTotal + p.prior)} projected by year end, limit ${dollars(p.limit)}`)}"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line class="lc-limit" x1="0" x2="100" y1="${limitY}" y2="${limitY}"/>${done.length > 1 ? `<path class="lc-line lc-actual" d="${path(done)}"/>` : ""}${ahead.length > 1 ? `<path class="lc-line lc-projected" d="${path(ahead)}"/>` : ""}<line class="lc-cursor" x1="0" x2="0" y1="0" y2="100" hidden/></svg><span class="lc-limit-label" style="top:${limitY}%">${dollars(p.limit)}</span><div class="lc-tip" hidden></div></div><div class="lc-months" aria-hidden="true"><span>Jan</span><span>Apr</span><span>Jul</span><span>Oct</span></div></div>`;
+}
+function linkedGroup(title, note, body) {
+  return body
+    ? `<section class="paycheck-group linked-group"><h3>${escape(title)}</h3>${note ? `<p class="cf-note">${escape(note)}</p>` : ""}${body}</section>`
+    : "";
+}
+// A plan section's pointer to the paycheck item it depends on.
+function paycheckItemNote(keys) {
+  const parts = keys
+    .filter((k) => scenario.uploads.elections[k])
+    .map((k) => {
+      const e = scenario.uploads.elections[k],
+        eq = Profile.equivalents(scenario, k, e);
+      const unit = e.unit || (e.mode === "percent" ? "percent" : "check");
+      const amount =
+        unit === "percent"
+          ? `${Number((e.value * 100).toFixed(2))}% of pay (${money(eq.check)} per paycheck)`
+          : unit === "check"
+            ? `${money(eq.check)} per paycheck`
+            : `${money(eq[unit])} ${UNIT_LABEL[unit]} (${money(eq.check)} per paycheck)`;
+      return `${escape((PAY_ITEMS[k] || [k])[0])}: ${amount}`;
+    });
+  return parts.length
+    ? `<p class="paycheck-item-note">${parts.join(" · ")}. <button type="button" class="link-button" data-goto-step="0">Change in Your paychecks</button></p>`
+    : "";
+}
+// Crosshair and tooltip for a limit chart: the nearest paycheck's amount and
+// running total.
+function bindLimitChart(chart) {
+  const points = JSON.parse(chart.dataset.limitChart);
+  const year = Number(scenario.taxProfile.year),
+    t0 = Date.UTC(year, 0, 1),
+    t1 = Date.UTC(year + 1, 0, 1);
+  const at = (d) => (Date.parse(`${d}T00:00:00Z`) - t0) / (t1 - t0);
+  const cursor = chart.querySelector(".lc-cursor"),
+    tip = chart.querySelector(".lc-tip");
+  chart.onpointermove = (event) => {
+    const box = chart.getBoundingClientRect(),
+      f = (event.clientX - box.left) / box.width;
+    const [date, value, total, actual] = points.reduce((best, q) =>
+      Math.abs(at(q[0]) - f) < Math.abs(at(best[0]) - f) ? q : best,
+    );
+    const pos = at(date) * 100;
+    cursor.setAttribute("x1", pos);
+    cursor.setAttribute("x2", pos);
+    cursor.hidden = false;
+    tip.innerHTML = `<strong>${escape(shortDate(date))} · ${actual ? "from paystubs" : "projected"}</strong><span>${money(value)} this check</span><span>${dollars(total)} so far</span>`;
+    tip.style.left = `${Math.min(Math.max(pos, 12), 78)}%`;
+    tip.hidden = false;
+  };
+  chart.onpointerleave = () => {
+    cursor.hidden = true;
+    tip.hidden = true;
+  };
+}
+function compensationView() {
+  const { payroll, flow } = result.ongoing;
+  const c = Presentation.compensation(
+    CompactFlow.build(payroll, flow, Scenario.engineInput(scenario)),
+  );
+  if (!(c.total > 0)) return "";
+  const per = compPeriod === "month" ? 12 : 1,
+    unit = compPeriod === "month" ? "a month" : "a year";
+  const pct = (v) => {
+    const n = (v / c.total) * 100;
+    return n > 0 && n < 0.5 ? "<1%" : `${Math.round(n)}%`;
+  };
+  const bar = (groups, label) =>
+    `<div class="comp-bar-row"><span class="comp-bar-label">${label}</span><div class="comp-bar" role="img" aria-label="${escape(`${label}: ${groups.map((g) => `${g.label} ${pct(g.value)}`).join(", ")}`)}">${groups
+      .filter((g) => g.value > 0)
+      .map(
+        (g) =>
+          `<span style="flex-grow:${g.value};background:var(--${MONEY_COLOR[g.id]})" title="${escape(g.label)}: ${dollars(g.value / per)}">${g.value / c.total >= 0.08 ? pct(g.value) : ""}</span>`,
+      )
+      .join("")}</div></div>`;
+  const ledger = (title, groups) =>
+    `<div class="ledger"><h3>${title}</h3>${groups
+      .filter((g) => Math.abs(g.value) > 0.5)
+      .map(
+        (g) =>
+          `<details class="ledger-group" data-comp-group="${g.id}" ${compOpen.has(g.id) ? "open" : ""}><summary><i style="background:var(--${MONEY_COLOR[g.id]})"></i><span>${escape(g.label)}</span><em>${pct(g.value)}</em><strong>${dollars(g.value / per)}</strong></summary><dl>${g.items.map((i) => `<div><dt>${escape(i.label)}</dt><dd>${dollars(i.value / per)}</dd></div>`).join("")}</dl></details>`,
+      )
+      .join(
+        "",
+      )}<div class="ledger-total"><span>Total</span><strong>${dollars(c.total / per)}</strong></div></div>`;
+  const pay = c.sources.find((g) => g.id === "pay").value,
+    equity = c.sources.find((g) => g.id === "equity").value,
+    employer = c.sources.find((g) => g.id === "employer").value;
+  const parts = [
+    `${dollars(pay / per)} cash pay`,
+    equity > 0.5 && `${dollars(equity / per)} in equity`,
+    employer > 0.5 && `${dollars(employer / per)} from your employer`,
+  ].filter(Boolean);
+  return `<section class="comp" aria-labelledby="comp-title"><div class="comp-head"><div><p class="eyebrow" id="comp-title">Total compensation</p><p class="comp-total"><strong>${dollars(c.total / per)}</strong> <span>${unit}</span></p><p class="comp-sub">${parts.join(" + ")}</p></div><div class="segmented" role="group" aria-label="Show amounts"><button type="button" data-comp-period="year" aria-pressed="${compPeriod === "year"}">Per year</button><button type="button" data-comp-period="month" aria-pressed="${compPeriod === "month"}">Per month</button></div></div><div class="comp-bars">${bar(c.sources, "You earn")}${bar(c.uses, "It goes to")}</div><div class="comp-ledgers">${ledger("What you earn", c.sources)}${ledger("Where it goes", c.uses)}</div><p class="cf-note">At your current earning pace, before living expenses. Equity uses your assumed share prices.</p></section>`;
+}
+function factsView() {
+  return `<section class="you-card" aria-labelledby="you-title"><h2 id="you-title">You</h2><dl class="facts">${Presentation.facts(
+    scenario,
+    Profile.hasIncome(scenario) ? result.ongoing.payroll : null,
+  )
+    .map(
+      (f) =>
+        `<div class="${f.missing ? "fact-missing" : ""}"><dt>${escape(f.label)}</dt><dd>${escape(f.value)}${f.source ? `<small>${escape(f.source)}</small>` : ""}</dd><button type="button" class="link-button" data-fact-step="${f.step}" data-fact-section="${f.section || ""}" aria-label="${f.missing ? "Add" : "Edit"} ${escape(f.label)}">${f.missing ? "Add" : "Edit"}</button></div>`,
+    )
+    .join("")}</dl></section>`;
+}
+function paycheckView(profile) {
+  const p = Presentation.paycheck(profile.last),
+    width = (v) => (p.gross > 0 ? Math.min(100, (v / p.gross) * 100) : 0);
+  const row = (label, value, id, sign) =>
+    `<tr class="${id ? "" : "wf-total"}"><th>${sign ? `<span class="wf-sign">${sign}</span>` : ""}${escape(label)}</th><td class="wf-track"><span style="width:${width(value)}%;background:var(--${id ? MONEY_COLOR[id] : "ink"})"></span></td><td>${money(value)}</td></tr>`;
+  const schedule = profile.schedule.confirmed
+    ? `Paid every ${profile.schedule.frequency === "weekly" ? "week" : "two weeks"}, inferred from check dates.`
+    : "Pay frequency needs confirmation.";
+  return `<section class="paycheck-card" aria-labelledby="paycheck-title"><div class="paycheck-head"><h2 id="paycheck-title">Latest paycheck</h2><span class="mono">${escape(longDate(profile.last.date))}</span></div><table class="waterfall"><tbody>${row("Gross pay", p.gross, "pay")}${p.steps.map((s) => row(s.label, s.value, s.id, "−")).join("")}${row("Deposited", p.deposit, "", "=")}</tbody></table><p class="cf-note">${p.employer > 0 ? `Your employer also put in ${money(p.employer)} for retirement and HSA. ` : ""}${profile.records} paycheck${profile.records === 1 ? "" : "s"} saved. ${schedule}</p></section>`;
+}
+function bindProfileOverview() {
+  document.querySelectorAll("[data-comp-period]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        compPeriod = b.dataset.compPeriod;
+        renderProfile();
+      }),
+  );
+  document
+    .querySelectorAll("[data-comp-group]")
+    .forEach(
+      (d) =>
+        (d.ontoggle = () =>
+          d.open
+            ? compOpen.add(d.dataset.compGroup)
+            : compOpen.delete(d.dataset.compGroup)),
+    );
+  document.querySelectorAll("[data-fact-step]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        profileStep = Number(b.dataset.factStep);
+        renderProfile();
+        const target = b.dataset.factSection && $(b.dataset.factSection);
+        (target || $("setup")).scrollIntoView({ block: "start" });
+      }),
+  );
+}
 function renderProfile() {
   const profile = Profile.describe(scenario),
     v = profile.last?.current || {};
@@ -1549,24 +2192,15 @@ function renderProfile() {
       : profileStep === 1
         ? "Continue to plan details"
         : "Continue with what I have";
-  if (Profile.hasIncome(scenario)) {
-    const { payroll, flow } = result.ongoing;
-    const graph = CompactFlow.build(
-      payroll,
-      flow,
-      Scenario.engineInput(scenario),
-    );
-    const cards = Presentation.overview(payroll, flow, graph.buckets);
-    $("profile-overview").innerHTML =
-      `<div class="overview-heading"><span>Monthly earning pace</span><small>Asset additions before expenses</small></div><div class="profile-overview-grid">${cards.map((c) => `<div class="overview-metric metric-${c.kind}" title="${escape(c.note)}"><span>${escape(c.label)}</span><strong>${money(c.value)}</strong></div>`).join("")}</div>`;
-  } else $("profile-overview").innerHTML = "";
-  const date = profile.last?.date;
+  $("profile-overview").innerHTML =
+    (Profile.hasIncome(scenario) ? compensationView() : "") + factsView();
   $("profile-summary").innerHTML =
     profileStep !== 0
       ? ""
       : profile.last
-        ? `<div class="profile-preview"><div><h2>Latest paycheck</h2><p>${escape(date)}</p></div><div class="profile-metrics"><div><span>Cash deposited</span><strong>${money(profile.snapshot.cash)}</strong></div><div><span>Retirement + HSA</span><strong>${money(profile.snapshot.retirement + profile.snapshot.hsa)}</strong></div><div><span>ESPP cash set aside</span><strong>${money(profile.snapshot.espp)}</strong></div></div><p class="cf-note">${profile.records} paycheck${profile.records === 1 ? "" : "s"} saved · ${profile.schedule.confirmed ? "Every " + (profile.schedule.frequency === "weekly" ? "week" : "two weeks") + " inferred from check dates." : "Pay frequency needs confirmation."}</p></div>`
+        ? paycheckView(profile)
         : `<div class="profile-empty"><strong>A paycheck fills in most of your profile.</strong><p>Upload a text-based PDF to extract earnings, deductions, withholding and YTD totals. Your documents stay on this device.</p></div>`;
+  bindProfileOverview();
   const rows = [];
   if (profile.last) {
     rows.push([
@@ -1672,6 +2306,8 @@ $("profile-next").onclick = () => {
   if (profileStep < 2) {
     profileStep++;
     renderProfile();
-    $("profile").scrollIntoView({ block: "start", behavior: "smooth" });
+    document
+      .querySelector(".profile-steps")
+      .scrollIntoView({ block: "start", behavior: "smooth" });
   } else document.querySelector('[data-view="monthly"]').click();
 };

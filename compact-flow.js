@@ -5,10 +5,10 @@
       ? require("./money-flow")
       : root.MoneyFlow;
   const palette = {
-    cash: "#38bdf8",
-    equity: "#fbbf24",
-    retirement: "#a78bfa",
-    tax: "#fb7185",
+    cash: "var(--cash)",
+    equity: "var(--equity)",
+    retirement: "var(--retire)",
+    tax: "var(--tax)",
   };
   const Util =
     typeof module !== "undefined" && module.exports
@@ -1056,7 +1056,7 @@
             l.output * scale,
           ),
           bend = (l.b.x - startX) * 0.45;
-        return `<g data-compact-flow="${i}" tabindex="0" role="button" aria-label="${escape(title)}"><title>${escape(title)}</title><path class="compact-ribbon" d="${d}" fill="${palette[l.kind]}"/><path d="M${startX},${l.y1 + (l.input * scale) / 2} C${startX + bend},${l.y1 + (l.input * scale) / 2} ${l.b.x - bend},${l.y2 + (l.output * scale) / 2} ${l.b.x},${l.y2 + (l.output * scale) / 2}" fill="none" stroke="transparent" stroke-width="18" pointer-events="stroke"/></g>`;
+        return `<g data-compact-flow="${i}" tabindex="0" role="button" aria-label="${escape(title)}"><title>${escape(title)}</title><path class="compact-ribbon" d="${d}" style="fill:${palette[l.kind]}"/><path d="M${startX},${l.y1 + (l.input * scale) / 2} C${startX + bend},${l.y1 + (l.input * scale) / 2} ${l.b.x - bend},${l.y2 + (l.output * scale) / 2} ${l.b.x},${l.y2 + (l.output * scale) / 2}" fill="none" stroke="transparent" stroke-width="18" pointer-events="stroke"/></g>`;
       })
       .join("");
     const wrap = (s) => {
@@ -1071,7 +1071,7 @@
       .filter((n) => !n.hidden && (n.value > 0.005 || n.bucket))
       .map(
         (n) =>
-          `<g data-compact-node="${n.id}" tabindex="0" role="button" aria-label="${escape(n.label)}: ${escape(amount(n.value))}. Show breakdown"><rect x="${n.x - 6}" y="${n.y}" width="22" height="${Math.max(8, n.h)}" fill="transparent" pointer-events="all"/><rect x="${n.x - 4}" y="${n.y - 22 - wrap(n.label).length * 13}" width="${Math.min(140, (width - 170) / 5 - 8)}" height="${20 + wrap(n.label).length * 13}" fill="transparent" pointer-events="all"/><rect x="${n.x}" y="${n.y}" width="10" height="${Math.max(2, n.h)}" fill="${palette[n.kind]}"/><text x="${n.x}" class="sankey-label">${wrap(
+          `<g data-compact-node="${n.id}" tabindex="0" role="button" aria-label="${escape(n.label)}: ${escape(amount(n.value))}. Show breakdown"><rect x="${n.x - 6}" y="${n.y}" width="22" height="${Math.max(8, n.h)}" fill="transparent" pointer-events="all"/><rect x="${n.x - 4}" y="${n.y - 22 - wrap(n.label).length * 13}" width="${Math.min(140, (width - 170) / 5 - 8)}" height="${20 + wrap(n.label).length * 13}" fill="transparent" pointer-events="all"/><rect x="${n.x}" y="${n.y}" width="10" height="${Math.max(2, n.h)}" style="fill:${palette[n.kind]}"/><text x="${n.x}" class="sankey-label">${wrap(
             n.label,
           )
             .map(

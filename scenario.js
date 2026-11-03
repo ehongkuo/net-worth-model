@@ -341,6 +341,7 @@
           "value",
           "sourceDate",
           "manual",
+          "unit",
         ]);
     scenario.projection.startingBalances = pick(
       m.projection.startingBalances,
@@ -418,6 +419,11 @@
       positive(e.value, key);
       if (e.mode === "percent" && e.value > 1)
         throw new Error("Contribution rates cannot exceed 100%.");
+      if (
+        e.unit != null &&
+        !["percent", "check", "month", "year"].includes(e.unit)
+      )
+        throw new Error("Invalid election unit.");
     }
     for (const g of scenario.compensation.grants) {
       if (!validDate(g.start) || !(g.months > 0) || !(g.grantPrice > 0))

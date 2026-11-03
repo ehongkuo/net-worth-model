@@ -26,6 +26,19 @@ const siteFiles = new Map([
   ...appFiles.map((file) => [file, file]),
   ["vendor/pdf.mjs", "node_modules/pdfjs-dist/build/pdf.mjs"],
   ["vendor/pdf.worker.mjs", "node_modules/pdfjs-dist/build/pdf.worker.mjs"],
+  // Self-hosted fonts: the content security policy allows only this origin.
+  [
+    "fonts/plex-sans.woff2",
+    "node_modules/@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-wght-normal.woff2",
+  ],
+  [
+    "fonts/plex-mono-400.woff2",
+    "node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2",
+  ],
+  [
+    "fonts/plex-mono-500.woff2",
+    "node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2",
+  ],
 ]);
 // The personal preset is gitignored; deployments and fresh checkouts get this.
 const emptyDefaults = "// No local development preset.\n";

@@ -10,7 +10,7 @@
     <header>
       <div>
         <strong>Net worth model</strong
-        ><span class="muted">Your scenario, three views</span>
+        ><span class="muted">Pay, taxes and net worth from your paystubs</span>
       </div>
       <details class="scenario-menu">
         <summary>Scenario</summary>
@@ -23,6 +23,7 @@
               accept=".json"
               hidden
           /></label>
+          <button id="reset">Start over</button>
           <details>
             <summary>Advanced</summary>
             <button id="inspect">Inspect scenario</button>
@@ -84,14 +85,14 @@
           <div class="profile-heading">
             <p class="eyebrow">YOUR FINANCIAL PROFILE</p>
             <h1>Your profile</h1>
-            <p>Tax information, paychecks and plan details.</p>
+            <p>What you earn, where it goes, and the details behind it.</p>
           </div>
+          <div id="profile-overview"></div>
           <div class="profile-steps" aria-label="Setup steps">
             <button data-step="0">1 <span>Your paychecks</span></button
             ><button data-step="1">2 <span>About you</span></button
             ><button data-step="2">3 <span>Complete the picture</span></button>
           </div>
-          <div id="profile-overview"></div>
           <div id="profile-summary"></div>
           <div id="setup" aria-label="Scenario setup"></div>
           <div class="profile-actions">
@@ -159,6 +160,18 @@
       <pre id="scenario-json"></pre>
       <button id="close-inspect">Close</button
       ><button id="backup">Download original saved scenario</button>
+    </dialog>
+    <dialog id="reset-dialog" aria-labelledby="reset-title">
+      <h2 id="reset-title">Start over?</h2>
+      <p>
+        This clears your saved scenario and paystub data in this browser. Export
+        a backup first if you might want it back.
+      </p>
+      <div class="dialog-actions">
+        <button id="reset-export">Export backup</button
+        ><button id="reset-cancel">Cancel</button
+        ><button id="reset-confirm" class="danger">Start over</button>
+      </div>
     </dialog>
     <dialog id="gap-dialog" aria-labelledby="gap-title">
       <h2 id="gap-title">A few more paystubs would fill some gaps</h2>

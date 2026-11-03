@@ -64,6 +64,14 @@ Older saved uploads retain their aggregate benefit amounts. Re-upload the source
 PDF to recover individual labels and schedules; the old scenario did not store
 that detail.
 
+## Earlier paychecks from year-to-date
+
+Paychecks before the earliest upload are rebuilt from the latest YTD totals:
+
+- When an item's remaining YTD is a whole number of the latest per-paycheck amount (within a cent per paycheck), it is placed on that many paychecks ending with the latest, and earlier paychecks get none. This dates a mid-year start. Salary is matched first, and nothing is placed on paychecks before pay started.
+- Otherwise the remainder is spread evenly over the earlier paychecks.
+- An off-cycle payslip's YTD can already include regular paychecks from the same pay run that weren't uploaded. When its salary YTD exceeds the last regular payslip's by whole regular paychecks, those paychecks are treated as paid, not forecast, so they aren't counted twice.
+
 ## Ongoing versus dated forecasts
 
 The ongoing monthly view and tax tab use a full-year estimate at current salary

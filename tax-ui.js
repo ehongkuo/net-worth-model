@@ -71,7 +71,7 @@ function stateIncomeComparison(attribution, audit, taxes) {
     sources.push({
       id: "employer-hsa",
       label: "Employer HSA",
-      color: "#a78bfa",
+      color: "var(--employer)",
       gross: audit.income.employerHsa,
       afterPretax: audit.income.employerHsa,
     });
@@ -272,9 +272,13 @@ function renderTaxExplorer(container, config, payroll, flow, options = {}) {
       }
     </section>
     <section class="glass-card tax-source-section"><h3>Tax breakdown</h3><div class="tax-breakdown-bar" aria-label="Federal, state and payroll tax">${[
-      ["Federal", t.federal, "#fb7185"],
-      ["State", t.state, "#fda4af"],
-      ["Payroll", t.ss + t.medicare + t.additionalMedicare + t.sdi, "#e11d48"],
+      ["Federal", t.federal, "var(--tax)"],
+      ["State", t.state, "var(--tax-2)"],
+      [
+        "Payroll",
+        t.ss + t.medicare + t.additionalMedicare + t.sdi,
+        "var(--tax-3)",
+      ],
     ]
       .filter(([, v]) => v > 0)
       .map(
