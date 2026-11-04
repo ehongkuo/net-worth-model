@@ -25,7 +25,6 @@ function table(headers, rows) {
 // Paths already drawn in the current form render; each field appears once.
 let shownPaths = null;
 // The gaps last shown in the pop-up; it opens again only when they change.
-let gapsPrompted = "";
 // Per-viewer display choices on the profile; not part of the scenario.
 let compPeriod = "year";
 const compOpen = new Set();
@@ -300,9 +299,18 @@ function quickQuestions() {
     .join("");
   return `<h2>A few things your paystub can't tell us</h2><ul class="todo-list">${items}</ul>`;
 }
-// Shows the one field for a path: its step, any collapsed parents, focus.
+// A setup input by its scenario path, or "linked:<key>" for a per-paycheck
+// amount read from paystubs.
+const fieldFor = (path) =>
+  $("setup").querySelector(
+    path.startsWith("linked:")
+      ? `[data-linked="${CSS.escape(path.slice(7))}"]`
+      : `[data-path="${CSS.escape(path)}"]`,
+  );
+// Shows the one field for a path: its step, any collapsed parents or chip,
+// focus.
 function jumpTo(path) {
-  const el = $("setup").querySelector(`[data-path="${CSS.escape(path)}"]`);
+  const el = fieldFor(path);
   if (!el) return;
   const step = Number(el.closest("[data-profile-step]")?.dataset.profileStep);
   if (step !== profileStep) {
@@ -315,6 +323,8 @@ function jumpTo(path) {
     d = d.parentElement?.closest("details")
   )
     d.open = true;
+  // A value shown as a chip opens its control first.
+  el.closest(".chip-control[hidden]")?.previousElementSibling?.click();
   el.scrollIntoView({ block: "center" });
   el.focus({ preventScroll: true });
   const cell = el.closest(".profile-cell");
@@ -322,6 +332,7 @@ function jumpTo(path) {
   setTimeout(() => cell?.classList.remove("jump-flash"), 1600);
 }
 function renderSetup() {
+  markFirstReview();
   shownPaths = new Set();
   try {
     renderSetupForm();
@@ -1081,9 +1092,6 @@ function renderSetupForm() {
         (el.onclick = () => {
           profileStep = Number(el.dataset.gotoStep);
           renderProfile();
-          document
-            .querySelector(".profile-steps")
-            .scrollIntoView({ block: "start" });
         }),
     );
   GrantTimeline.render(
@@ -1336,6 +1344,19 @@ const modelNotesDisclosure = (html) =>
   html
     ? `<details class="context-help"><summary>Model notes</summary>${html}</details>`
     : "";
+// A new view opens at the top and a new setup step at its tabs; drawing the
+// same place again, as after an edit, keeps the scroll position.
+let shownPlace = "";
+function settleScroll() {
+  const place = view === "profile" ? `profile:${profileStep}` : view,
+    sameView = shownPlace.split(":")[0] === view;
+  if (place === shownPlace) return;
+  shownPlace = place;
+  const steps = document.querySelector(".profile-steps");
+  if (!sameView) scrollTo(0, 0);
+  else if (steps.getBoundingClientRect().top < 0)
+    steps.scrollIntoView({ block: "start" });
+}
 function render() {
   const ready = Profile.hasIncome(scenario);
   $("attention").replaceChildren();
@@ -1343,6 +1364,7 @@ function render() {
   $("accuracy").hidden = true;
   if (!ready && !["profile", "welcome"].includes(view)) view = "welcome";
   if (ready && view === "welcome") view = "monthly";
+  settleScroll();
   renderPriceBar();
   for (const name of ["welcome", "profile", "monthly", "tax", "lifetime"])
     $(name).hidden = name !== view;
@@ -1744,6 +1766,7 @@ async function readPaystubs(event, append = false) {
     }
     status.textContent = "";
     reviewUploads();
+    showReview();
   } catch (error) {
     status.textContent = error.message;
     if (append) reviewUploads();
@@ -1771,7 +1794,7 @@ function reviewUploads() {
           : r.kind === "bonus"
             ? `Bonus ${money(r.current.bonus)} · Deposited cash ${money(r.netPay)}`
             : `Salary ${money(r.current.salary)} · Deposited cash ${money(r.netPay)}`
-      }</p><div class="table-scroll"><table><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
+      }</p><div class="table-scroll"><table class="review-lines"><thead><tr><th>Printed label</th><th>Category</th><th>Current</th><th>YTD</th></tr></thead><tbody>${r.lines
         .map(
           (l, j) =>
             `<tr><td>${escape(l.label)}</td><td><select data-mapping="${i}:${j}"><option value="">Choose</option>${Object.entries(
@@ -1783,7 +1806,7 @@ function reviewUploads() {
               )
               .join("")}</select>${
               PaystubParser.benefitTypes[l.key]
-                ? `<label>Repeats<select data-benefit-schedule="${i}:${j}">${Object.entries(
+                ? `<div class="benefit-options"><label>Repeats<select data-benefit-schedule="${i}:${j}">${Object.entries(
                     {
                       review: "Confirm schedule",
                       paycheck: "Every paycheck",
@@ -1799,7 +1822,7 @@ function reviewUploads() {
                     )
                     .join(
                       "",
-                    )}</select></label><label>Employer annual cap (optional)<input type="number" min="0" step=".01" data-benefit-cap="${i}:${j}" value="${l.annualCap ?? ""}"></label>`
+                    )}</select></label><label>Employer annual cap (optional)<input type="number" min="0" step=".01" data-benefit-cap="${i}:${j}" value="${l.annualCap ?? ""}"></label></div>`
                 : ""
             }</td><td><input aria-label="Current ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:current" value="${l.current ?? ""}"></td><td><input aria-label="YTD ${escape(l.label)}" type="number" step=".01" data-review-value="${i}:${j}:ytd" value="${l.ytd ?? ""}"></td></tr>`,
         )
@@ -1820,9 +1843,8 @@ function reviewUploads() {
           `<li><strong>${escape(h.ask)}</strong><span>${escape(h.gap)}</span>${h.tip ? `<small>${escape(h.tip)}</small>` : ""}</li>`,
       )
       .join(""),
-    // The gap dialog explains each ask; here a short reminder is enough.
     hintList = hints.length
-      ? `<div class="review-hints"><span>Would also help: ${hints.map((h) => escape(h.ask)).join(" · ")}</span><label class="button">Add more<input data-more-paystubs type="file" accept="application/pdf" multiple hidden></label></div>`
+      ? `<div class="review-hints"><div class="review-hints-head"><span>These would make your results more accurate. You can add them now or later.</span><label class="button">Add more<input data-more-paystubs type="file" accept="application/pdf" multiple hidden></label></div><ol class="gap-list">${gapItems}</ol></div>`
       : "";
   // Off-cycle checks alone carry no salary or payday schedule to fill.
   const schedule = `<label class="check review-schedule"${drafts.some((r) => r.kind === "regular") ? "" : " hidden"}><input id="apply-schedule" type="checkbox" checked>Also update salary and pay schedule</label>`;
@@ -1885,12 +1907,7 @@ function reviewUploads() {
           reviewUploads();
         }),
     );
-  const gapKey = hints.map((h) => h.ask).join("|");
-  if (hints.length && gapKey !== gapsPrompted) {
-    gapsPrompted = gapKey;
-    $("gap-list").innerHTML = gapItems;
-    if (!$("gap-dialog").open) $("gap-dialog").showModal();
-  } else if (!hints.length && $("gap-dialog").open) $("gap-dialog").close();
+  markFirstReview();
   $("upload-review")
     .querySelectorAll("[data-more-paystubs]")
     .forEach((el) => (el.onchange = (event) => readPaystubs(event, true)));
@@ -1932,6 +1949,28 @@ function reviewUploads() {
     }
   };
 }
+// The review card opens in view with its next step focused: the button when
+// every paystub adds up, otherwise the first one to fix.
+function showReview() {
+  const card = $("upload-review").querySelector(".review-card"),
+    apply = $("apply-upload");
+  if (!card) return;
+  card.scrollIntoView({ block: "start" });
+  const next = apply.disabled
+    ? [...card.querySelectorAll(".has-error select")].find(
+        (x) => x.value === "review" || x.value === "",
+      ) || card.querySelector(".has-error summary")
+    : apply;
+  next?.focus({ preventScroll: true });
+}
+// Before the first paystubs are used, the empty pay fields below the review
+// only add scrolling.
+function markFirstReview() {
+  $("setup").classList.toggle(
+    "first-review",
+    drafts.length > 0 && !scenario.uploads.records.length,
+  );
+}
 $("export").onclick = () =>
   download(Scenario.serialize(scenario), "net-worth-scenario.json");
 $("import").onchange = async (event) => {
@@ -1962,12 +2001,10 @@ $("reset-confirm").onclick = () => {
   quickAsked.clear();
   profileStep = 0;
   showLearned = false;
-  gapsPrompted = "";
   compPeriod = "year";
   compOpen.clear();
   view = "welcome";
   commit(freshScenario());
-  scrollTo(0, 0);
 };
 $("inspect").onclick = () => {
   $("scenario-json").textContent = Scenario.serialize(scenario);
@@ -1975,11 +2012,6 @@ $("inspect").onclick = () => {
   $("scenario-dialog").showModal();
 };
 $("close-inspect").onclick = () => $("scenario-dialog").close();
-$("gap-skip").onclick = () => $("gap-dialog").close();
-$("gap-upload").onchange = (event) => {
-  $("gap-dialog").close();
-  readPaystubs(event, true);
-};
 $("backup").onclick = () =>
   download(localStorage.getItem(BACKUP), "net-worth-original-scenario.json");
 document.querySelectorAll("[data-view]").forEach(
@@ -2273,7 +2305,7 @@ function factsView() {
   )
     .map(
       (f) =>
-        `<div class="${f.missing ? "fact-missing" : ""}"><dt>${escape(f.label)}</dt><dd>${escape(f.value)}${f.source ? `<small>${escape(f.source)}</small>` : ""}</dd><button type="button" class="link-button" data-fact-step="${f.step}" data-fact-section="${f.section || ""}" aria-label="${f.missing ? "Add" : "Edit"} ${escape(f.label)}">${f.missing ? "Add" : "Edit"}</button></div>`,
+        `<div class="${f.missing ? "fact-missing" : ""}"><dt>${escape(f.label)}</dt><dd>${escape(f.value)}${f.source ? `<small>${escape(f.source)}</small>` : ""}</dd><button type="button" class="link-button" data-fact-step="${f.step}" data-fact-section="${f.section || ""}" data-fact-paths="${escape((f.paths || []).join(" "))}" aria-label="${f.missing ? "Add" : "Edit"} ${escape(f.label)}">${f.missing ? "Add" : "Edit"}</button></div>`,
     )
     .join("")}</dl></section>`;
 }
@@ -2283,7 +2315,7 @@ function paycheckView(profile) {
   const row = (label, value, id, sign) =>
     `<tr class="${id ? "" : "wf-total"}"><th>${sign ? `<span class="wf-sign">${sign}</span>` : ""}${escape(label)}</th><td class="wf-track"><span style="width:${width(value)}%;background:var(--${id ? MONEY_COLOR[id] : "ink"})"></span></td><td>${money(value)}</td></tr>`;
   const schedule = profile.schedule.confirmed
-    ? `Paid every ${profile.schedule.frequency === "weekly" ? "week" : "two weeks"}, inferred from check dates.`
+    ? `Paid ${{ weekly: "every week", biweekly: "every two weeks", semimonthly: "twice a month", monthly: "once a month" }[profile.schedule.frequency] || profile.schedule.frequency}, read from your paystubs.`
     : "Pay frequency needs confirmation.";
   return `<section class="paycheck-card" aria-labelledby="paycheck-title"><div class="paycheck-head"><h2 id="paycheck-title">Latest paycheck</h2><span class="mono">${escape(longDate(profile.last.date))}</span></div><table class="waterfall"><tbody>${row("Gross pay", p.gross, "pay")}${p.steps.map((s) => row(s.label, s.value, s.id, "−")).join("")}${row("Deposited", p.deposit, "", "=")}</tbody></table><p class="cf-note">${p.employer > 0 ? `Your employer also put in ${money(p.employer)} for retirement and HSA. ` : ""}${profile.records} paycheck${profile.records === 1 ? "" : "s"} saved. ${schedule}</p></section>`;
 }
@@ -2307,6 +2339,10 @@ function bindProfileOverview() {
   document.querySelectorAll("[data-fact-step]").forEach(
     (b) =>
       (b.onclick = () => {
+        const path = b.dataset.factPaths
+          .split(" ")
+          .find((p) => p && fieldFor(p));
+        if (path) return jumpTo(path);
         profileStep = Number(b.dataset.factStep);
         renderProfile();
         const target = b.dataset.factSection && $(b.dataset.factSection);
@@ -2315,6 +2351,7 @@ function bindProfileOverview() {
   );
 }
 function renderProfile() {
+  settleScroll();
   const profile = Profile.describe(scenario),
     v = profile.last?.current || {};
   document
@@ -2454,8 +2491,5 @@ $("profile-next").onclick = () => {
   if (profileStep < 2) {
     profileStep++;
     renderProfile();
-    document
-      .querySelector(".profile-steps")
-      .scrollIntoView({ block: "start", behavior: "smooth" });
   } else document.querySelector('[data-view="monthly"]').click();
 };

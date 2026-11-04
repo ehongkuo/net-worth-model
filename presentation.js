@@ -149,7 +149,9 @@
     };
   }
   // The inputs behind the numbers, each pointing at the setup step that edits
-  // it. With the projection's payroll, amounts are what the model uses, which
+  // it and the fields to focus there; the first one on the page wins
+  // ("linked:" names a per-paycheck amount read from paystubs). With
+  // the projection's payroll, amounts are what the model uses, which
   // includes per-paycheck elections read from paystubs.
   function facts(s, payroll) {
     const usd = (n) =>
@@ -196,6 +198,7 @@
     return [
       {
         id: "salary",
+        paths: ["compensation.salary"],
         label: "Salary",
         value: salary > 0 ? `${usd(salary)} a year` : "Not set",
         missing: !(salary > 0),
@@ -203,12 +206,16 @@
       },
       {
         id: "schedule",
+        paths: ["compensation.frequency"],
         label: "Paid",
         value: schedules[comp.frequency] || comp.frequency,
         step: 0,
       },
       {
         id: "tax",
+        paths: tax.state
+          ? ["taxProfile.settings.filing"]
+          : ["taxProfile.settings.state"],
         label: "Files taxes as",
         value: `${filing[tax.filing] || tax.filing} · ${tax.state || "state not set"}`,
         missing: !tax.state,
@@ -216,6 +223,11 @@
       },
       {
         id: "retirement",
+        paths: [
+          "linked:traditional",
+          "employerPlan.retirement.traditional",
+          "employerPlan.retirement.matchPercent",
+        ],
         label: "401(k)",
         value: saving.length ? saving.join(" · ") : "Not contributing",
         source: fromPaystub(["traditional", "roth", "mega"]),
@@ -224,6 +236,11 @@
       },
       {
         id: "hsa",
+        paths: [
+          "linked:hsa",
+          "employerPlan.hsa.employee",
+          "employerPlan.hsa.eligible",
+        ],
         label: "HSA",
         value: hsa > 0 ? `${usd(hsa)} a year` : "None",
         source: fromPaystub(["hsa"]),
@@ -232,6 +249,11 @@
       },
       {
         id: "espp",
+        paths: [
+          "linked:espp",
+          "employerPlan.espp.rate",
+          "employerPlan.espp.enabled",
+        ],
         label: "ESPP",
         value: plan.espp.enabled
           ? `${Math.round(esppRate * 100)}% of pay`

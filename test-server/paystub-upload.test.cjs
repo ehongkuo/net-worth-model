@@ -76,6 +76,7 @@ async function upload(bytes, parserError) {
     reviewUploads() {
       reviewed++;
     },
+    showReview() {},
   });
   vm.runInContext(handler, context);
   for (const data of bytes)

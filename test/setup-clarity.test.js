@@ -113,3 +113,21 @@ describe("plain notes", () => {
     assert(/withh/i.test(note) && /tax due/i.test(note), note);
   });
 });
+
+describe("profile Edit links name their field", () => {
+  const paths = (s) =>
+    Object.fromEntries(Presentation.facts(s).map((f) => [f.id, f.paths]));
+  test("each fact points at the input that changes it", () => {
+    const p = paths(S.defaults());
+    assertEqual(p.salary[0], "compensation.salary");
+    assertEqual(p.schedule[0], "compensation.frequency");
+    assertEqual(p.espp.at(-1), "employerPlan.espp.enabled");
+  });
+  test("a missing state points at the state, a set one at filing", () => {
+    const s = S.defaults();
+    s.taxProfile.settings.state = "";
+    assertEqual(paths(s).tax[0], "taxProfile.settings.state");
+    s.taxProfile.settings.state = "CA";
+    assertEqual(paths(s).tax[0], "taxProfile.settings.filing");
+  });
+});

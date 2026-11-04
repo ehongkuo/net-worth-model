@@ -2009,10 +2009,6 @@ button:disabled {
   width: min(560px, calc(100vw - 32px));
   padding: 20px 24px;
 }
-#gap-dialog h2 {
-  margin: 0 0 6px;
-  font-size: 1.15rem;
-}
 .gap-list {
   list-style: none;
   counter-reset: gap;
@@ -2355,7 +2351,8 @@ button:disabled {
 .profile-steps,
 .plan-section,
 #plan-espp,
-#setup {
+#setup,
+.review-card {
   scroll-margin-top: 88px;
 }
 .facts dd small {
@@ -2463,15 +2460,107 @@ button:disabled {
   color: var(--text-2);
 }
 .review-hints {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--line);
   font-size: 14px;
   color: var(--text-2);
+}
+.review-hints-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.review-hints .gap-list {
+  margin-bottom: 0;
+}
+/* The empty pay fields wait until the first paystubs are used. */
+#setup.first-review #upload-review ~ * {
+  display: none;
+}
+/* Paystub lines: the label and category take the room, the two amounts a
+   fixed width; a benefit's schedule and cap sit under its category. */
+.review-lines {
+  table-layout: fixed;
+  width: 100%;
+}
+.review-lines th:nth-child(1) {
+  width: 28%;
+}
+.review-lines th:nth-child(3),
+.review-lines th:nth-child(4) {
+  width: 128px;
+}
+.review-lines th,
+.review-lines td {
+  text-align: left;
+  vertical-align: top;
+}
+.review-lines td input,
+.review-lines td select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.benefit-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  margin-top: 6px;
+}
+.benefit-options label {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+@media (max-width: 600px) {
+  /* Each line becomes a small card: label, category, then both amounts. */
+  #upload-review .table-scroll {
+    max-height: none;
+  }
+  .review-lines thead {
+    display: none;
+  }
+  .review-lines,
+  .review-lines tbody {
+    display: block;
+  }
+  .review-lines tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .review-lines td {
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+  .review-lines td:nth-child(1),
+  .review-lines td:nth-child(2) {
+    grid-column: 1/-1;
+  }
+  .review-lines td:nth-child(1) {
+    font-weight: 600;
+  }
+  .review-lines td:nth-child(3)::before {
+    content: "Current";
+  }
+  .review-lines td:nth-child(4)::before {
+    content: "YTD";
+  }
+  .review-lines td:nth-child(3)::before,
+  .review-lines td:nth-child(4)::before {
+    display: block;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .benefit-options {
+    grid-template-columns: 1fr;
+  }
 }
 .profile-panel .review-hints .button {
   margin: 0;
