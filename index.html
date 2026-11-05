@@ -44,6 +44,7 @@
             Lifetime projection
           </button>
         </nav>
+        <div id="price-bar" class="price-bar" hidden></div>
         <section id="welcome" hidden>
           <p class="eyebrow">YOUR FINANCIAL PICTURE</p>
           <h1>See where your compensation goes</h1>
@@ -171,25 +172,6 @@
         <button id="reset-export">Export backup</button
         ><button id="reset-cancel">Cancel</button
         ><button id="reset-confirm" class="danger">Start over</button>
-      </div>
-    </dialog>
-    <dialog id="gap-dialog" aria-labelledby="gap-title">
-      <h2 id="gap-title">A few more paystubs would fill some gaps</h2>
-      <p class="cf-note">
-        Here's what the paystubs you added can't tell us yet. Adding these now
-        makes your results more accurate.
-      </p>
-      <ol id="gap-list" class="gap-list"></ol>
-      <div class="dialog-actions">
-        <label class="button primary"
-          >Add paystubs<input
-            id="gap-upload"
-            type="file"
-            accept="application/pdf"
-            multiple
-            hidden
-        /></label>
-        <button id="gap-skip">Continue without them</button>
       </div>
     </dialog>
     <script src="util.js"></script>
