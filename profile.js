@@ -886,41 +886,20 @@
     if (type === "number") return Number(value).toFixed(2);
     return value;
   }
-  // The what-if share price: the saved price, or until one is saved, the
-  // price the grants and ESPP already assume. The range is 0.25x to 3x a
-  // reference price so dragging never moves its own bounds. Null without equity.
+  // The share price slider: Scenario.sharePrice with a range of 0.25x to 3x
+  // the reference, so dragging never moves its own bounds. Null without equity.
   function sharePrice(s) {
-    const c = s.compensation,
-      e = s.employerPlan.espp,
-      grants = c.grants || [];
-    if (!grants.length && !e.enabled) return null;
-    // Prefer a price someone entered over a $100 placeholder.
-    const set = (p) =>
-      s.uploads?.manualFields?.includes(p) ||
-      Object.hasOwn(s.uploads?.confirmedFields || {}, p);
-    const prices = [
-      ...grants.flatMap((g, i) => [
-        [g.vestPrice, `compensation.grants.${i}.vestPrice`],
-        [g.vestPrice, `compensation.grants.${i}.grantPrice`],
-      ]),
-      ...(e.enabled
-        ? [
-            [e.purchasePrice, "employerPlan.espp.purchasePrice"],
-            [e.offerPrice, "employerPlan.espp.offerPrice"],
-          ]
-        : []),
-    ].filter(([v]) => v > 0);
-    const assumed =
-      prices.find(([, p]) => set(p))?.[0] || prices[0]?.[0] || 100;
-    const price = c.sharePrice > 0 ? c.sharePrice : assumed,
-      reference = c.referencePrice > 0 ? c.referencePrice : price,
-      cents = (v) => Math.round(v * 100) / 100;
+    const S =
+      typeof module !== "undefined" && module.exports
+        ? require("./scenario")
+        : root.Scenario;
+    const p = S.sharePrice(s);
+    if (!p) return null;
+    const cents = (v) => Math.round(v * 100) / 100;
     return {
-      price,
-      reference,
-      min: cents(reference * 0.25),
-      max: cents(reference * 3),
-      saved: c.sharePrice > 0,
+      ...p,
+      min: cents(p.reference * 0.25),
+      max: cents(p.reference * 3),
     };
   }
   const api = {

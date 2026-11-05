@@ -451,14 +451,13 @@
         path: "taxProfile.age",
       });
     // A W-4 withholding status is only a guess at the filing status, so an
-    // inferred value still needs an answer.
+    // inferred value still needs an answer: a confirmation or an entry.
+    const filingPath = "taxProfile.settings.filing";
     if (
-      !confirmed("taxProfile.settings.filing") ||
-      (s.uploads?.fieldSources?.["taxProfile.settings.filing"]?.inferred &&
-        !Object.hasOwn(
-          s.uploads?.confirmedFields || {},
-          "taxProfile.settings.filing",
-        ))
+      !confirmed(filingPath) ||
+      (s.uploads?.fieldSources?.[filingPath]?.inferred &&
+        !Object.hasOwn(s.uploads?.confirmedFields || {}, filingPath) &&
+        !(s.uploads?.manualFields || []).includes(filingPath))
     )
       out.push({
         id: "filing",
@@ -513,11 +512,8 @@
     const e = s.employerPlan?.espp;
     if (
       e?.enabled &&
-      !(
-        confirmed("employerPlan.espp.offerPrice") &&
-        (confirmed("employerPlan.espp.purchasePrice") ||
-          s.compensation?.sharePrice > 0)
-      )
+      // Purchase-day prices come from the share price.
+      !confirmed("employerPlan.espp.offerPrice")
     )
       out.push({
         id: "espp",
@@ -527,7 +523,97 @@
       });
     return out;
   }
+  // What an estimate is about, asked on its own: a topic for the heading
+  // and a label and hint that make sense without the section around it.
+  // Unlisted fields keep the label they show in place.
+  const QUESTIONS = {
+    "grants.name": [
+      "Name for this grant",
+      "Any label you'll recognize, like “2026 refresh”. It only names the grant here.",
+    ],
+    "grants.value": [
+      "Total value when granted",
+      "The dollar value on your grant letter, before anything vests.",
+    ],
+    "grants.start": ["Date the grant was awarded"],
+    "grants.months": ["Years until the grant is fully vested"],
+    "grants.interval": ["Months between vests"],
+    "grants.cliff": [
+      "Months until the first vest (cliff)",
+      "0 if shares start vesting on the first regular date.",
+    ],
+    "grants.grantPrice": [
+      "Share price used to size the grant",
+      "Total value divided by this price is the number of shares. It's on your grant letter.",
+    ],
+    "grants.saleMode": ["What happens to shares when they vest"],
+    "grants.repeat": ["You get a grant like this every year"],
+    "grants.evenVesting": ["The same amount vests each year"],
+    "espp.enabled": ["You take part in the ESPP"],
+    "espp.rate": ["Share of pay you put into the ESPP"],
+    "espp.bonusEligible": ["Your bonus counts toward ESPP contributions"],
+    "espp.start": ["Date the current ESPP offering started"],
+    "espp.periodMonths": ["Months in each ESPP offering"],
+    "espp.discount": ["ESPP discount off the share price"],
+    "espp.lookback": [
+      "Lookback: you pay the lower of the offering-start and purchase-day prices",
+    ],
+    "espp.offerPrice": [
+      "Share price when the current offering started",
+      "Before the discount.",
+    ],
+    "espp.holdShares": ["You keep ESPP shares after buying them"],
+    "espp.holdMonths": ["Months you hold ESPP shares before selling"],
+    "espp.fractional": ["The plan buys fractional shares"],
+    "hsa.eligible": ["You're eligible for an HSA"],
+    "hsa.coverage": [
+      "HSA coverage level",
+      "Self-only or family, from your health plan. It sets your yearly HSA limit.",
+    ],
+    "hsa.eligibleMonths": ["Months this year you're HSA-eligible"],
+    "hsa.employee": ["What you put into your HSA each year"],
+    "hsa.employer": ["What your employer puts into your HSA each year"],
+    "retirement.employerAnnual": [
+      "Fixed yearly 401(k) money from your employer",
+      "Funding that doesn't depend on what you contribute.",
+    ],
+  };
+  const TOPICS = [
+    ["employerPlan.espp.", "Employee stock purchase plan (ESPP)"],
+    ["employerPlan.hsa.", "Health savings account (HSA)"],
+    ["employerPlan.retirement.", "401(k) and IRA"],
+    ["employerPlan.benefits.", "Paycheck benefits"],
+    ["uploads.elections.", "Paycheck elections"],
+    ["taxProfile.", "Taxes"],
+    ["projection.", "Retirement & spending"],
+    ["compensation.", "Your pay"],
+  ];
+  function estimateQuestion(s, path, label) {
+    const grant = path.match(/^compensation\.grants\.(\d+)\.(\w+)$/);
+    if (grant) {
+      const i = Number(grant[1]),
+        name = s.compensation?.grants?.[i]?.name,
+        [text, hint = ""] = QUESTIONS[`grants.${grant[2]}`] || [label];
+      return {
+        // The name field doesn't repeat the name it asks about.
+        topic:
+          name && grant[2] !== "name"
+            ? `RSU grant “${name}”`
+            : `RSU grant ${i + 1}`,
+        label: text,
+        hint,
+      };
+    }
+    const key = path.replace(/^employerPlan\./, ""),
+      [text, hint = ""] = QUESTIONS[key] || [label];
+    return {
+      topic: TOPICS.find(([p]) => path.startsWith(p))?.[1] || "Your profile",
+      label: text,
+      hint,
+    };
+  }
   const api = {
+    estimateQuestion,
     notices,
     fieldBadge,
     labelFor,

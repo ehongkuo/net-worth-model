@@ -131,3 +131,90 @@ describe("profile Edit links name their field", () => {
     assertEqual(paths(s).tax[0], "taxProfile.settings.filing");
   });
 });
+
+describe("quick questions", () => {
+  const ids = (s) => Presentation.missing(s).map((m) => m.id);
+  test("each in-place answer clears its question", () => {
+    const s = S.defaults();
+    s.taxProfile.settings.state = "";
+    for (const id of ["age", "filing", "state", "spending", "balances"])
+      assert(ids(s).includes(id), id);
+    Profile.edit(s, "taxProfile.age", 41);
+    Profile.edit(s, "taxProfile.settings.filing", "married");
+    Profile.edit(s, "taxProfile.settings.state", "none");
+    // One monthly total is enough for spending.
+    Profile.edit(s, "projection.monthlyExpenses.other", 7000);
+    Profile.edit(s, "projection.startingBalances.cash", 20000);
+    const left = ids(s);
+    for (const id of ["age", "filing", "state", "spending", "balances"])
+      assert(!left.includes(id), id);
+    // Married filing asks for the spouse's wages next.
+    assert(left.includes("spouse"));
+  });
+});
+
+describe("a guessed filing status", () => {
+  const guessed = () => {
+    const s = S.normalize(S.defaults());
+    s.uploads.fieldSources = {
+      "taxProfile.settings.filing": {
+        sourceDate: "2026-10-30",
+        basis: "W-4 withholding status",
+        inferred: true,
+      },
+    };
+    return s;
+  };
+  const asks = (s) => Presentation.missing(s).some((m) => m.id === "filing");
+  test("is still asked", () => assert(asks(guessed())));
+  test("is answered by choosing one", () => {
+    const s = guessed();
+    Profile.edit(s, "taxProfile.settings.filing", "married");
+    assert(!asks(s));
+  });
+  test("is answered by confirming it", () => {
+    const s = guessed();
+    Profile.confirm(s, "taxProfile.settings.filing");
+    assert(!asks(s));
+  });
+});
+
+describe("an estimate asked on its own", () => {
+  const s = S.defaults();
+  s.compensation.grants = [{ name: "Synthetic refresh" }, { name: "" }];
+  const q = (path, label = "Shown label") =>
+    Presentation.estimateQuestion(s, path, label);
+  test("a grant field names its grant", () => {
+    assertEqual(
+      q("compensation.grants.0.cliff").topic,
+      "RSU grant “Synthetic refresh”",
+    );
+    assertEqual(q("compensation.grants.1.cliff").topic, "RSU grant 2");
+  });
+  test("the grant's name says what it names, without repeating it", () => {
+    const name = q("compensation.grants.0.name", "Name");
+    assertEqual(name.topic, "RSU grant 1");
+    assertEqual(name.label, "Name for this grant");
+    assert(name.hint.length > 0);
+  });
+  test("plan fields name their plan", () => {
+    assertEqual(
+      q("employerPlan.espp.discount").topic,
+      "Employee stock purchase plan (ESPP)",
+    );
+    assertEqual(
+      q("employerPlan.espp.discount").label,
+      "ESPP discount off the share price",
+    );
+    assertEqual(
+      q("employerPlan.hsa.coverage").topic,
+      "Health savings account (HSA)",
+    );
+    assertEqual(q("taxProfile.settings.filing").topic, "Taxes");
+  });
+  test("an unlisted field keeps its own label", () => {
+    const filing = q("taxProfile.settings.filing", "Filing status");
+    assertEqual(filing.label, "Filing status");
+    assertEqual(filing.hint, "");
+  });
+});

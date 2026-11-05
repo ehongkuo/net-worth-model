@@ -2,6 +2,7 @@ const { test, assert, assertClose, assertEqual } = require("./harness");
 const C = require("../compensation"),
   S = require("../scenario"),
   P = require("../profile"),
+  Profile = P,
   Projection = require("../projection");
 
 // $120,000 at $50 a share is 2,400 shares vesting quarterly over four years:
@@ -143,16 +144,17 @@ test("a saved scenario without a share price loads unchanged", () => {
 });
 
 test("the slider range is 0.25x to 3x the reference price", () => {
-  const set = P.sharePrice(scenario({ sharePrice: 50, referencePrice: 40 }));
-  assertEqual(set.price, 50);
-  assertEqual(set.reference, 40);
-  assertEqual(set.min, 10);
-  assertEqual(set.max, 120);
-  assert(set.saved);
-  // Unset: start from the grant's price, without saving anything.
+  // The reference is the grant's $50 price; a saved reference is ignored.
+  const set = P.sharePrice(scenario({ sharePrice: 70, referencePrice: 40 }));
+  assertEqual(set.price, 70);
+  assertEqual(set.reference, 50);
+  assertEqual(set.min, 12.5);
+  assertEqual(set.max, 150);
+  assert(set.saved && set.fromGrant);
+  // Unset: start from the grant's expected vest price, without saving it.
   const unset = P.sharePrice(scenario());
   assertEqual(unset.price, 60);
-  assertEqual(unset.reference, 60);
+  assertEqual(unset.reference, 50);
   assert(!unset.saved);
   // ESPP only: start from its purchase-day price.
   const s = S.defaults();
@@ -192,4 +194,62 @@ test("share prices must not be negative", () => {
     error = e;
   }
   assert(error && /share price/i.test(error.message));
+});
+
+// Two synthetic grants and an ESPP, with prices entered as a user would.
+function twoGrants(extra = {}) {
+  const s = S.defaults();
+  s.compensation.grants = [
+    { ...grant, name: "Older", start: "2024-03-01", grantPrice: 30 },
+    { ...grant, name: "Newer", start: "2026-02-01", grantPrice: 45 },
+  ];
+  s.employerPlan.espp = {
+    ...s.employerPlan.espp,
+    enabled: true,
+    offerPrice: 20,
+    purchasePrice: 25,
+  };
+  s.uploads.manualFields = [
+    "compensation.grants.0.grantPrice",
+    "compensation.grants.1.grantPrice",
+  ];
+  Object.assign(s.compensation, extra);
+  return S.normalize(s);
+}
+
+test("vests and ESPP purchases share one price", () => {
+  const saved = S.engineInput(twoGrants({ sharePrice: 40 }));
+  assertEqual(saved.grants[0].vestPrice, 40);
+  assertEqual(saved.grants[1].vestPrice, 40);
+  assertEqual(saved.espp.purchasePrice, 40);
+  assertEqual(saved.espp.salePrice, 40);
+  // Unsaved, the newest grant's $60 vest price is used for both too.
+  const unsaved = S.engineInput(twoGrants());
+  assertEqual(unsaved.espp.purchasePrice, 60);
+  assertEqual(unsaved.grants[0].vestPrice, 60);
+  // The offering's start price is a past price and stays.
+  assertEqual(unsaved.espp.offerPrice, 20);
+});
+
+test("the reference is the most recent grant's price", () => {
+  assertEqual(P.sharePrice(twoGrants({ sharePrice: 40 })).reference, 45);
+  // An entered grant price wins over a newer placeholder.
+  const s = twoGrants();
+  s.uploads.manualFields = ["compensation.grants.0.grantPrice"];
+  assertEqual(P.sharePrice(s).reference, 30);
+  // Only an ESPP: the reference is today's price.
+  const e = twoGrants({ sharePrice: 22 });
+  e.compensation.grants = [];
+  const p = P.sharePrice(e);
+  assertEqual(p.reference, 22);
+  assert(!p.fromGrant);
+});
+
+test("the ESPP question needs only the offering price", () => {
+  const Presentation = require("../presentation");
+  const s = twoGrants();
+  const asks = () => Presentation.missing(s).some((m) => m.id === "espp");
+  assert(asks());
+  Profile.confirm(s, "employerPlan.espp.offerPrice");
+  assert(!asks());
 });

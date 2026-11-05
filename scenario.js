@@ -537,11 +537,55 @@
     };
     return { scenario: normalize(s), warnings };
   }
+  // One company share price values every future vest, ESPP purchase and
+  // sale: the slider's price once saved, before that a vest or purchase price
+  // someone entered, then the latest grant's own. The reference is the price
+  // on the most recent grant entered, so the slider shows the change since.
+  // Null without equity.
+  function sharePrice(s) {
+    const c = s.compensation,
+      e = s.employerPlan.espp,
+      grants = c.grants || [];
+    if (!grants.length && !e.enabled) return null;
+    const set = (p) =>
+      s.uploads?.manualFields?.includes(p) ||
+      Object.hasOwn(s.uploads?.confirmedFields || {}, p);
+    const newest = grants
+      .map((g, i) => ({ g, i }))
+      .sort((a, b) => String(b.g.start).localeCompare(String(a.g.start)));
+    const grantSet = ({ i }) => set(`compensation.grants.${i}.grantPrice`);
+    const entered = [
+      ...newest
+        .filter(
+          (x) => grantSet(x) || set(`compensation.grants.${x.i}.vestPrice`),
+        )
+        .map(({ g }) => g.vestPrice),
+      ...(e.enabled && set("employerPlan.espp.purchasePrice")
+        ? [e.purchasePrice]
+        : []),
+    ].filter((v) => v > 0);
+    const latest = newest[0]?.g,
+      grantPrice = (newest.find(grantSet)?.g || latest)?.grantPrice;
+    const assumed =
+      entered[0] ||
+      latest?.vestPrice ||
+      latest?.grantPrice ||
+      (e.enabled && e.purchasePrice) ||
+      100;
+    const price = c.sharePrice > 0 ? c.sharePrice : assumed;
+    return {
+      price,
+      reference: grantPrice > 0 ? grantPrice : price,
+      fromGrant: grantPrice > 0,
+      saved: c.sharePrice > 0,
+    };
+  }
   function engineInput(s) {
     s = normalize(s);
     return C.priced(
       C.merge(C.defaults(), {
         ...s.compensation,
+        sharePrice: sharePrice(s)?.price || 0,
         taxYear: s.taxProfile.year,
         age: s.taxProfile.age,
         birthday: s.taxProfile.birthday,
@@ -567,7 +611,14 @@
   function serialize(s) {
     return JSON.stringify(normalize(s), null, 2);
   }
-  const api = { defaults, normalize, migrate, engineInput, serialize };
+  const api = {
+    defaults,
+    normalize,
+    migrate,
+    engineInput,
+    serialize,
+    sharePrice,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Scenario = api;
 })(typeof window !== "undefined" ? window : globalThis);

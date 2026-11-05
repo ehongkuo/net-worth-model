@@ -277,30 +277,342 @@ const compactGroup = (title, body) =>
 function setup() {
   Util.preserveFocus($("setup"), renderSetup);
 }
-// Items still needed, listed this session; answered ones stay in place (as
-// done) so the list doesn't jump. Each links to its one field.
-const quickAsked = new Map();
+// What the paystubs can't tell, asked one at a time in place. Answers save
+// together on Next; grants and ESPP need their own section, so those link
+// there. Answered and skipped ones stay listed this session.
+const quickAsked = new Map(),
+  quickSkipped = new Set();
+const QUICK_ORDER = [
+  "age",
+  "filing",
+  "state",
+  "spouse",
+  "spending",
+  "balances",
+  "hsa",
+  "rsu",
+  "espp",
+];
+const QUICK_FIELDS = {
+  age: [["taxProfile.age", "Your age", "count"]],
+  filing: [
+    [
+      "taxProfile.settings.filing",
+      "Filing status",
+      [
+        ["single", "Single"],
+        ["married", "Married filing jointly"],
+      ],
+    ],
+  ],
+  state: [
+    [
+      "taxProfile.settings.state",
+      "Where you pay income tax",
+      [
+        ["CA", "California"],
+        ["none", "No state income tax"],
+        ["custom", "Other state (effective rate)"],
+      ],
+    ],
+  ],
+  spouse: [["taxProfile.settings.spouseIncome", "Spouse's annual wages"]],
+  spending: [
+    [
+      "projection.monthlyExpenses.other",
+      "Total monthly spending",
+      "money",
+      "One total is enough; you can break it down later under Retirement & spending. Leave out what's taken from your paycheck.",
+    ],
+  ],
+  balances: [
+    ["projection.startingBalances.cash", "Cash"],
+    ["projection.startingBalances.brokerage", "Taxable investments"],
+    ["projection.startingBalances.pretax401k", "Traditional 401(k)"],
+    ["projection.startingBalances.rothAccounts", "Roth accounts"],
+  ],
+  hsa: [
+    [
+      "employerPlan.hsa.coverage",
+      "HSA coverage",
+      [
+        ["single", "Self-only"],
+        ["family", "Family"],
+      ],
+    ],
+  ],
+};
+let quickCurrent = "";
 function quickQuestions() {
   const missing = Presentation.missing(scenario),
-    open = new Set(missing.map((m) => m.id));
+    open = new Set(missing.map((m) => m.id)),
+    rank = (id) => QUICK_ORDER.indexOf(id);
   for (const m of missing) quickAsked.set(m.id, m);
   if (!quickAsked.size)
     return '<h2>About you</h2><p class="cf-note">Your paystub and answers cover everything the model needs.</p>';
-  const items = [...quickAsked.values()]
+  const asked = [...quickAsked.values()].sort(
+    (a, b) => rank(a.id) - rank(b.id),
+  );
+  const waiting = asked.filter(
+    (m) => open.has(m.id) && !quickSkipped.has(m.id),
+  );
+  if (!open.has(quickCurrent) || !waiting.some((m) => m.id === quickCurrent))
+    quickCurrent = waiting[0]?.id || "";
+  const q = quickAsked.get(quickCurrent);
+  const others = asked
+    .filter((m) => m.id !== quickCurrent)
     .map((m) => {
-      const target =
-        m.id === "rsu"
-          ? "data-open-grants"
-          : m.id === "espp"
-            ? "data-open-espp"
-            : `data-jump="${escape(m.path)}"`;
-      return `<li class="${open.has(m.id) ? "" : "todo-done"}"><button type="button" class="todo-item" ${target}><strong>${escape(m.label)}</strong><span>${open.has(m.id) ? escape(m.why) : "Done"}</span></button></li>`;
+      const done = !open.has(m.id);
+      return `<li class="${done ? "quick-done" : ""}"><button type="button" class="link-button" data-quick-go="${m.id}" ${done ? "disabled" : ""}>${done ? "✓ " : ""}${escape(m.label)}${!done && quickSkipped.has(m.id) ? " (skipped)" : ""}</button></li>`;
     })
     .join("");
-  return `<h2>A few things your paystub can't tell us</h2><ul class="todo-list">${items}</ul>`;
+  // A default isn't an answer, so it isn't filled in. The field also isn't
+  // repeated further down while it's asked here.
+  const single = QUICK_FIELDS[q?.id]?.length === 1;
+  const control = ([path, label, type = "money", hint = ""]) => {
+    shownPaths?.add(path);
+    const value = get(scenario, path),
+      known =
+        value != null &&
+        value !== "" &&
+        Profile.fieldState(scenario, path).kind !== "review"
+          ? value
+          : "",
+      attrs = `data-quick-path="${path}" aria-label="${escape(label)}"`;
+    const input = Array.isArray(type)
+      ? `<select ${attrs}><option value="" ${known === "" ? "selected" : ""} disabled>Choose</option>${type.map(([k, t]) => `<option value="${k}" ${String(known) === k ? "selected" : ""}>${escape(t)}</option>`).join("")}</select>`
+      : `<input ${attrs} type="number" min="0" step="any" inputmode="decimal" value="${known > 0 ? known : ""}" placeholder="${type === "count" ? "" : "$0"}">`;
+    return `<label class="field">${single ? "" : `<span>${escape(label)}</span>`}${input}${hint ? `<small>${escape(hint)}</small>` : ""}</label>`;
+  };
+  const body = !q
+    ? `<p class="quick-why">${waiting.length || asked.some((m) => open.has(m.id)) ? "You skipped the rest for now. Pick one below when you're ready." : "That's everything. Your results now use your answers."}</p>${asked.some((m) => open.has(m.id)) ? "" : '<button type="button" class="primary" data-quick-finish>See my monthly picture</button>'}`
+    : QUICK_FIELDS[q.id]
+      ? `<form class="quick-form" data-quick-form="${q.id}"><p class="quick-why">${escape(q.why)}</p><div class="quick-fields">${QUICK_FIELDS[q.id].map(control).join("")}</div><div class="quick-actions"><button type="submit" class="primary">Next</button><button type="button" data-quick-skip>Skip for now</button></div></form>`
+      : `<p class="quick-why">${escape(q.why)}</p><div class="quick-actions"><button type="button" class="primary" ${q.id === "rsu" ? "data-open-grants" : "data-open-espp"}>Open ${q.id === "rsu" ? "grants" : "ESPP"}</button><button type="button" data-quick-skip>Skip for now</button></div>`;
+  const left = asked.filter((m) => open.has(m.id)).length;
+  return `<section class="quick-card${left ? "" : " quick-card-done"}" id="quick-card" aria-labelledby="quick-title"><div class="quick-head"><h2 id="quick-title">${q ? escape(q.label) : "A few things your paystub can't tell us"}</h2><span class="context-chip">${left ? `${left} left` : "Done"}</span></div>${body}${others ? `<ul class="quick-list">${others}</ul>` : ""}</section>`;
+}
+// Saves the current quick question's answers and moves on.
+function bindQuickQuestions() {
+  const card = $("quick-card");
+  if (!card) return;
+  const form = card.querySelector("[data-quick-form]");
+  if (form)
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const next = structuredClone(scenario);
+      let answered = false;
+      for (const el of form.querySelectorAll("[data-quick-path]")) {
+        if (el.value === "") continue;
+        const path = el.dataset.quickPath;
+        Profile.edit(
+          next,
+          path,
+          el.tagName === "SELECT" ? el.value : Number(el.value),
+        );
+        answered = true;
+      }
+      const id = form.dataset.quickForm;
+      // Next always moves on; an answer that doesn't settle the question
+      // leaves it listed as skipped.
+      if (
+        !answered ||
+        Presentation.missing(Scenario.normalize(next)).some((m) => m.id === id)
+      )
+        quickSkipped.add(id);
+      commit(next);
+      // A state not in the list needs its rate next.
+      if (
+        get(next, "taxProfile.settings.state") === "custom" &&
+        form.dataset.quickForm === "state"
+      )
+        return jumpTo("taxProfile.settings.customStateRate");
+      focusQuick();
+    };
+  card.querySelectorAll("[data-quick-skip]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        quickSkipped.add(quickCurrent);
+        setup();
+        focusQuick();
+      }),
+  );
+  card.querySelectorAll("[data-quick-go]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        quickSkipped.delete(b.dataset.quickGo);
+        quickCurrent = b.dataset.quickGo;
+        setup();
+        focusQuick();
+      }),
+  );
+  card
+    .querySelectorAll("[data-quick-finish]")
+    .forEach(
+      (b) =>
+        (b.onclick = () =>
+          document.querySelector('[data-view="monthly"]').click()),
+    );
+}
+// Brings the quick card into view with its first answer focused.
+function focusQuick() {
+  const card = $("quick-card");
+  if (!card) return;
+  if (
+    card.getBoundingClientRect().top < 88 ||
+    card.getBoundingClientRect().top > innerHeight / 2
+  )
+    card.scrollIntoView({ block: "start" });
+  card
+    .querySelector("[data-quick-path], .quick-actions .primary")
+    ?.focus({ preventScroll: true });
+}
+// Going through one step's estimates in place: the step, its paths in
+// order, how far along, and how many were skipped.
+let estimateTour = null;
+// Moves the current estimate's field into the tour card, so it's answered
+// in one place; or, past the last one, says how it went.
+function placeTour(panel, place) {
+  const t = estimateTour;
+  let el;
+  while (t.at < t.paths.length) {
+    el = panel.querySelector(`[data-path="${CSS.escape(t.paths[t.at])}"]`);
+    if (el) break;
+    t.at++;
+  }
+  const n = t.paths.length,
+    q =
+      el &&
+      Presentation.estimateQuestion(
+        scenario,
+        t.paths[t.at],
+        el.getAttribute("aria-label").replace(/ \(%\)$/, ""),
+      );
+  if (t.at >= n) {
+    place(
+      `<section class="quick-card quick-card-done" id="tour-card" aria-labelledby="tour-title"><div class="quick-head"><h2 id="tour-title">Estimates checked</h2><span class="context-chip">Done</span></div><p class="quick-why">${n - t.skipped} of ${n} confirmed${t.skipped ? `; ${t.skipped} skipped stay highlighted below` : ""}.</p><div class="quick-actions"><button type="button" class="primary" data-tour-stop>Close</button></div></section>`,
+    );
+    return;
+  }
+  place(
+    `<section class="quick-card" id="tour-card" aria-labelledby="tour-title"><div class="quick-head"><h2 id="tour-title">${escape(q.topic)}</h2><span class="context-chip">${t.at + 1} of ${n}</span></div><p class="quick-why">${q.hint ? `${escape(q.hint)} ` : ""}This is an estimate: change it if you know the real value, or keep it.</p><form class="quick-form" data-tour-form><div class="quick-fields tour-field"></div><div class="quick-actions"><button type="submit" class="primary">${t.at + 1 < n ? "Next" : "Finish"}</button><button type="button" data-tour-skip>Skip</button><button type="button" class="link-button" data-tour-stop>Stop</button></div></form></section>`,
+  );
+  const cell = el.closest(".profile-cell") || el;
+  // Its label reads on its own, without the section around it.
+  const text = cell.querySelector("label.field > span:not([class])");
+  if (text)
+    text.textContent = q.label + (el.dataset.type === "percent" ? " (%)" : "");
+  else {
+    const node = [...(el.closest("label")?.childNodes || [])].find(
+      (n) => n.nodeType === 3 && n.textContent.trim(),
+    );
+    if (node) node.textContent = q.label;
+    // A chip's control has no visible label of its own.
+    else
+      el.insertAdjacentHTML(
+        "beforebegin",
+        `<span class="tour-label">${escape(q.label)}</span>`,
+      );
+  }
+  el.setAttribute("aria-label", q.label);
+  cell.querySelectorAll("[data-confirm]").forEach((b) => b.remove());
+  el.closest(".chip-control")?.removeAttribute("hidden");
+  // Saved by Next, not by the field's own change handler.
+  el.dataset.tourPath = el.dataset.path;
+  el.dataset.tourShown = el.type === "checkbox" ? el.checked : el.value;
+  delete el.dataset.path;
+  panel
+    .querySelector(".tour-field")
+    .append(el.closest(".chip-control") || cell);
+}
+function bindTour() {
+  const card = $("tour-card");
+  $("setup")
+    .querySelectorAll("[data-tour-start]")
+    .forEach(
+      (b) =>
+        (b.onclick = () => {
+          estimateTour = {
+            step: Number(b.closest("[data-profile-step]").dataset.profileStep),
+            paths: b.dataset.tourStart.split(","),
+            at: 0,
+            skipped: 0,
+          };
+          profileStep = estimateTour.step;
+          setup();
+          renderProfile();
+          focusTour();
+        }),
+    );
+  if (!card) return;
+  const t = estimateTour;
+  card.querySelector("[data-tour-form]")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const el = card.querySelector("[data-tour-path]"),
+      path = el.dataset.tourPath,
+      next = structuredClone(scenario);
+    // Kept as shown confirms the estimate; a new value is an edit.
+    if (
+      String(el.type === "checkbox" ? el.checked : el.value) ===
+      el.dataset.tourShown
+    )
+      Profile.confirm(next, path);
+    else editField(next, el, path);
+    t.at++;
+    commit(next);
+    focusTour();
+  });
+  card.querySelector("[data-tour-skip]")?.addEventListener("click", () => {
+    t.at++;
+    t.skipped++;
+    setup();
+    focusTour();
+  });
+  card.querySelector("[data-tour-stop]")?.addEventListener("click", () => {
+    estimateTour = null;
+    setup();
+  });
+}
+function focusTour() {
+  const card = $("tour-card");
+  if (!card) return;
+  const top = card.getBoundingClientRect().top;
+  if (top < 88 || top > innerHeight / 2)
+    card.scrollIntoView({ block: "start" });
+  card
+    .querySelector("[data-tour-path], .quick-actions .primary")
+    ?.focus({ preventScroll: true });
 }
 // A setup input by its scenario path, or "linked:<key>" for a per-paycheck
 // amount read from paystubs.
+// A setup control's value in scenario units.
+function inputValue(el, path) {
+  const kind = el.dataset.type;
+  return kind === "check"
+    ? el.checked
+    : kind === "bool"
+      ? el.value === "true"
+      : el.tagName === "SELECT" || ["date", "text"].includes(kind)
+        ? path === "compensation.bonusMonth"
+          ? Number(el.value)
+          : el.value
+        : el.value === ""
+          ? null
+          : (Number(el.value) * (kind === "years" ? 12 : 1)) /
+            (kind === "percent" ? 100 : 1);
+}
+// Saves a setup control into next. One answer can fill related fields (e.g.
+// one share price), but never a value the user set or confirmed, and the
+// copies stay unmarked so later uploads or edits can still fill them.
+function editField(next, el, path) {
+  const value = inputValue(el, path),
+    locked = Profile.lockedPaths(scenario);
+  Profile.edit(next, path, value);
+  for (const p of (el.dataset.also || "")
+    .split(",")
+    .filter((p) => p && !locked.includes(p)))
+    set(next, p, value);
+}
 const fieldFor = (path) =>
   $("setup").querySelector(
     path.startsWith("linked:")
@@ -343,10 +655,11 @@ function renderSetup() {
 }
 function renderSetupForm() {
   fieldConfig = Scenario.engineInput(scenario);
-  // Once a share price is set, it replaces each market-price field.
-  const sharePriceSet = scenario.compensation.sharePrice > 0,
+  // The share price slider replaces each market-price field.
+  const sharePrice = Profile.sharePrice(scenario),
+    sharePriceSet = !!sharePrice,
     sharePriceNote = sharePriceSet
-      ? `<p class="grant-summary">Valued at the company share price of <strong>${money(scenario.compensation.sharePrice)}</strong>, set on the slider above.</p>`
+      ? `<p class="grant-summary">Vests and purchases use the company share price of <strong>${money(sharePrice.price)}</strong>, set on the slider above.</p>`
       : "";
   const quick = quickQuestions();
   const t = "taxProfile.",
@@ -888,15 +1201,24 @@ function renderSetupForm() {
     })
       .map(([key, label]) => field(p + "startingBalances." + key, label))
       .join("");
+  // One monthly total, saved as Other, until categories are filled in;
+  // then every category shows.
+  const spending = scenario.projection.monthlyExpenses,
+    brokenDown = Object.entries(spending).some(
+      ([key, v]) => key !== "other" && v > 0,
+    ),
+    category = (key) =>
+      field(p + "monthlyExpenses." + key, key[0].toUpperCase() + key.slice(1));
   const expenses = () =>
-    Object.keys(scenario.projection.monthlyExpenses)
-      .map((key) =>
-        field(
-          p + "monthlyExpenses." + key,
-          key[0].toUpperCase() + key.slice(1),
-        ),
-      )
-      .join("");
+    brokenDown
+      ? Object.keys(spending).map(category).join("")
+      : field(p + "monthlyExpenses.other", "Total monthly spending") +
+        `<details class="spending-breakdown" data-key="spending-breakdown"><summary>Break it down</summary><div class="field-grid">${Object.keys(
+          spending,
+        )
+          .filter((key) => key !== "other")
+          .map(category)
+          .join("")}</div></details>`;
   const retirementPlan =
     reviewBlock(
       "When you retire",
@@ -919,7 +1241,7 @@ function renderSetupForm() {
         Object.entries(scenario.projection.monthlyExpenses).some(
           ([key, v]) => key !== "other" && v > 0,
         )
-          ? '<p class="plan-review-note">Your spending total is saved as Other (under About you, or below). Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
+          ? '<p class="plan-review-note">Your total is saved under Other. Lower it by the amounts you entered in other categories so nothing is counted twice.</p>'
           : '<p class="cf-note">Leave out anything already taken from your paycheck, like insurance premiums.</p>') +
         expenses(),
     );
@@ -960,6 +1282,49 @@ function renderSetupForm() {
   $("setup")
     .querySelectorAll("details")
     .forEach((x) => (x.open = open.has(detailKey(x))));
+  // One bar per step names its estimates and offers to go through them one
+  // at a time, each field moved into a card at the top of the step.
+  $("setup")
+    .querySelectorAll("[data-profile-step]")
+    .forEach((panel) => {
+      const bars = [...panel.querySelectorAll(".review-block > .review-bar")];
+      const paths = [
+        ...new Set(
+          bars.flatMap((b) =>
+            b.querySelector("[data-confirm-all]").dataset.confirmAll.split(","),
+          ),
+        ),
+      ];
+      bars.forEach((b) => b.remove());
+      const step = Number(panel.dataset.profileStep),
+        place = (html) => {
+          const quick = panel.querySelector("#quick-card");
+          quick
+            ? quick.insertAdjacentHTML("afterend", html)
+            : panel.insertAdjacentHTML("afterbegin", html);
+        };
+      if (estimateTour?.step === step) return placeTour(panel, place);
+      if (!paths.length) return;
+      const label = (path) =>
+          panel
+            .querySelector(`[data-path="${CSS.escape(path)}"]`)
+            ?.getAttribute("aria-label")
+            ?.replace(/ \(%\)$/, "") || Presentation.labelFor(path),
+        shown = paths.slice(0, 6),
+        names =
+          shown
+            .map(
+              (path) =>
+                `<button type="button" class="link-button" data-jump="${escape(path)}">${escape(label(path))}</button>`,
+            )
+            .join(", ") +
+          (paths.length > shown.length
+            ? ` and ${paths.length - shown.length} more`
+            : "");
+      place(
+        `<div class="review-bar state-review step-review"><span><strong>${paths.length === 1 ? "1 value on this step is an estimate" : `${paths.length} values on this step are estimates`}.</strong> They're highlighted below: ${names}.</span><button type="button" class="primary" data-tour-start="${escape(paths.join(","))}">Go through ${paths.length === 1 ? "it" : "them"}</button></div>`,
+      );
+    });
   $("setup")
     .querySelectorAll(".field-grid")
     .forEach((grid) => {
@@ -983,6 +1348,7 @@ function renderSetupForm() {
       const count = section.querySelectorAll(".state-review").length;
       if (count) section.querySelector("summary").dataset.reviewCount = count;
     });
+  bindTour();
   $("setup")
     .querySelectorAll("[data-confirm-all]")
     .forEach((button) => {
@@ -1025,30 +1391,8 @@ function renderSetupForm() {
       (el) =>
         (el.onchange = () =>
           deferUntilFocusMoves(() => {
-            const next = structuredClone(scenario),
-              kind = el.dataset.type;
-            const value =
-              kind === "check"
-                ? el.checked
-                : kind === "bool"
-                  ? el.value === "true"
-                  : el.tagName === "SELECT" || ["date", "text"].includes(kind)
-                    ? el.dataset.path === "compensation.bonusMonth"
-                      ? Number(el.value)
-                      : el.value
-                    : el.value === ""
-                      ? null
-                      : (Number(el.value) * (kind === "years" ? 12 : 1)) /
-                        (kind === "percent" ? 100 : 1);
-            // One answer can fill related fields (e.g. one share price), but
-            // never a value the user set or confirmed, and the copies stay
-            // unmarked so later uploads or edits can still fill them.
-            const locked = Profile.lockedPaths(scenario);
-            Profile.edit(next, el.dataset.path, value);
-            for (const path of (el.dataset.also || "")
-              .split(",")
-              .filter((p) => p && !locked.includes(p)))
-              set(next, path, value);
+            const next = structuredClone(scenario);
+            editField(next, el, el.dataset.path);
             commit(next);
           })),
     );
@@ -1162,6 +1506,7 @@ function renderSetupForm() {
   $("setup")
     .querySelectorAll("[data-jump]")
     .forEach((el) => (el.onclick = () => jumpTo(el.dataset.jump)));
+  bindQuickQuestions();
   $("setup")
     .querySelectorAll("[data-open-espp]")
     .forEach(
@@ -1254,26 +1599,23 @@ let priceBase = { key: "", total: 0 };
 function equityReadout(reference) {
   if (!Profile.hasIncome(scenario)) return "";
   const total = compTotal(scenario, result);
-  // Before a price is saved, the grants and ESPP keep their own prices, so
-  // there is no single reference to compare against.
-  if (!reference)
-    return `<strong>${dollars(total)}</strong> total compensation a year`;
   const base = structuredClone(scenario);
   base.compensation.sharePrice = reference;
-  base.compensation.referencePrice = 0;
   const key = JSON.stringify(base);
   if (key !== priceBase.key) {
     const s = Scenario.normalize(base);
     priceBase = { key, total: compTotal(s, Projection.calculate(s)) };
   }
   const diff = total - priceBase.total;
-  return `<strong>${dollars(total)}</strong> total compensation a year${Math.abs(diff) >= 1 ? ` · <strong>${diff > 0 ? "+" : "−"}${dollars(Math.abs(diff))}</strong> from the share price` : ""}`;
+  // The total is on the page already; the bar shows what the price adds.
+  return Math.abs(diff) >= 1
+    ? `<strong>${diff > 0 ? "+" : "−"}${dollars(Math.abs(diff))}</strong> a year in compensation`
+    : "";
 }
-function priceChange(price, reference) {
-  const pct = Math.round((price / reference - 1) * 100);
-  return pct === 0
-    ? "At your reference price"
-    : `${pct > 0 ? "+" : ""}${pct}% vs ${money(reference)}`;
+function priceChange(price, p) {
+  const pct = Math.round((price / p.reference - 1) * 100),
+    to = p.fromGrant ? "your latest grant" : money(p.reference);
+  return pct === 0 ? `Same as ${to}` : `${pct > 0 ? "+" : ""}${pct}% vs ${to}`;
 }
 function renderPriceBar() {
   const bar = $("price-bar"),
@@ -1282,31 +1624,30 @@ function renderPriceBar() {
   if (!p) return;
   if (priceDragging) {
     bar.querySelector("[data-price-readout]").innerHTML = equityReadout(
-      p.saved && p.reference,
+      p.reference,
     );
     return;
   }
-  const step = Math.max(0.01, Math.round(p.reference) / 200);
-  bar.innerHTML = `<label class="price-label" for="share-price-range">Company share price</label><div class="price-control"><input type="range" id="share-price-range" min="${p.min}" max="${p.max}" step="${step}" value="${p.price}" list="share-price-ticks" aria-valuetext="${escape(`${money(p.price)}, ${priceChange(p.price, p.reference)}`)}"><datalist id="share-price-ticks"><option value="${p.reference}"></option></datalist><span class="price-scale"><span>${money(p.min)}</span><span>${money(p.max)}</span></span></div><label class="price-exact">$<input type="number" id="share-price-input" aria-label="Exact share price" min="0.01" step="0.01" value="${Number(p.price.toFixed(2))}"></label><p class="price-meta"><span data-price-change>${escape(priceChange(p.price, p.reference))}</span>${p.price !== p.reference ? ` <button type="button" class="text-button" data-price-reset>Reset to ${money(p.reference)}</button>` : ""}<br><span data-price-readout>${equityReadout(p.saved && p.reference)}</span></p>${p.saved ? "" : `<p class="price-hint">Using the prices on your grants and ESPP. Set one price to use it for every vest and purchase.</p>`}`;
+  const at = (p.reference - p.min) / (p.max - p.min);
+  bar.innerHTML = `<div class="price-head"><span class="price-label">Company share price</span><label class="price-exact"><span aria-hidden="true">$</span><input type="number" id="share-price-input" aria-label="Exact share price" min="0.01" step="0.01" value="${p.price.toFixed(2)}"></label><span class="price-change" data-price-change>${escape(priceChange(p.price, p))}</span><button type="button" class="price-reset" data-price-reset ${p.price === p.reference ? "hidden" : ""}>Reset to ${money(p.reference)}</button><span class="price-readout" data-price-readout>${equityReadout(p.reference)}</span></div><div class="price-control"><input type="range" id="share-price-range" aria-label="Company share price" min="${p.min}" max="${p.max}" step="0.01" value="${p.price}" aria-valuetext="${escape(`${money(p.price)}, ${priceChange(p.price, p)}`)}"><span class="price-scale"><span>${money(p.min)}</span><span class="price-tick" style="--at:${at.toFixed(4)}">${money(p.reference)}${p.fromGrant ? " grant" : ""}</span><span>${money(p.max)}</span></span></div>`;
   const range = $("share-price-range");
   const preview = (value) => {
     const next = structuredClone(scenario);
     next.compensation.sharePrice = value;
-    // Dragging compares against where the slider started.
-    next.compensation.referencePrice ||= p.reference;
     return next;
   };
   range.oninput = () => {
     const value = Number(range.value);
     priceDragging = true;
-    $("share-price-input").value = Number(value.toFixed(2));
+    $("share-price-input").value = value.toFixed(2);
     bar.querySelector("[data-price-change]").textContent = priceChange(
       value,
-      p.reference,
+      p,
     );
+    bar.querySelector("[data-price-reset]").hidden = value === p.reference;
     range.setAttribute(
       "aria-valuetext",
-      `${money(value)}, ${priceChange(value, p.reference)}`,
+      `${money(value)}, ${priceChange(value, p)}`,
     );
     if (pricePreview) return;
     pricePreview = setTimeout(() => {
@@ -1323,22 +1664,15 @@ function renderPriceBar() {
     clearTimeout(pricePreview);
     pricePreview = 0;
     priceDragging = false;
-    const next = preview(Number(range.value));
-    next.compensation.referencePrice = p.reference;
-    commit(next);
+    commit(preview(Number(range.value)));
   };
   $("share-price-input").onchange = (event) => {
     const value = Number(event.target.value);
     if (!(value > 0)) return renderPriceBar();
-    const next = preview(value);
-    next.compensation.referencePrice = value;
-    commit(next);
+    commit(preview(value));
   };
-  bar.querySelector("[data-price-reset]")?.addEventListener("click", () => {
-    const next = preview(p.reference);
-    next.compensation.referencePrice = p.reference;
-    commit(next);
-  });
+  bar.querySelector("[data-price-reset]").onclick = () =>
+    commit(preview(p.reference));
 }
 const modelNotesDisclosure = (html) =>
   html
@@ -1581,6 +1915,7 @@ function renderAccuracy(visible) {
     $("accuracy-next").onclick = () => {
       profileStep = 1;
       document.querySelector('[data-view="profile"]').click();
+      focusQuick();
     };
 }
 function renderLearned(visible) {
@@ -1627,6 +1962,7 @@ function renderLearned(visible) {
       showLearned = false;
       profileStep = 1;
       document.querySelector('[data-view="profile"]').click();
+      focusQuick();
     };
 }
 function renderProjection() {
@@ -1999,6 +2335,9 @@ $("reset-confirm").onclick = () => {
   drafts = [];
   keptValues = [];
   quickAsked.clear();
+  quickSkipped.clear();
+  quickCurrent = "";
+  estimateTour = null;
   profileStep = 0;
   showLearned = false;
   compPeriod = "year";
@@ -2296,7 +2635,7 @@ function compensationView() {
     equity > 0.5 && `${dollars(equity / per)} in equity`,
     employer > 0.5 && `${dollars(employer / per)} from your employer`,
   ].filter(Boolean);
-  return `<section class="comp" aria-labelledby="comp-title"><div class="comp-head"><div><p class="eyebrow" id="comp-title">Total compensation</p><p class="comp-total"><strong>${dollars(c.total / per)}</strong> <span>${unit}</span></p><p class="comp-sub">${parts.join(" + ")}</p></div><div class="segmented" role="group" aria-label="Show amounts"><button type="button" data-comp-period="year" aria-pressed="${compPeriod === "year"}">Per year</button><button type="button" data-comp-period="month" aria-pressed="${compPeriod === "month"}">Per month</button></div></div><div class="comp-bars">${bar(c.sources, "You earn")}${bar(c.uses, "It goes to")}</div><div class="comp-ledgers">${ledger("What you earn", c.sources)}${ledger("Where it goes", c.uses)}</div><p class="cf-note">At your current earning pace, before living expenses. Equity uses your assumed share prices.</p></section>`;
+  return `<section class="comp" aria-labelledby="comp-title"><div class="comp-head"><div><p class="eyebrow" id="comp-title">Total compensation</p><p class="comp-total"><strong>${dollars(c.total / per)}</strong> <span>${unit}</span></p><p class="comp-sub">${parts.join(" + ")}</p></div><div class="segmented" role="group" aria-label="Show amounts"><button type="button" data-comp-period="year" aria-pressed="${compPeriod === "year"}">Per year</button><button type="button" data-comp-period="month" aria-pressed="${compPeriod === "month"}">Per month</button></div></div><div class="comp-bars">${bar(c.sources, "You earn")}${bar(c.uses, "It goes to")}</div><div class="comp-ledgers">${ledger("What you earn", c.sources)}${ledger("Where it goes", c.uses)}</div><p class="cf-note">At your current earning pace, before living expenses. Equity uses the company share price on the slider.</p></section>`;
 }
 function factsView() {
   return `<section class="you-card" aria-labelledby="you-title"><h2 id="you-title">You</h2><dl class="facts">${Presentation.facts(

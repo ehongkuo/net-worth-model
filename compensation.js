@@ -39,8 +39,9 @@
       frequency: "biweekly",
       firstPayday: "2026-01-09",
       stockGrowth: 0,
-      // Today's company share price; 0 means each grant and the ESPP use
-      // their own prices. referencePrice anchors the what-if range.
+      // Today's company share price, saved from the slider; 0 until then.
+      // Scenario.sharePrice picks the price used meanwhile. referencePrice
+      // is kept for older saves; the latest grant's price is the reference.
       sharePrice: 0,
       referencePrice: 0,
       grants: [],
