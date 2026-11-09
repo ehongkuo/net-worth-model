@@ -178,6 +178,36 @@
       rsuCash;
     const extraCash = cashBeforeDeductions - p.salary - p.bonus;
     const otherCash = extraCash - (p.cashAllowance || 0);
+    // Name the cash beyond salary, bonus and allowances. What the known
+    // sources don't explain is ESPP sale cash and refunds, or timing.
+    const otherParts = [];
+    let unexplained = otherCash;
+    for (const [label, value] of [
+      ["Spouse pay", positive(p.income?.spouse)],
+      ["Other income", positive(f?.otherIncome)],
+      ["Social Security", positive(f?.socialSecurity)],
+    ]) {
+      const part = Math.min(value, positive(unexplained));
+      if (part >= 1) {
+        otherParts.push({ label, value: part });
+        unexplained -= part;
+      }
+    }
+    if (Math.abs(unexplained) >= 1)
+      otherParts.push({
+        label:
+          positive(p.espp?.proceeds) + positive(p.espp?.refunds) > 0
+            ? "ESPP sales and refunds"
+            : "Timing adjustments",
+        value: unexplained,
+      });
+    const otherShown = Math.abs(otherCash) >= 1 ? otherCash : 0,
+      otherLabel =
+        otherParts.length === 1
+          ? otherParts[0].label
+          : otherParts.some((x) => x.label === "Spouse pay")
+            ? "Spouse pay and other cash"
+            : "Other cash";
     const cashParts = [
       { label: "Base salary", value: p.salary },
       { label: "Cash allowances", value: p.cashAllowance || 0 },
@@ -226,6 +256,9 @@
       cashParts,
       base: p.salary + (p.cashAllowance || 0),
       otherCash,
+      otherShown,
+      otherParts,
+      otherLabel,
       bonus: p.bonus,
       periodMonth: p.periodMonth,
       year: p.year,
@@ -323,12 +356,12 @@
     );
     const other = node(
       "other",
-      "Other cash / timing",
+      g.otherLabel,
       0,
       sourceBonus.y + sourceBonus.h + 48,
-      positive(g.otherCash),
+      positive(g.otherShown),
       "cash",
-      [{ label: "Other cash / timing adjustments", value: g.otherCash }],
+      g.otherParts,
     );
     const gross = node(
       "gross",
@@ -360,10 +393,10 @@
     link(
       other,
       gross,
-      positive(g.otherCash),
-      positive(g.otherCash),
+      positive(g.otherShown),
+      positive(g.otherShown),
       "cash",
-      "Other receipts and timing adjustments, separate from salary",
+      `${g.otherLabel}, separate from salary`,
       0,
       positive(g.base) + g.bonus,
     );
@@ -515,9 +548,8 @@
     const rsuY = Math.max(
       460,
       preY + g.pretaxRetirement * scale + 65,
-      (g.otherCash > 0.005
-        ? other.y + other.h
-        : sourceBonus.y + sourceBonus.h) + 52,
+      (g.otherShown > 0 ? other.y + other.h : sourceBonus.y + sourceBonus.h) +
+        52,
     );
     const rsu0 = node(
       "rsu0",

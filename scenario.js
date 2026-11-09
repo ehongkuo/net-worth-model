@@ -15,6 +15,8 @@
     "salary",
     "salaryGrowth",
     "stockGrowth",
+    "sharePrice",
+    "referencePrice",
     "bonusPercent",
     "bonusMonth",
     "frequency",
@@ -397,6 +399,8 @@
         throw new Error(`${label} must be a nonnegative amount.`);
     };
     positive(scenario.compensation.salary, "Salary");
+    positive(scenario.compensation.sharePrice, "Share price");
+    positive(scenario.compensation.referencePrice, "Reference share price");
     for (const values of [
       scenario.projection.startingBalances,
       scenario.projection.monthlyExpenses,
@@ -533,35 +537,95 @@
     };
     return { scenario: normalize(s), warnings };
   }
+  // One company share price values every future vest, ESPP purchase and
+  // sale: the slider's price once saved, before that a vest or purchase price
+  // someone entered, then the latest grant's own. The reference is the price
+  // on the most recent grant entered, so the slider shows the change since.
+  // Null without equity.
+  function sharePrice(s) {
+    const c = s.compensation,
+      e = s.employerPlan.espp,
+      grants = c.grants || [];
+    if (!grants.length && !e.enabled) return null;
+    const set = (p) =>
+      s.uploads?.manualFields?.includes(p) ||
+      Object.hasOwn(s.uploads?.confirmedFields || {}, p);
+    const newest = grants
+      .map((g, i) => ({ g, i }))
+      .sort((a, b) => String(b.g.start).localeCompare(String(a.g.start)));
+    const grantSet = ({ i }) => set(`compensation.grants.${i}.grantPrice`);
+    const entered = [
+      ...newest
+        .filter(
+          (x) => grantSet(x) || set(`compensation.grants.${x.i}.vestPrice`),
+        )
+        .map(({ g }) => g.vestPrice),
+      ...(e.enabled && set("employerPlan.espp.purchasePrice")
+        ? [e.purchasePrice]
+        : []),
+    ].filter((v) => v > 0);
+    const latest = newest[0]?.g,
+      grantPrice = (newest.find(grantSet)?.g || latest)?.grantPrice;
+    const assumed =
+      entered[0] ||
+      latest?.vestPrice ||
+      latest?.grantPrice ||
+      (e.enabled && e.purchasePrice) ||
+      100;
+    const price = c.sharePrice > 0 ? c.sharePrice : assumed;
+    // Without grants, the current offering's start price is the reference:
+    // a past price, so saving a new one doesn't move the slider's range.
+    return {
+      price,
+      reference:
+        grantPrice > 0
+          ? grantPrice
+          : e.enabled && e.offerPrice > 0
+            ? e.offerPrice
+            : price,
+      fromGrant: grantPrice > 0,
+      saved: c.sharePrice > 0,
+    };
+  }
   function engineInput(s) {
     s = normalize(s);
-    return C.merge(C.defaults(), {
-      ...s.compensation,
-      taxYear: s.taxProfile.year,
-      age: s.taxProfile.age,
-      birthday: s.taxProfile.birthday,
-      // An unset state is modelled without state income tax.
-      tax: {
-        ...s.taxProfile.settings,
-        state: s.taxProfile.settings.state || "none",
-      },
-      ...s.employerPlan,
-      payroll: {
-        enabled: true,
-        useYtd: true,
-        records: s.uploads.records,
-        elections: s.uploads.elections,
-        bonusDate: s.uploads.bonusDate,
-        uploadBaseline: s.uploads.useBaseline,
-        annualSettingKeys: s.uploads.annualSettingKeys,
-        manualFields: s.uploads.manualFields || [],
-      },
-    });
+    return C.priced(
+      C.merge(C.defaults(), {
+        ...s.compensation,
+        sharePrice: sharePrice(s)?.price || 0,
+        taxYear: s.taxProfile.year,
+        age: s.taxProfile.age,
+        birthday: s.taxProfile.birthday,
+        // An unset state is modelled without state income tax.
+        tax: {
+          ...s.taxProfile.settings,
+          state: s.taxProfile.settings.state || "none",
+        },
+        ...s.employerPlan,
+        payroll: {
+          enabled: true,
+          useYtd: true,
+          records: s.uploads.records,
+          elections: s.uploads.elections,
+          bonusDate: s.uploads.bonusDate,
+          uploadBaseline: s.uploads.useBaseline,
+          annualSettingKeys: s.uploads.annualSettingKeys,
+          manualFields: s.uploads.manualFields || [],
+        },
+      }),
+    );
   }
   function serialize(s) {
     return JSON.stringify(normalize(s), null, 2);
   }
-  const api = { defaults, normalize, migrate, engineInput, serialize };
+  const api = {
+    defaults,
+    normalize,
+    migrate,
+    engineInput,
+    serialize,
+    sharePrice,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Scenario = api;
 })(typeof window !== "undefined" ? window : globalThis);

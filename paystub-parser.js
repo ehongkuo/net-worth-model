@@ -401,6 +401,84 @@
     }
     return out.sort((a, b) => a.date.localeCompare(b.date));
   }
+  // How often you're paid, from regular checks: two in a row, else the pay
+  // period printed on the latest, else how many checks its year-to-date
+  // salary covers. Anything else is a guess that needs confirming.
+  const CHECKS = { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 };
+  function payFrequency(regular, fallback) {
+    const sorted = [...regular].sort((a, b) => a.date.localeCompare(b.date)),
+      last = sorted.at(-1),
+      prior = sorted.at(-2),
+      days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000),
+      found = (frequency, basis) => ({ frequency, basis, guessed: false });
+    if (!last) return { frequency: fallback, basis: "", guessed: true };
+    if (prior) {
+      const gap = days(prior.date, last.date);
+      if (gap === 7) return found("weekly", "Checks a week apart");
+      if (gap === 14) return found("biweekly", "Checks two weeks apart");
+    }
+    const monthEnd = (d) =>
+      Number(d.slice(8, 10)) ===
+      new Date(
+        Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)), 0),
+      ).getUTCDate();
+    const { periodStart: start, periodEnd: end } = last;
+    if (
+      /^\d{4}-\d{2}-\d{2}$/.test(start || "") &&
+      /^\d{4}-\d{2}-\d{2}$/.test(end || "")
+    ) {
+      const span = days(start, end) + 1,
+        basis = `Pay period ${start} to ${end}`;
+      if (Number(start.slice(8, 10)) === 1 && monthEnd(end) && span >= 28)
+        return found("monthly", basis);
+      // Half-month periods end on the 15th or the last day of the month.
+      if (
+        span >= 13 &&
+        span <= 16 &&
+        (Number(end.slice(8, 10)) === 15 || monthEnd(end)) &&
+        (span !== 14 || [1, 16].includes(Number(start.slice(8, 10))))
+      )
+        return found("semimonthly", basis);
+      if (span === 14) return found("biweekly", basis);
+      if (span === 7) return found("weekly", basis);
+    }
+    // A full year's checks so far: only one schedule fits the count.
+    const perCheck = last.current?.salary,
+      ytd = last.ytd?.salary;
+    if (perCheck > 0 && ytd > 0) {
+      const n = ytd / perCheck,
+        elapsed = days(`${last.date.slice(0, 4)}-01-01`, last.date),
+        month = Number(last.date.slice(5, 7)),
+        day = Number(last.date.slice(8, 10)),
+        expected = {
+          weekly: Math.floor(elapsed / 7) + 1,
+          biweekly: Math.floor(elapsed / 14) + 1,
+          semimonthly: 2 * (month - 1) + (day >= 15) + monthEnd(last.date),
+          monthly: month - 1 + (monthEnd(last.date) || day >= 28),
+        },
+        fits = Object.keys(expected).filter(
+          (k) => Math.abs(expected[k] - n) <= 0.6,
+        );
+      if (fits.length === 1)
+        return found(
+          fits[0],
+          `Year-to-date salary is ${Math.round(n)} checks by ${last.date}`,
+        );
+    }
+    return {
+      frequency: fallback,
+      basis: "One paystub doesn't show how often you're paid",
+      guessed: true,
+    };
+  }
+  // Annual salary from one check, snapped to $10 when per-check rounding
+  // explains the difference.
+  function annualSalary(perCheck, frequency) {
+    const count = CHECKS[frequency] || 26,
+      raw = perCheck * count,
+      snapped = Math.round(raw / 10) * 10;
+    return Math.abs(snapped - raw) <= count * 0.01 ? snapped : raw;
+  }
   function suggest(records, c, { locked = [], today = new Date() } = {}) {
     const tax =
       typeof module !== "undefined" && module.exports
@@ -480,21 +558,9 @@
     }
     if (!last)
       return { elections: {}, inferred, withholding: {}, warnings: [] };
-    const gap =
-      sorted.length > 1
-        ? (Date.parse(last.date) - Date.parse(sorted.at(-2).date)) / 86400000
-        : 0;
-    const frequency =
-      gap === 14 ? "biweekly" : gap === 7 ? "weekly" : c.frequency;
-    const count = { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 }[
-      frequency
-    ];
-    // Per-check amounts are rounded to cents, so salary × checks lands a few
-    // cents off the real annual figure; snap to $10 when rounding explains it.
-    const rawSalary = last.current.salary * count,
-      snapped = Math.round(rawSalary / 10) * 10,
-      salary =
-        Math.abs(snapped - rawSalary) <= count * 0.01 ? snapped : rawSalary,
+    const schedule = payFrequency(sorted, c.frequency),
+      frequency = schedule.frequency;
+    const salary = annualSalary(last.current.salary, frequency),
       elections = {},
       warnings = [];
     // Inferences are recorded even for values the user set or confirmed;
@@ -672,6 +738,8 @@
     return {
       salary: Math.abs(salary - c.salary) < 1 ? c.salary : salary,
       frequency,
+      frequencyBasis: schedule.basis,
+      frequencyGuessed: schedule.guessed,
       firstPayday: last.date,
       elections,
       inferred,
@@ -857,6 +925,8 @@
     validate,
     mergeRecords,
     suggest,
+    payFrequency,
+    annualSalary,
     labels,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

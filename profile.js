@@ -1,5 +1,9 @@
 (function (root) {
   "use strict";
+  const parser = () =>
+    typeof module !== "undefined" && module.exports
+      ? require("./paystub-parser")
+      : root.PaystubParser;
   function describe(s) {
     const records = [...s.uploads.records]
         .filter((r) => (r.kind || "regular") === "regular")
@@ -7,16 +11,9 @@
       last = records.at(-1),
       prior = records.at(-2),
       v = last?.current || {};
-    const gap = prior
-      ? (Date.parse(last.date) - Date.parse(prior.date)) / 86400000
-      : 0;
-    const frequency =
-        gap === 14
-          ? "biweekly"
-          : gap === 7
-            ? "weekly"
-            : s.compensation.frequency,
-      confirmed = gap === 14 || gap === 7,
+    const found = parser().payFrequency(records, s.compensation.frequency),
+      frequency = found.guessed ? s.compensation.frequency : found.frequency,
+      confirmed = !found.guessed,
       count = { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 }[
         frequency
       ];
@@ -100,7 +97,62 @@
     for (const key of keys.slice(0, -1)) target = target[key] ??= {};
     target[keys.at(-1)] = value;
   }
+  // Values worked out from a paystub follow the inputs they came from when
+  // those change, unless the user set or confirmed them.
+  function rederive(s, path) {
+    const own = (p) =>
+      s.uploads.fieldSources?.[p] &&
+      !s.uploads.manualFields?.includes(p) &&
+      !Object.hasOwn(s.uploads.confirmedFields || {}, p);
+    const records = [...(s.uploads.records || [])].sort((a, b) =>
+        a.date.localeCompare(b.date),
+      ),
+      last = records.filter((r) => (r.kind || "regular") === "regular").at(-1),
+      checks = { weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12 }[
+        s.compensation.frequency
+      ];
+    if (path === "compensation.frequency" && last) {
+      if (own("compensation.salary") && last.current.salary > 0)
+        s.compensation.salary = parser().annualSalary(
+          last.current.salary,
+          s.compensation.frequency,
+        );
+      if (
+        own("employerPlan.retirement.employerAnnual") &&
+        last.current.employer > 0
+      )
+        s.employerPlan.retirement.employerAnnual =
+          last.current.employer * checks;
+    }
+    const bonusCheck = records.findLast(
+      (r) =>
+        ["regular", "bonus"].includes(r.kind || "regular") &&
+        r.current.bonus > 0,
+    );
+    if (
+      own("compensation.bonusPercent") &&
+      bonusCheck &&
+      s.compensation.salary > 0
+    )
+      s.compensation.bonusPercent =
+        Math.round((bonusCheck.current.bonus / s.compensation.salary) * 1000) /
+        1000;
+  }
   function edit(s, path, value) {
+    const grantPrice = path.match(/^compensation\.grants\.(\d+)\.grantPrice$/);
+    if (grantPrice) {
+      // An unset vest price keeps each vest's dollar value: the new grant price
+      // changes how many shares the grant is, not what a vest pays.
+      const g = s.compensation.grants[Number(grantPrice[1])],
+        vestPath = `compensation.grants.${grantPrice[1]}.vestPrice`;
+      if (
+        g.grantPrice > 0 &&
+        value > 0 &&
+        !s.uploads.manualFields?.includes(vestPath) &&
+        !Object.hasOwn(s.uploads.confirmedFields || {}, vestPath)
+      )
+        g.vestPrice = (value * (g.vestPrice || g.grantPrice)) / g.grantPrice;
+    }
     write(s, path, value);
     const grantEdit = path.match(
       /^compensation\.grants\.(\d+)\.(evenVesting|months)$/,
@@ -121,6 +173,8 @@
     s.uploads.manualFields = [
       ...new Set([...(s.uploads.manualFields || []), path]),
     ];
+    if (["compensation.frequency", "compensation.salary"].includes(path))
+      rederive(s, path);
     const annualKeys = {
       "employerPlan.retirement.traditional": "traditional",
       "employerPlan.retirement.roth": "roth",
@@ -622,11 +676,23 @@
         true,
         "After-tax contribution observed; confirm conversion support",
       );
+    const hsaSeen = records.some((r) =>
+      ["hsa", "hsaEmployer"].some((k) => r.current?.[k] > 0 || r.ytd?.[k] > 0),
+    );
     if (v.hsa > 0 || v.hsaEmployer > 0)
       assign(
         "employerPlan.hsa.eligible",
         true,
         "HSA funding observed; confirm coverage and eligibility",
+      );
+    // A regular paycheck with no HSA money all year suggests no HSA plan.
+    else if (suggestion.record && !hsaSeen)
+      assign(
+        "employerPlan.hsa.eligible",
+        false,
+        "No HSA deduction on your paystubs",
+        date,
+        true,
       );
     const frequency = applySchedule
       ? suggestion.frequency || s.compensation.frequency
@@ -641,15 +707,21 @@
         "Observed employer funding annualized at the selected pay frequency; not a match formula",
       );
     if (applySchedule) {
+      // A guessed schedule makes the salary a guess too.
+      const guessed = !!suggestion.frequencyGuessed;
       assign(
         "compensation.salary",
         suggestion.salary,
         "Annualized using the selected pay frequency",
+        date,
+        guessed,
       );
       assign(
         "compensation.frequency",
         suggestion.frequency,
-        "Inferred from check dates",
+        suggestion.frequencyBasis || "Inferred from check dates",
+        date,
+        guessed,
       );
       assign(
         "compensation.firstPayday",
@@ -814,7 +886,24 @@
     if (type === "number") return Number(value).toFixed(2);
     return value;
   }
+  // The share price slider: Scenario.sharePrice with a range of 0.25x to 3x
+  // the reference, so dragging never moves its own bounds. Null without equity.
+  function sharePrice(s) {
+    const S =
+      typeof module !== "undefined" && module.exports
+        ? require("./scenario")
+        : root.Scenario;
+    const p = S.sharePrice(s);
+    if (!p) return null;
+    const cents = (v) => Math.round(v * 100) / 100;
+    return {
+      ...p,
+      min: cents(p.reference * 0.25),
+      max: cents(p.reference * 3),
+    };
+  }
   const api = {
+    sharePrice,
     limitPlan,
     yearTotals,
     limitCheck,
