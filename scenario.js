@@ -573,9 +573,16 @@
       (e.enabled && e.purchasePrice) ||
       100;
     const price = c.sharePrice > 0 ? c.sharePrice : assumed;
+    // Without grants, the current offering's start price is the reference:
+    // a past price, so saving a new one doesn't move the slider's range.
     return {
       price,
-      reference: grantPrice > 0 ? grantPrice : price,
+      reference:
+        grantPrice > 0
+          ? grantPrice
+          : e.enabled && e.offerPrice > 0
+            ? e.offerPrice
+            : price,
       fromGrant: grantPrice > 0,
       saved: c.sharePrice > 0,
     };

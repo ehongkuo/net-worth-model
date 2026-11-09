@@ -237,12 +237,16 @@ test("the reference is the most recent grant's price", () => {
   const s = twoGrants();
   s.uploads.manualFields = ["compensation.grants.0.grantPrice"];
   assertEqual(P.sharePrice(s).reference, 30);
-  // Only an ESPP: the reference is today's price.
+  // Only an ESPP: the current offering's $20 start price, which saving a
+  // new share price doesn't move.
   const e = twoGrants({ sharePrice: 22 });
   e.compensation.grants = [];
   const p = P.sharePrice(e);
-  assertEqual(p.reference, 22);
+  assertEqual(p.reference, 20);
   assert(!p.fromGrant);
+  e.compensation.sharePrice = 30;
+  assertEqual(P.sharePrice(e).reference, 20);
+  assertEqual(P.sharePrice(e).max, 60);
 });
 
 test("the ESPP question needs only the offering price", () => {

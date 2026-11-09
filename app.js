@@ -244,7 +244,7 @@ function detailLine(...parts) {
 }
 let quietReview = false;
 // Fields whose values are still estimates (defaults or inferred from
-// paystubs) under one title, with a single bar to confirm them together.
+// paystubs) under one title; the step's bar lists them for checking.
 function reviewBlock(title, render, intro = "") {
   const outer = quietReview;
   quietReview = true;
@@ -264,10 +264,7 @@ function reviewBlock(title, render, intro = "") {
       (st.kind === "review" && st.label !== "Needs input")
     );
   });
-  const bar = pending.length
-    ? `<div class="review-bar state-review"><span>${pending.length === 1 ? "1 value is an estimate" : `${pending.length} values are estimates`}. Check them, then confirm.</span><button type="button" data-confirm-all="${escape(pending.join(","))}">Looks right</button></div>`
-    : "";
-  return `<fieldset class="choice-group review-block"><legend>${escape(title)}</legend>${intro}${bar}<div class="field-grid">${body}</div></fieldset>`;
+  return `<fieldset class="choice-group review-block" data-estimates="${escape(pending.join(","))}"><legend>${escape(title)}</legend>${intro}<div class="field-grid">${body}</div></fieldset>`;
 }
 const group = (title, body, open = false) =>
   `<details ${open ? "open" : ""}><summary>${escape(title)}</summary><div class="field-grid">${body}</div></details>`;
@@ -558,8 +555,14 @@ function bindTour() {
     )
       Profile.confirm(next, path);
     else editField(next, el, path);
+    // Move on only once it saved; a rejected value stays here to fix.
+    const before = scenario;
     t.at++;
     commit(next);
+    if (scenario === before) {
+      t.at--;
+      setup();
+    }
     focusTour();
   });
   card.querySelector("[data-tour-skip]")?.addEventListener("click", () => {
@@ -657,8 +660,7 @@ function renderSetupForm() {
   fieldConfig = Scenario.engineInput(scenario);
   // The share price slider replaces each market-price field.
   const sharePrice = Profile.sharePrice(scenario),
-    sharePriceSet = !!sharePrice,
-    sharePriceNote = sharePriceSet
+    sharePriceNote = sharePrice
       ? `<p class="grant-summary">Vests and purchases use the company share price of <strong>${money(sharePrice.price)}</strong>, set on the slider above.</p>`
       : "";
   const quick = quickQuestions();
@@ -915,15 +917,7 @@ function renderSetupForm() {
             ) +
             (plan.espp.lookback
               ? `<div class="profile-cell"><label class="field"><span>Most you'll pay per share</span><input type="number" step="any" data-espp-ceiling value="${(plan.espp.offerPrice * (1 - plan.espp.discount)).toFixed(2)}"><small>After the discount. Enter this if it's the number you know; we work out the offering price from it.</small></label></div>`
-              : "") +
-            (sharePriceSet
-              ? ""
-              : field(
-                  e + "purchasePrice",
-                  "Expected market price on purchase day",
-                  "number",
-                  "Before the discount.",
-                )),
+              : ""),
           esppPriceNote(fieldConfig.espp) + sharePriceNote,
         ) +
         `<details class="plan-limits"><summary>Plan limits</summary><div class="field-grid">${
@@ -943,10 +937,7 @@ function renderSetupForm() {
           () =>
             field(e + "holdShares", "Hold purchased shares", "check") +
             (!plan.espp.holdShares
-              ? (sharePriceSet
-                  ? ""
-                  : field(e + "salePrice", "Expected sale price")) +
-                field(e + "holdMonths", "Months until sale")
+              ? field(e + "holdMonths", "Months until sale")
               : ""),
         )
       : "");
@@ -1008,14 +999,6 @@ function renderSetupForm() {
             "number",
             "Turns the grant value into shares; it's on your grant letter.",
           ) +
-          (sharePriceSet
-            ? ""
-            : field(
-                p + "vestPrice",
-                "Expected share price at vest",
-                "number",
-                "Same as the grant price means no growth.",
-              )) +
           field(p + "saleMode", "At vest", [
             ["cover", "Sell to cover taxes"],
             ["hold", "Hold all shares"],
@@ -1287,15 +1270,13 @@ function renderSetupForm() {
   $("setup")
     .querySelectorAll("[data-profile-step]")
     .forEach((panel) => {
-      const bars = [...panel.querySelectorAll(".review-block > .review-bar")];
       const paths = [
         ...new Set(
-          bars.flatMap((b) =>
-            b.querySelector("[data-confirm-all]").dataset.confirmAll.split(","),
-          ),
+          [...panel.querySelectorAll(".review-block[data-estimates]")]
+            .flatMap((b) => b.dataset.estimates.split(","))
+            .filter(Boolean),
         ),
       ];
-      bars.forEach((b) => b.remove());
       const step = Number(panel.dataset.profileStep),
         place = (html) => {
           const quick = panel.querySelector("#quick-card");
@@ -1349,16 +1330,6 @@ function renderSetupForm() {
       if (count) section.querySelector("summary").dataset.reviewCount = count;
     });
   bindTour();
-  $("setup")
-    .querySelectorAll("[data-confirm-all]")
-    .forEach((button) => {
-      button.onclick = () => {
-        const next = structuredClone(scenario);
-        for (const path of button.dataset.confirmAll.split(","))
-          Profile.confirm(next, path);
-        commit(next);
-      };
-    });
   $("setup")
     .querySelectorAll("[data-espp-ceiling]")
     .forEach(
@@ -1582,7 +1553,7 @@ function commit(next) {
   }
 }
 // One company share price for every view. Dragging previews without saving;
-// letting go saves it. Typing a price also makes it the new reference.
+// letting go saves it.
 let priceDragging = false,
   pricePreview = 0;
 const compTotal = (s, r) =>
