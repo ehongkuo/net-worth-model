@@ -6,7 +6,7 @@ The scenario stores independent inputs. Every financial view is derived from it.
 | --- | --- |
 | `taxProfile` | Starting tax year, age, optional birthday metadata, filing/state settings, deductions, credits, withholding assumptions and future rule growth |
 | `employerPlan` | Retirement/HSA funding, employer limits, benefit deductions and ESPP terms/enrollment overrides |
-| `compensation` | Salary, growth, bonus, pay frequency/anchor, stock growth and RSU grant schedules |
+| `compensation` | Salary, growth, bonus, pay frequency/anchor, stock growth, the company share price (`sharePrice`) and RSU grant schedules |
 | `uploads` | Reviewed current/YTD paycheck observations, inferred or edited elections, optional bonus date and baseline controls |
 | `projection` | Horizon, retirement timing, inflation, investment return, Social Security, starting balances and monthly expenses |
 
@@ -28,6 +28,11 @@ Uploads may include `benefits` records with `id`, `label`, `category`, `current`
 inputs through export/import. Aggregated payroll amounts remain available for
 legacy scenarios. Ongoing results and calendar results are derived separately by
 the shared engine and are never persisted as inputs.
+
+`compensation.sharePrice` is the one price used for every RSU vest and ESPP
+purchase and sale. When it is unset, `Scenario.sharePrice` derives it from the
+prices entered on grants or the ESPP. `referencePrice` is still accepted from
+older saves but is no longer used.
 
 ## Current earning pace and dated equity
 
